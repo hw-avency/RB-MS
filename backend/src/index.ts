@@ -1,8 +1,11 @@
+import cors from 'cors';
 import express from 'express';
 import { prisma } from './prisma';
 
 const app = express();
 const port = Number(process.env.PORT ?? 3000);
+
+app.use(cors());
 
 app.get('/health', async (_req, res) => {
   try {
