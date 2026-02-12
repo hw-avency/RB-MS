@@ -1,0 +1,42 @@
+databases:
+  - name: rbms-postgres
+    databaseName: rbms
+    user: rbms
+    plan: free
+
+services:
+  - type: web
+    name: rbms-backend
+    env: docker
+    rootDir: backend
+    dockerContext: backend
+    dockerfilePath: backend/Dockerfile
+    autoDeploy: true
+    preDeployCommand: >-
+      npx prisma migrate deploy &&
+      if [ "$RUN_SEED" = "true" ]; then npx prisma db seed; else echo "Skipping seed"; fi
+    startCommand: npm run start
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: rbms-postgres
+          property: connectionString
+      - key: NODE_ENV
+        value: production
+      - key: JWT_SECRET
+        sync: false
+      - key: ADMIN_PASSWORD
+        sync: false
+      - key: RUN_SEED
+        value: "false"
+
+  - type: web
+    name: rbms-frontend
+    env: static
+    rootDir: frontend
+    buildCommand: npm ci && npm run build
+    staticPublishPath: dist
+    autoDeploy: true
+    envVars:
+      - key: VITE_API_BASE_URL
+        sync: false
