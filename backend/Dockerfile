@@ -1,7 +1,8 @@
 FROM node:20-alpine AS deps
 WORKDIR /app
 COPY package*.json ./
-RUN npm install
+COPY prisma ./prisma
+RUN npm install && npx prisma generate
 
 FROM node:20-alpine AS build
 WORKDIR /app
