@@ -1,0 +1,26 @@
+body {
+  margin: 0;
+  font-family: Arial, sans-serif;
+  background: #f4f6f8;
+  color: #102a43;
+}
+
+main {
+  max-width: 900px;
+  margin: 2rem auto;
+  background: white;
+  padding: 1.5rem;
+  border-radius: 12px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1);
+}
+
+pre {
+  padding: 1rem;
+  background: #d9e2ec;
+  border-radius: 8px;
+  overflow-x: auto;
+}
+
+.error {
+  color: #d64545;
+}
