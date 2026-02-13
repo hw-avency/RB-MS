@@ -34,15 +34,8 @@ import {
   SimpleGrid,
   Stack,
   Switch,
-  Table,
-  TableContainer,
-  Tbody,
-  Td,
   Text,
-  Th,
-  Thead,
   ToastId,
-  Tr,
   useDisclosure,
   useToast
 } from '@chakra-ui/react';
@@ -80,7 +73,9 @@ const Sidebar = (Saas as any).Sidebar ?? Box;
 const NavGroup = (Saas as any).NavGroup ?? Box;
 const NavItem = (Saas as any).NavItem ?? Button;
 const SidebarToggleButton = (Saas as any).SidebarToggleButton ?? Button;
-const DataTable = (Saas as any).DataTable;
+const Page = (Saas as any).Page ?? Stack;
+const PageHeader = (Saas as any).PageHeader ?? Box;
+const DataTable = (Saas as any).DataTable ?? (Saas as any).DataGrid;
 
 const endOfYear = (): string => new Date(Date.UTC(new Date().getUTCFullYear(), 11, 31)).toISOString().slice(0, 10);
 const toDateKey = (value: Date): string => value.toISOString().slice(0, 10);
@@ -133,7 +128,7 @@ export function App() {
   const [selectedEmployeeEmail, setSelectedEmployeeEmail] = useState('');
   const [manualBookingEmail, setManualBookingEmail] = useState('');
   const [employeeSearch, setEmployeeSearch] = useState('');
-  const [employeeSortKey, setEmployeeSortKey] = useState<'displayName' | 'email' | 'isActive'>('displayName');
+  const [employeeSortKey, setEmployeeSortKey] = useState<'displayName' | 'email'>('displayName');
   const [employeeSortDirection, setEmployeeSortDirection] = useState<'asc' | 'desc'>('asc');
   const [employeePage, setEmployeePage] = useState(1);
 
@@ -161,16 +156,13 @@ export function App() {
   const people = useMemo(() => [...(occupancy?.people ?? [])].sort((a, b) => (a.displayName ?? a.email).localeCompare(b.displayName ?? b.email, 'de')), [occupancy]);
   const activeDesk = useMemo(() => desks.find((d) => d.id === selectedDeskId) ?? null, [desks, selectedDeskId]);
   const activeEmployees = useMemo(() => employees.filter((e) => e.isActive), [employees]);
+  const adminCount = useMemo(() => employees.filter((e) => e.isAdmin).length, [employees]);
   const calendarDays = useMemo(() => buildCalendarDays(visibleMonth), [visibleMonth]);
 
   const filteredEmployees = useMemo(() => {
     const q = employeeSearch.trim().toLowerCase();
     const source = q ? employees.filter((e) => e.displayName.toLowerCase().includes(q) || e.email.toLowerCase().includes(q)) : employees;
     return [...source].sort((a, b) => {
-      if (employeeSortKey === 'isActive') {
-        const v = Number(a.isActive) - Number(b.isActive);
-        return employeeSortDirection === 'asc' ? v : -v;
-      }
       const v = a[employeeSortKey].localeCompare(b[employeeSortKey], 'de');
       return employeeSortDirection === 'asc' ? v : -v;
     });
@@ -452,11 +444,28 @@ export function App() {
   const employeeColumns = [
     { accessor: 'avatar', Header: 'Avatar' },
     { accessor: 'displayName', Header: 'Name' },
-    { accessor: 'email', Header: 'Email' },
+    { accessor: 'email', Header: 'E-Mail' },
     { accessor: 'status', Header: 'Status' },
     { accessor: 'isAdmin', Header: 'Admin' },
     { accessor: 'actions', Header: 'Aktionen' }
   ];
+
+  const employeeRows = pagedEmployees.map((employee) => ({
+    avatar: <Avatar size="sm" name={employee.displayName} src={employee.photoUrl ?? employee.photoBase64 ?? undefined} />,
+    displayName: employee.displayName,
+    email: employee.email,
+    status: <Badge colorScheme={employee.isActive ? 'green' : 'gray'}>{employee.isActive ? 'Aktiv' : 'Inaktiv'}</Badge>,
+    isAdmin: <Switch isChecked={employee.isAdmin} isDisabled={employee.isAdmin && adminCount === 1} onChange={(e: ChangeEvent<HTMLInputElement>) => void toggleEmployeeAdmin(employee, e.target.checked)} />,
+    actions: (
+      <Menu>
+        <MenuButton as={Button} variant="ghost">⋮</MenuButton>
+        <MenuList>
+          <MenuItem onClick={() => { setEditingEmployee(employee); setEditingEmployeeName(employee.displayName); renameDisclosure.onOpen(); }}>Rename</MenuItem>
+          <MenuItem onClick={() => { setEmployeeActionTarget(employee); confirmDisclosure.onOpen(); }}>{employee.isActive ? 'Deactivate' : 'Activate'}</MenuItem>
+        </MenuList>
+      </Menu>
+    )
+  }));
 
   return (
     <AppShell height="$100vh" minH="100vh">
@@ -500,24 +509,44 @@ export function App() {
             {route === '/admin' && isAdminMode && (
               <Stack spacing={4}>
                 <Heading size="lg">Admin</Heading>
-                <Alert status="info"><AlertIcon />Admin-Ansicht im Saas UI Shell Layout. Mitarbeiterverwaltung über Navigation.</Alert>
+                <Card><CardBody><Text>Verwaltungsbereich</Text></CardBody></Card>
               </Stack>
             )}
 
             {route === '/admin/employees' && isAdminMode && (
-              <Stack spacing={4}>
-                <Heading size="lg">Mitarbeiter</Heading>
-                <Card><CardBody><HStack spacing={3}><Input type="search" placeholder="Suchen…" value={employeeSearch} onChange={(e: ChangeEvent<HTMLInputElement>) => setEmployeeSearch(e.target.value)} /><Select value={employeeSortKey} onChange={(e: ChangeEvent<HTMLSelectElement>) => setEmployeeSortKey(e.target.value as 'displayName' | 'email' | 'isActive')}><option value="displayName">Name</option><option value="email">E-Mail</option><option value="isActive">Status</option></Select><Button variant="outline" onClick={() => setEmployeeSortDirection((p) => (p === 'asc' ? 'desc' : 'asc'))}>{employeeSortDirection === 'asc' ? '↑' : '↓'}</Button></HStack></CardBody></Card>
+              <Page>
+                <Stack spacing={5}>
+                  <PageHeader>
+                    <Heading size="lg">Mitarbeiter</Heading>
+                    <Text color="gray.500" mt={1}>Verwalte Benutzerstatus, Berechtigungen und Kontodetails.</Text>
+                  </PageHeader>
 
-                <Card><CardBody>
-                  {DataTable ? (
-                    <DataTable columns={employeeColumns} data={pagedEmployees} />
-                  ) : (
-                    <TableContainer><Table><Thead><Tr><Th>Avatar</Th><Th>Name</Th><Th>Email</Th><Th>Status</Th><Th>Admin</Th><Th>Aktionen</Th></Tr></Thead><Tbody>{pagedEmployees.map((employee) => <Tr key={employee.id}><Td><Avatar size="sm" name={employee.displayName} src={employee.photoUrl ?? employee.photoBase64 ?? undefined} /></Td><Td>{employee.displayName}</Td><Td>{employee.email}</Td><Td><Badge colorScheme={employee.isActive ? 'green' : 'gray'}>{employee.isActive ? 'Active' : 'Inactive'}</Badge></Td><Td><Switch isChecked={employee.isAdmin} onChange={(e: ChangeEvent<HTMLInputElement>) => void toggleEmployeeAdmin(employee, e.target.checked)} /></Td><Td><Menu><MenuButton as={Button} variant="ghost">⋮</MenuButton><MenuList><MenuItem onClick={() => { setEditingEmployee(employee); setEditingEmployeeName(employee.displayName); renameDisclosure.onOpen(); }}>Rename</MenuItem><MenuItem onClick={() => { setEmployeeActionTarget(employee); confirmDisclosure.onOpen(); }}>{employee.isActive ? 'Deactivate' : 'Activate'}</MenuItem></MenuList></Menu></Td></Tr>)}</Tbody></Table></TableContainer>
-                  )}
-                  <HStack mt={4} justify="space-between"><Text>Seite {employeePage} / {employeeTotalPages}</Text><HStack><Button onClick={() => setEmployeePage((p) => Math.max(1, p - 1))}>Zurück</Button><Button onClick={() => setEmployeePage((p) => Math.min(employeeTotalPages, p + 1))}>Weiter</Button></HStack></HStack>
-                </CardBody></Card>
-              </Stack>
+                  <Card>
+                    <CardBody>
+                      <Stack spacing={4}>
+                        <HStack justify="space-between" align="center">
+                          <HStack spacing={3}>
+                            <Input type="search" placeholder="Suche nach Name oder E-Mail" value={employeeSearch} onChange={(e: ChangeEvent<HTMLInputElement>) => setEmployeeSearch(e.target.value)} maxW="380px" />
+                            <Button variant="outline" onClick={() => setEmployeeSortKey((prev) => (prev === 'displayName' ? 'email' : 'displayName'))}>Sortierung: {employeeSortKey === 'displayName' ? 'Name' : 'E-Mail'}</Button>
+                            <Button variant="outline" onClick={() => setEmployeeSortDirection((p) => (p === 'asc' ? 'desc' : 'asc'))}>{employeeSortDirection === 'asc' ? '↑ Aufsteigend' : '↓ Absteigend'}</Button>
+                          </HStack>
+                          <Button colorScheme="blue">Mitarbeiter hinzufügen</Button>
+                        </HStack>
+
+                        {DataTable && <DataTable columns={employeeColumns} data={employeeRows} />}
+
+                        <HStack justify="space-between">
+                          <Text>Seite {employeePage} / {employeeTotalPages}</Text>
+                          <HStack>
+                            <Button onClick={() => setEmployeePage((p) => Math.max(1, p - 1))}>Zurück</Button>
+                            <Button onClick={() => setEmployeePage((p) => Math.min(employeeTotalPages, p + 1))}>Weiter</Button>
+                          </HStack>
+                        </HStack>
+                      </Stack>
+                    </CardBody>
+                  </Card>
+                </Stack>
+              </Page>
             )}
           </Box>
         </Box>
