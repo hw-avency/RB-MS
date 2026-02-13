@@ -112,6 +112,18 @@ input, select {
 .people-list { margin: 8px 0 0; padding-left: 20px; display: grid; gap: 6px; }
 .people-meta { font-size: .8rem; }
 
+.person-item {
+  list-style: none;
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: baseline;
+  border-bottom: 1px solid #eef2f7;
+  padding-bottom: 6px;
+}
+.person-primary { margin: 0; font-weight: 600; }
+.person-desk { margin: 0; color: #44556a; font-weight: 600; text-align: right; }
+
 table { width: 100%; border-collapse: collapse; }
 th, td { text-align: left; padding: 8px 2px; border-bottom: 1px solid #eef2f7; }
 

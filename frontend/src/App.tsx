@@ -9,11 +9,12 @@ type OccupancyDesk = {
   x: number;
   y: number;
   status: 'free' | 'booked';
-  booking: { id?: string; userEmail: string; userDisplayName?: string; type: 'single' | 'recurring' } | null;
+  booking: { id?: string; userEmail: string; userDisplayName?: string; deskName?: string; type: 'single' | 'recurring' } | null;
 };
 type OccupancyPerson = { email: string; userEmail: string; displayName?: string; deskName?: string };
 type OccupancyResponse = { date: string; floorplanId: string; desks: OccupancyDesk[]; people: OccupancyPerson[] };
 type Employee = { id: string; email: string; displayName: string; isActive: boolean };
+type BookingEmployee = { id: string; email: string; displayName: string };
 type AdminBooking = {
   id: string;
   deskId: string;
@@ -94,6 +95,7 @@ export function App() {
   const [newEmployeeEmail, setNewEmployeeEmail] = useState('');
   const [newEmployeeDisplayName, setNewEmployeeDisplayName] = useState('');
   const [employeeActionMessage, setEmployeeActionMessage] = useState('');
+  const [employeeErrorMessage, setEmployeeErrorMessage] = useState('');
   const [editingEmployeeId, setEditingEmployeeId] = useState('');
   const [editingEmployeeName, setEditingEmployeeName] = useState('');
   const [editingBookingId, setEditingBookingId] = useState('');
@@ -126,6 +128,22 @@ export function App() {
     setErrorMessage('Netzwerkfehler beim Laden der Daten.');
   };
 
+  const handleEmployeeError = (error: unknown) => {
+    if (error instanceof ApiError) {
+      if (error.status === 409) {
+        setEmployeeErrorMessage('Diese E-Mail ist bereits vorhanden.');
+        return;
+      }
+
+      if (error.status === 400) {
+        setEmployeeErrorMessage(error.message);
+        return;
+      }
+    }
+
+    setEmployeeErrorMessage('Mitarbeiter-Aktion fehlgeschlagen. Bitte erneut versuchen.');
+  };
+
   const loadFloorplans = async () => {
     try {
       const data = await get<Floorplan[]>('/floorplans');
@@ -152,7 +170,7 @@ export function App() {
     try {
       const data = adminHeaders
         ? await get<Employee[]>('/admin/employees', adminHeaders)
-        : await get<Employee[]>('/employees');
+        : (await get<BookingEmployee[]>('/employees')).map((employee) => ({ ...employee, isActive: true }));
       setEmployees(data);
     } catch (error) {
       handleApiError(error);
@@ -196,7 +214,8 @@ export function App() {
       return;
     }
 
-    const meMatch = activeEmployees.find((employee) => employee.email === meEmail)?.email;
+    const meEmailNormalized = meEmail.toLowerCase();
+    const meMatch = activeEmployees.find((employee) => employee.email.toLowerCase() === meEmailNormalized)?.email;
     setSelectedEmployeeEmail((prev) => {
       if (prev && activeEmployees.some((employee) => employee.email === prev)) {
         return prev;
@@ -425,6 +444,7 @@ export function App() {
   const addEmployee = async (event: FormEvent) => {
     event.preventDefault();
     if (!adminHeaders) return;
+    setEmployeeErrorMessage('');
 
     try {
       await post('/admin/employees', { email: newEmployeeEmail, displayName: newEmployeeDisplayName }, adminHeaders);
@@ -433,12 +453,13 @@ export function App() {
       setEmployeeActionMessage('Mitarbeiter hinzugefügt.');
       await loadEmployees();
     } catch (error) {
-      handleApiError(error);
+      handleEmployeeError(error);
     }
   };
 
   const saveEmployeeName = async (id: string) => {
     if (!adminHeaders) return;
+    setEmployeeErrorMessage('');
 
     try {
       await patch(`/admin/employees/${id}`, { displayName: editingEmployeeName }, adminHeaders);
@@ -447,19 +468,20 @@ export function App() {
       setEmployeeActionMessage('Mitarbeiter aktualisiert.');
       await loadEmployees();
     } catch (error) {
-      handleApiError(error);
+      handleEmployeeError(error);
     }
   };
 
   const toggleEmployee = async (employee: Employee) => {
     if (!adminHeaders) return;
+    setEmployeeErrorMessage('');
 
     try {
       await patch(`/admin/employees/${employee.id}`, { isActive: !employee.isActive }, adminHeaders);
       setEmployeeActionMessage(employee.isActive ? 'Mitarbeiter deaktiviert.' : 'Mitarbeiter aktiviert.');
       await loadEmployees();
     } catch (error) {
-      handleApiError(error);
+      handleEmployeeError(error);
     }
   };
 
@@ -621,6 +643,8 @@ export function App() {
                       <input required placeholder="E-Mail" value={newEmployeeEmail} onChange={(e) => setNewEmployeeEmail(e.target.value)} />
                       <button className="btn btn-primary" type="submit">Mitarbeiter hinzufügen</button>
                     </form>
+                    {!!employeeErrorMessage && <p className="toast toast-error">{employeeErrorMessage}</p>}
+                    {!!employeeActionMessage && <p className="toast toast-success">{employeeActionMessage}</p>}
                     <table>
                       <thead><tr><th>Name</th><th>E-Mail</th><th>Status</th><th>Aktionen</th></tr></thead>
                       <tbody>
@@ -701,6 +725,21 @@ export function App() {
               <section className="card">
                 <h3>Im Büro am {new Date(`${selectedDate}T00:00:00.000Z`).toLocaleDateString('de-DE')}</h3>
                 <p className="muted">{people.length} {people.length === 1 ? 'Person' : 'Personen'}</p>
+                <ul className="people-list">
+                  {people.map((person) => {
+                    const fallbackName = person.email.split('@')[0] || person.email;
+                    const primaryName = person.displayName?.trim() || fallbackName;
+                    return (
+                      <li key={`${person.email}-${person.deskName ?? 'none'}`} className="person-item">
+                        <div>
+                          <p className="person-primary">{primaryName}</p>
+                          <p className="people-meta">{person.email}</p>
+                        </div>
+                        <p className="person-desk">{person.deskName ?? '—'}</p>
+                      </li>
+                    );
+                  })}
+                </ul>
               </section>
             </aside>
           </section>

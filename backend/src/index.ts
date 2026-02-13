@@ -132,6 +132,7 @@ const normalizeEmail = (value: string): string => value.trim().toLowerCase();
 const isValidEmailInput = (value: string): boolean => value.includes('@');
 
 const employeeSelect = {
+  id: true,
   email: true,
   displayName: true,
   isActive: true
@@ -194,7 +195,11 @@ app.get('/admin/employees', requireAdmin, async (_req, res) => {
 app.get('/employees', async (_req, res) => {
   const employees = await prisma.employee.findMany({
     where: { isActive: true },
-    select: employeeSelect,
+    select: {
+      id: true,
+      email: true,
+      displayName: true
+    },
     orderBy: [{ displayName: 'asc' }, { email: 'asc' }]
   });
 
@@ -525,6 +530,7 @@ app.get('/occupancy', async (req, res) => {
           id: single.id,
           userEmail: single.userEmail,
           userDisplayName: employeesByEmail.get(normalizeEmail(single.userEmail))?.displayName,
+          deskName: desk.name,
           type: 'single' as const
         }
       };
@@ -542,6 +548,7 @@ app.get('/occupancy', async (req, res) => {
           id: recurring.id,
           userEmail: recurring.userEmail,
           userDisplayName: employeesByEmail.get(normalizeEmail(recurring.userEmail))?.displayName,
+          deskName: desk.name,
           type: 'recurring' as const
         }
       };
@@ -557,19 +564,25 @@ app.get('/occupancy', async (req, res) => {
     };
   });
 
-  const people = occupancyDesks
+  const uniquePeopleByEmail = new Map<string, { email: string; userEmail: string; displayName?: string; deskName?: string }>();
+  occupancyDesks
     .filter((desk) => desk.booking)
-    .map((desk) => {
+    .forEach((desk) => {
       const userEmail = desk.booking?.userEmail ?? '';
       const normalizedEmail = normalizeEmail(userEmail);
-      return {
+      if (!userEmail || uniquePeopleByEmail.has(normalizedEmail)) {
+        return;
+      }
+
+      uniquePeopleByEmail.set(normalizedEmail, {
         email: userEmail,
         userEmail,
         displayName: employeesByEmail.get(normalizedEmail)?.displayName,
         deskName: desk.name
-      };
-    })
-    .filter((person) => person.email.length > 0)
+      });
+    });
+
+  const people = Array.from(uniquePeopleByEmail.values())
     .sort((a, b) => (a.displayName ?? a.email).localeCompare(b.displayName ?? b.email, 'de'));
 
   res.status(200).json({
