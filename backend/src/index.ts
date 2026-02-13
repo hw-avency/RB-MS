@@ -127,6 +127,36 @@ const sendConflict = (res: express.Response, message: string, details: Record<st
   });
 };
 
+const normalizeEmail = (value: string): string => value.trim().toLowerCase();
+
+const isValidEmailInput = (value: string): boolean => value.includes('@');
+
+const employeeSelect = {
+  email: true,
+  displayName: true,
+  isActive: true
+} satisfies Prisma.EmployeeSelect;
+
+const getActiveEmployeesByEmail = async (emails: string[]) => {
+  if (emails.length === 0) {
+    return new Map<string, { displayName: string }>();
+  }
+
+  const uniqueEmails = Array.from(new Set(emails.map((email) => normalizeEmail(email))));
+  const employees = await prisma.employee.findMany({
+    where: {
+      isActive: true,
+      email: { in: uniqueEmails }
+    },
+    select: {
+      email: true,
+      displayName: true
+    }
+  });
+
+  return new Map(employees.map((employee) => [employee.email, { displayName: employee.displayName }]));
+};
+
 app.get('/health', async (_req, res) => {
   try {
     await prisma.$queryRaw`SELECT 1`;
@@ -150,6 +180,131 @@ app.post('/admin/login', (req, res) => {
 
   const token = createAdminToken(email);
   res.status(200).json({ token });
+});
+
+app.get('/admin/employees', requireAdmin, async (_req, res) => {
+  const employees = await prisma.employee.findMany({
+    select: employeeSelect,
+    orderBy: [{ isActive: 'desc' }, { displayName: 'asc' }, { email: 'asc' }]
+  });
+
+  res.status(200).json(employees);
+});
+
+app.get('/employees', async (_req, res) => {
+  const employees = await prisma.employee.findMany({
+    where: { isActive: true },
+    select: employeeSelect,
+    orderBy: [{ displayName: 'asc' }, { email: 'asc' }]
+  });
+
+  res.status(200).json(employees);
+});
+
+app.post('/admin/employees', requireAdmin, async (req, res) => {
+  const { email, displayName } = req.body as { email?: string; displayName?: string };
+
+  if (!email || !displayName) {
+    res.status(400).json({ error: 'validation', message: 'email and displayName are required' });
+    return;
+  }
+
+  const normalizedEmail = normalizeEmail(email);
+  const normalizedDisplayName = displayName.trim();
+
+  if (!isValidEmailInput(normalizedEmail)) {
+    res.status(400).json({ error: 'validation', message: 'email must contain @' });
+    return;
+  }
+
+  if (!normalizedDisplayName) {
+    res.status(400).json({ error: 'validation', message: 'displayName must not be empty' });
+    return;
+  }
+
+  try {
+    const employee = await prisma.employee.create({
+      data: {
+        email: normalizedEmail,
+        displayName: normalizedDisplayName
+      },
+      select: employeeSelect
+    });
+
+    res.status(201).json(employee);
+  } catch (error) {
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+      sendConflict(res, 'Employee email already exists', { email: normalizedEmail });
+      return;
+    }
+
+    throw error;
+  }
+});
+
+app.patch('/admin/employees/:id', requireAdmin, async (req, res) => {
+  const id = getRouteId(req.params.id);
+  if (!id) {
+    res.status(400).json({ error: 'validation', message: 'id is required' });
+    return;
+  }
+
+  const { displayName, isActive } = req.body as { displayName?: string; isActive?: boolean };
+  if (typeof displayName === 'undefined' && typeof isActive === 'undefined') {
+    res.status(400).json({ error: 'validation', message: 'displayName or isActive must be provided' });
+    return;
+  }
+
+  const trimmedDisplayName = typeof displayName === 'string' ? displayName.trim() : undefined;
+  if (typeof trimmedDisplayName === 'string' && !trimmedDisplayName) {
+    res.status(400).json({ error: 'validation', message: 'displayName must not be empty' });
+    return;
+  }
+
+  try {
+    const updated = await prisma.employee.update({
+      where: { id },
+      data: {
+        ...(typeof trimmedDisplayName === 'string' ? { displayName: trimmedDisplayName } : {}),
+        ...(typeof isActive === 'boolean' ? { isActive } : {})
+      },
+      select: employeeSelect
+    });
+
+    res.status(200).json(updated);
+  } catch (error) {
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2025') {
+      res.status(404).json({ error: 'not_found', message: 'Employee not found' });
+      return;
+    }
+
+    throw error;
+  }
+});
+
+app.delete('/admin/employees/:id', requireAdmin, async (req, res) => {
+  const id = getRouteId(req.params.id);
+  if (!id) {
+    res.status(400).json({ error: 'validation', message: 'id is required' });
+    return;
+  }
+
+  try {
+    const updated = await prisma.employee.update({
+      where: { id },
+      data: { isActive: false },
+      select: employeeSelect
+    });
+
+    res.status(200).json(updated);
+  } catch (error) {
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2025') {
+      res.status(404).json({ error: 'not_found', message: 'Employee not found' });
+      return;
+    }
+
+    throw error;
+  }
 });
 
 app.get('/me', (_req, res) => {
@@ -242,10 +397,11 @@ app.post('/bookings', async (req, res) => {
     return;
   }
 
+  const normalizedUserEmail = normalizeEmail(userEmail);
   const booking = await prisma.booking.create({
     data: {
       deskId,
-      userEmail,
+      userEmail: normalizedUserEmail,
       date: parsedDate
     }
   });
@@ -298,7 +454,13 @@ app.get('/bookings', async (req, res) => {
     orderBy: [{ date: 'asc' }, { createdAt: 'asc' }]
   });
 
-  res.status(200).json(bookings);
+  const employeesByEmail = await getActiveEmployeesByEmail(bookings.map((booking) => booking.userEmail));
+  const enrichedBookings = bookings.map((booking) => ({
+    ...booking,
+    userDisplayName: employeesByEmail.get(normalizeEmail(booking.userEmail))?.displayName
+  }));
+
+  res.status(200).json(enrichedBookings);
 });
 
 app.get('/occupancy', async (req, res) => {
@@ -342,6 +504,11 @@ app.get('/occupancy', async (req, res) => {
     })
   ]);
 
+  const employeesByEmail = await getActiveEmployeesByEmail([
+    ...singleBookings.map((booking) => booking.userEmail),
+    ...recurringBookings.map((booking) => booking.userEmail)
+  ]);
+
   const singleByDeskId = new Map(singleBookings.map((booking) => [booking.deskId, booking]));
   const recurringByDeskId = new Map(recurringBookings.map((booking) => [booking.deskId, booking]));
 
@@ -357,6 +524,7 @@ app.get('/occupancy', async (req, res) => {
         booking: {
           id: single.id,
           userEmail: single.userEmail,
+          userDisplayName: employeesByEmail.get(normalizeEmail(single.userEmail))?.displayName,
           type: 'single' as const
         }
       };
@@ -373,6 +541,7 @@ app.get('/occupancy', async (req, res) => {
         booking: {
           id: recurring.id,
           userEmail: recurring.userEmail,
+          userDisplayName: employeesByEmail.get(normalizeEmail(recurring.userEmail))?.displayName,
           type: 'recurring' as const
         }
       };
@@ -388,12 +557,20 @@ app.get('/occupancy', async (req, res) => {
     };
   });
 
-  const people = Array.from(
-    new Set(occupancyDesks.filter((desk) => desk.booking).map((desk) => desk.booking?.userEmail ?? ''))
-  )
-    .filter((userEmail) => userEmail.length > 0)
-    .sort((a, b) => a.localeCompare(b))
-    .map((userEmail) => ({ userEmail }));
+  const people = occupancyDesks
+    .filter((desk) => desk.booking)
+    .map((desk) => {
+      const userEmail = desk.booking?.userEmail ?? '';
+      const normalizedEmail = normalizeEmail(userEmail);
+      return {
+        email: userEmail,
+        userEmail,
+        displayName: employeesByEmail.get(normalizedEmail)?.displayName,
+        deskName: desk.name
+      };
+    })
+    .filter((person) => person.email.length > 0)
+    .sort((a, b) => (a.displayName ?? a.email).localeCompare(b.displayName ?? b.email, 'de'));
 
   res.status(200).json({
     date: toISODateOnly(parsedDate),
@@ -469,10 +646,12 @@ app.post('/recurring-bookings', async (req, res) => {
     return;
   }
 
+  const normalizedUserEmail = normalizeEmail(userEmail);
+
   const recurringBooking = await prisma.recurringBooking.create({
     data: {
       deskId,
-      userEmail,
+      userEmail: normalizedUserEmail,
       weekday,
       validFrom: parsedValidFrom,
       validTo: parsedValidTo
@@ -756,7 +935,7 @@ app.patch('/admin/bookings/:id', requireAdmin, async (req, res) => {
   const updated = await prisma.booking.update({
     where: { id },
     data: {
-      ...(userEmail ? { userEmail } : {}),
+      ...(userEmail ? { userEmail: normalizeEmail(userEmail) } : {}),
       ...(date ? { date: nextDate } : {})
     }
   });
@@ -852,7 +1031,7 @@ app.patch('/admin/recurring-bookings/:id', requireAdmin, async (req, res) => {
   const updated = await prisma.recurringBooking.update({
     where: { id },
     data: {
-      ...(userEmail ? { userEmail } : {}),
+      ...(userEmail ? { userEmail: normalizeEmail(userEmail) } : {}),
       ...(typeof weekday === 'number' ? { weekday } : {}),
       ...(validFrom ? { validFrom: parsedValidFrom } : {}),
       ...(typeof validTo !== 'undefined' ? { validTo: parsedValidTo } : {})

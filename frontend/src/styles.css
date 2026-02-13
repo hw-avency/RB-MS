@@ -85,8 +85,6 @@ input, select {
   background: transparent;
   z-index: 110;
 }
-.checkbox-row { display: flex; align-items: center; gap: 8px; font-size: .9rem; }
-.checkbox-row input { width: auto; }
 
 .status { border-radius: 999px; padding: 6px 10px; font-size: .8rem; font-weight: 700; }
 .status-connected { background: #e7f7ec; color: #12783a; }
@@ -112,6 +110,7 @@ input, select {
 .day-btn.selected { background: #1f6feb; border-color: #1f6feb; color: #fff; }
 
 .people-list { margin: 8px 0 0; padding-left: 20px; display: grid; gap: 6px; }
+.people-meta { font-size: .8rem; }
 
 table { width: 100%; border-collapse: collapse; }
 th, td { text-align: left; padding: 8px 2px; border-bottom: 1px solid #eef2f7; }

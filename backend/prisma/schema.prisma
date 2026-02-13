@@ -17,6 +17,14 @@ model User {
   updatedAt    DateTime @updatedAt
 }
 
+model Employee {
+  id          String   @id @default(cuid())
+  email       String   @unique
+  displayName String
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+}
+
 model Floorplan {
   id        String   @id @default(cuid())
   name      String

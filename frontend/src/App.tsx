@@ -9,9 +9,11 @@ type OccupancyDesk = {
   x: number;
   y: number;
   status: 'free' | 'booked';
-  booking: { id?: string; userEmail: string; type: 'single' | 'recurring' } | null;
+  booking: { id?: string; userEmail: string; userDisplayName?: string; type: 'single' | 'recurring' } | null;
 };
-type OccupancyResponse = { date: string; floorplanId: string; desks: OccupancyDesk[]; people: { userEmail: string }[] };
+type OccupancyPerson = { email: string; userEmail: string; displayName?: string; deskName?: string };
+type OccupancyResponse = { date: string; floorplanId: string; desks: OccupancyDesk[]; people: OccupancyPerson[] };
+type Employee = { id: string; email: string; displayName: string; isActive: boolean };
 type AdminBooking = {
   id: string;
   deskId: string;
@@ -65,8 +67,10 @@ export function App() {
   const [popupPosition, setPopupPosition] = useState<{ left: number; top: number } | null>(null);
   const popupRef = useRef<HTMLDivElement | null>(null);
 
-  const [userEmail, setUserEmail] = useState('demo@example.com');
-  const [addToCalendar, setAddToCalendar] = useState(false);
+  const [meEmail, setMeEmail] = useState('demo@example.com');
+  const [employees, setEmployees] = useState<Employee[]>([]);
+  const [selectedEmployeeEmail, setSelectedEmployeeEmail] = useState('');
+  const [manualBookingEmail, setManualBookingEmail] = useState('demo@example.com');
   const [errorMessage, setErrorMessage] = useState('');
   const [infoMessage, setInfoMessage] = useState('');
 
@@ -88,6 +92,11 @@ export function App() {
 
   const [adminBookings, setAdminBookings] = useState<AdminBooking[]>([]);
   const [adminRecurring, setAdminRecurring] = useState<AdminRecurringBooking[]>([]);
+  const [newEmployeeEmail, setNewEmployeeEmail] = useState('');
+  const [newEmployeeDisplayName, setNewEmployeeDisplayName] = useState('');
+  const [employeeActionMessage, setEmployeeActionMessage] = useState('');
+  const [editingEmployeeId, setEditingEmployeeId] = useState('');
+  const [editingEmployeeName, setEditingEmployeeName] = useState('');
   const [editingBookingId, setEditingBookingId] = useState('');
   const [editBookingEmail, setEditBookingEmail] = useState('');
   const [editBookingDate, setEditBookingDate] = useState('');
@@ -99,9 +108,10 @@ export function App() {
   );
   const desks = occupancy?.desks ?? [];
   const activeDesk = useMemo(() => desks.find((desk) => desk.id === activeDeskId) ?? null, [desks, activeDeskId]);
+  const activeEmployees = useMemo(() => employees.filter((employee) => employee.isActive), [employees]);
   const people = useMemo(() => {
     const source = occupancy?.people ?? [];
-    return [...new Set(source.map((person) => person.userEmail))].sort((a, b) => a.localeCompare(b, 'de'));
+    return [...source].sort((a, b) => (a.displayName ?? a.email).localeCompare(b.displayName ?? b.email, 'de'));
   }, [occupancy]);
   const calendarDays = useMemo(() => buildCalendarDays(visibleMonth), [visibleMonth]);
 
@@ -130,9 +140,23 @@ export function App() {
   const loadMe = async () => {
     try {
       const me = await get<MeResponse>('/me');
-      if (me.email) setUserEmail(me.email);
+      if (me.email) {
+        setMeEmail(me.email);
+        setManualBookingEmail(me.email);
+      }
     } catch {
       // ignore /me failures and keep default
+    }
+  };
+
+  const loadEmployees = async () => {
+    try {
+      const data = adminHeaders
+        ? await get<Employee[]>('/admin/employees', adminHeaders)
+        : await get<Employee[]>('/employees');
+      setEmployees(data);
+    } catch (error) {
+      handleApiError(error);
     }
   };
 
@@ -164,7 +188,24 @@ export function App() {
     document.title = 'AVENCY Booking';
     loadFloorplans();
     loadMe();
+    loadEmployees();
   }, []);
+
+  useEffect(() => {
+    if (!activeEmployees.length) {
+      setSelectedEmployeeEmail('');
+      return;
+    }
+
+    const meMatch = activeEmployees.find((employee) => employee.email === meEmail)?.email;
+    setSelectedEmployeeEmail((prev) => {
+      if (prev && activeEmployees.some((employee) => employee.email === prev)) {
+        return prev;
+      }
+
+      return meMatch ?? activeEmployees[0]?.email ?? '';
+    });
+  }, [activeEmployees, meEmail]);
 
   useEffect(() => {
     if (selectedFloorplanId) {
@@ -208,9 +249,11 @@ export function App() {
   useEffect(() => {
     if (isAdminMode) {
       loadAdminLists();
+      loadEmployees();
     } else {
       setAdminBookings([]);
       setAdminRecurring([]);
+      loadEmployees();
     }
   }, [isAdminMode, selectedDate, selectedFloorplanId]);
 
@@ -331,11 +374,17 @@ export function App() {
   const createSingleBooking = async (event: FormEvent) => {
     event.preventDefault();
     if (!activeDesk || activeDesk.status !== 'free') return;
+
+    const bookingEmail = activeEmployees.length ? selectedEmployeeEmail : manualBookingEmail.trim();
+    if (!bookingEmail) {
+      setErrorMessage('Bitte E-Mail für die Buchung angeben.');
+      return;
+    }
+
     try {
-      await post('/bookings', { deskId: activeDesk.id, userEmail, date: selectedDate });
+      await post('/bookings', { deskId: activeDesk.id, userEmail: bookingEmail, date: selectedDate });
       setActiveDeskId('');
       setPopupAnchor(null);
-      setAddToCalendar(false);
       await loadOccupancy(selectedFloorplanId, selectedDate);
       if (isAdminMode) await loadAdminLists();
       setInfoMessage('Buchung erstellt.');
@@ -370,6 +419,47 @@ export function App() {
     try {
       await del(`/admin/recurring-bookings/${id}`, adminHeaders);
       await Promise.all([loadOccupancy(selectedFloorplanId, selectedDate), loadAdminLists()]);
+    } catch (error) {
+      handleApiError(error);
+    }
+  };
+
+  const addEmployee = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!adminHeaders) return;
+
+    try {
+      await post('/admin/employees', { email: newEmployeeEmail, displayName: newEmployeeDisplayName }, adminHeaders);
+      setNewEmployeeEmail('');
+      setNewEmployeeDisplayName('');
+      setEmployeeActionMessage('Mitarbeiter hinzugefügt.');
+      await loadEmployees();
+    } catch (error) {
+      handleApiError(error);
+    }
+  };
+
+  const saveEmployeeName = async (id: string) => {
+    if (!adminHeaders) return;
+
+    try {
+      await patch(`/admin/employees/${id}`, { displayName: editingEmployeeName }, adminHeaders);
+      setEditingEmployeeId('');
+      setEditingEmployeeName('');
+      setEmployeeActionMessage('Mitarbeiter aktualisiert.');
+      await loadEmployees();
+    } catch (error) {
+      handleApiError(error);
+    }
+  };
+
+  const toggleEmployee = async (employee: Employee) => {
+    if (!adminHeaders) return;
+
+    try {
+      await patch(`/admin/employees/${employee.id}`, { isActive: !employee.isActive }, adminHeaders);
+      setEmployeeActionMessage(employee.isActive ? 'Mitarbeiter deaktiviert.' : 'Mitarbeiter aktiviert.');
+      await loadEmployees();
     } catch (error) {
       handleApiError(error);
     }
@@ -465,7 +555,7 @@ export function App() {
                         setPopupAnchor({ left: rect.left + rect.width + 10, top: rect.top });
                       }}
                       style={{ left: `${desk.x * 100}%`, top: `${desk.y * 100}%` }}
-                      title={`${desk.name}\nStatus: ${desk.status === 'free' ? 'frei' : 'belegt'}${desk.booking?.userEmail ? `\n${desk.booking.userEmail}` : ''}`}
+                      title={`${desk.name}\nStatus: ${desk.status === 'free' ? 'frei' : 'belegt'}${desk.booking?.userEmail ? `\n${desk.booking.userDisplayName ?? desk.booking.userEmail}` : ''}`}
                     />
                   ))}
                 </div>
@@ -479,7 +569,12 @@ export function App() {
               <p className="muted">{people.length} {people.length === 1 ? 'Person' : 'Personen'}</p>
               {!people.length ? <p className="muted">Niemand gebucht.</p> : (
                 <ul className="people-list">
-                  {people.map((email) => <li key={email}>{email}</li>)}
+                  {people.map((person) => (
+                    <li key={`${person.email}-${person.deskName ?? ''}`}>
+                      <strong>{person.displayName ?? person.email}</strong>
+                      <div className="muted people-meta">{person.email}{person.deskName ? ` · ${person.deskName}` : ''}</div>
+                    </li>
+                  ))}
                 </ul>
               )}
             </section>
@@ -490,7 +585,7 @@ export function App() {
                 <div className="form-grid">
                   <p className="desk-title">{activeDesk.name}</p>
                   <p className="muted">Status: {activeDesk.status === 'free' ? 'frei' : 'belegt'}</p>
-                  {activeDesk.booking?.userEmail && <p className="muted">{activeDesk.booking.userEmail}</p>}
+                  {activeDesk.booking?.userEmail && <p className="muted">{activeDesk.booking.userDisplayName ?? activeDesk.booking.userEmail}</p>}
                 </div>
               )}
             </section>
@@ -538,6 +633,47 @@ export function App() {
                       <button className="btn btn-danger" onClick={deleteDesk}>Desk löschen</button>
                     </div>
                   )}
+                </section>
+
+                <section className="card">
+                  <h3>Mitarbeiter</h3>
+                  {!!employeeActionMessage && <p className="muted">{employeeActionMessage}</p>}
+                  <form onSubmit={addEmployee} className="form-grid">
+                    <input required placeholder="Name" value={newEmployeeDisplayName} onChange={(e) => setNewEmployeeDisplayName(e.target.value)} />
+                    <input required placeholder="E-Mail" value={newEmployeeEmail} onChange={(e) => setNewEmployeeEmail(e.target.value)} />
+                    <button className="btn btn-primary" type="submit">Mitarbeiter hinzufügen</button>
+                  </form>
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Name</th>
+                        <th>E-Mail</th>
+                        <th>Status</th>
+                        <th>Aktionen</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {employees.map((employee) => (
+                        <tr key={employee.id}>
+                          <td>
+                            {editingEmployeeId === employee.id ? (
+                              <input value={editingEmployeeName} onChange={(e) => setEditingEmployeeName(e.target.value)} />
+                            ) : employee.displayName}
+                          </td>
+                          <td>{employee.email}</td>
+                          <td>{employee.isActive ? 'Aktiv' : 'Inaktiv'}</td>
+                          <td className="inline-actions">
+                            {editingEmployeeId === employee.id ? (
+                              <button className="btn btn-primary" onClick={() => saveEmployeeName(employee.id)}>Speichern</button>
+                            ) : (
+                              <button className="btn btn-secondary" onClick={() => { setEditingEmployeeId(employee.id); setEditingEmployeeName(employee.displayName); }}>Umbenennen</button>
+                            )}
+                            <button className="btn btn-secondary" onClick={() => toggleEmployee(employee)}>{employee.isActive ? 'Deaktivieren' : 'Aktivieren'}</button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
                 </section>
 
                 <section className="card">
@@ -636,15 +772,22 @@ export function App() {
             <p className="muted">{selectedDate}</p>
             {activeDesk.status === 'free' ? (
               <form onSubmit={createSingleBooking} className="form-grid">
-                <input value={userEmail} onChange={(e) => setUserEmail(e.target.value)} placeholder="E-Mail" />
-                <label className="checkbox-row">
-                  <input type="checkbox" checked={addToCalendar} onChange={(e) => setAddToCalendar(e.target.checked)} />
-                  Zum Kalender hinzufügen
+                <label className="field">
+                  <span>Für wen buchen?</span>
+                  {activeEmployees.length ? (
+                    <select value={selectedEmployeeEmail} onChange={(e) => setSelectedEmployeeEmail(e.target.value)}>
+                      {activeEmployees.map((employee) => (
+                        <option key={employee.id} value={employee.email}>{employee.displayName} ({employee.email})</option>
+                      ))}
+                    </select>
+                  ) : (
+                    <input value={manualBookingEmail} onChange={(e) => setManualBookingEmail(e.target.value)} placeholder="E-Mail" />
+                  )}
                 </label>
                 <button className="btn btn-primary" type="submit">Buchen</button>
               </form>
             ) : (
-              <p className="muted">Gebucht von {activeDesk.booking?.userEmail}</p>
+              <p className="muted">Gebucht von {activeDesk.booking?.userDisplayName ?? activeDesk.booking?.userEmail}</p>
             )}
             <button className="btn btn-secondary" onClick={() => { setActiveDeskId(''); setPopupAnchor(null); }}>Schließen</button>
           </div>
