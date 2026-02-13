@@ -240,9 +240,23 @@ export function App() {
   };
 
   const loadMe = async () => {
-    const current = await get<MeResponse>('/me');
-    setMe(current);
-    setManualBookingEmail((prev) => prev || current.email);
+    try {
+      const current = await get<MeResponse>('/me');
+      setMe(current);
+      setManualBookingEmail((prev) => prev || current.email);
+    } catch (error) {
+      if (error instanceof ApiError) {
+        const responseCode =
+          typeof error.details === 'object' &&
+          error.details !== null &&
+          'code' in error.details &&
+          typeof error.details.code === 'string'
+            ? error.details.code
+            : 'unknown';
+        console.warn('[auth] /me failed', { status: error.status, code: responseCode });
+      }
+      throw error;
+    }
   };
 
   const loadEmployees = async () => {
