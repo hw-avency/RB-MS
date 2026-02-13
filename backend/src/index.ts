@@ -1,8 +1,8 @@
 import cors from 'cors';
 import express from 'express';
-import crypto from 'crypto';
 import { Prisma } from '@prisma/client';
 import { prisma } from './prisma';
+import { bootstrapBreakglassAdmin, ensureBreakglassEmployee, issueBreakglassToken, requireAdmin, requireAuth } from './auth';
 
 const app = express();
 const port = Number(process.env.PORT ?? 3000);
@@ -23,69 +23,6 @@ app.use(cors());
 app.use(express.json());
 
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
-
-type AdminJwtPayload = { email: string; role: 'admin'; exp: number };
-
-const toBase64Url = (value: string) => Buffer.from(value).toString('base64url');
-const fromBase64Url = (value: string) => Buffer.from(value, 'base64url').toString('utf8');
-
-const createAdminToken = (email: string): string => {
-  const header = toBase64Url(JSON.stringify({ alg: 'HS256', typ: 'JWT' }));
-  const payload = toBase64Url(
-    JSON.stringify({
-      email,
-      role: 'admin',
-      exp: Math.floor(Date.now() / 1000) + 60 * 60 * 8
-    })
-  );
-  const signature = crypto.createHmac('sha256', JWT_SECRET).update(`${header}.${payload}`).digest('base64url');
-  return `${header}.${payload}.${signature}`;
-};
-
-const verifyAdminToken = (token: string): AdminJwtPayload | null => {
-  const [header, payload, signature] = token.split('.');
-  if (!header || !payload || !signature) {
-    return null;
-  }
-
-  const expected = crypto.createHmac('sha256', JWT_SECRET).update(`${header}.${payload}`).digest('base64url');
-  if (expected !== signature) {
-    return null;
-  }
-
-  try {
-    const parsed = JSON.parse(fromBase64Url(payload)) as AdminJwtPayload;
-    if (parsed.role !== 'admin' || typeof parsed.exp !== 'number' || parsed.exp <= Math.floor(Date.now() / 1000)) {
-      return null;
-    }
-    return parsed;
-  } catch {
-    return null;
-  }
-};
-
-const requireAdmin: express.RequestHandler = (req, res, next) => {
-  const authorization = req.header('authorization');
-  if (!authorization?.startsWith('Bearer ')) {
-    res.status(401).json({ error: 'unauthorized', message: 'Missing bearer token' });
-    return;
-  }
-
-  const token = authorization.slice(7);
-
-  const payload = verifyAdminToken(token);
-  if (!payload) {
-    res.status(401).json({ error: 'unauthorized', message: 'Invalid token' });
-    return;
-  }
-
-  if (payload.role !== 'admin') {
-    res.status(403).json({ error: 'forbidden', message: 'Admin role required' });
-    return;
-  }
-
-  next();
-};
 
 const toDateOnly = (value: string): Date | null => {
   if (!DATE_PATTERN.test(value)) {
@@ -152,10 +89,11 @@ const employeeSelect = {
   id: true,
   email: true,
   displayName: true,
-  isActive: true
+  isActive: true,
+  isAdmin: true
 } satisfies Prisma.EmployeeSelect;
 
-const getActiveEmployeesByEmail = async (emails: string[]) => {
+const getActiveEmployeesByEmail = async (emails: string[]): Promise<Map<string, { displayName: string }>> => {
   if (emails.length === 0) {
     return new Map<string, { displayName: string }>();
   }
@@ -184,23 +122,33 @@ app.get('/health', async (_req, res) => {
   }
 });
 
-app.post('/admin/login', (req, res) => {
+app.post('/auth/breakglass/login', async (req, res) => {
   const { email, password } = req.body as { email?: string; password?: string };
   if (!email || !password) {
     res.status(400).json({ error: 'validation', message: 'email and password are required' });
     return;
   }
 
-  if (email !== ADMIN_EMAIL || password !== ADMIN_PASSWORD) {
+  const normalizedEmail = normalizeEmail(email);
+  if (normalizedEmail !== normalizeEmail(ADMIN_EMAIL) || password !== ADMIN_PASSWORD) {
     res.status(401).json({ error: 'unauthorized', message: 'Invalid credentials' });
     return;
   }
 
-  const token = createAdminToken(email);
-  res.status(200).json({ token });
+  const employee = await ensureBreakglassEmployee(normalizedEmail);
+  const token = issueBreakglassToken({ employeeId: employee.id, email: employee.email, displayName: employee.displayName });
+  res.status(200).json({
+    token,
+    user: {
+      email: employee.email,
+      displayName: employee.displayName,
+      isAdmin: true,
+      authProvider: 'breakglass'
+    }
+  });
 });
 
-app.get('/admin/employees', requireAdmin, async (_req, res) => {
+app.get('/admin/employees', requireAuth, requireAdmin, async (_req, res) => {
   const employees = await prisma.employee.findMany({
     select: employeeSelect,
     orderBy: [{ isActive: 'desc' }, { displayName: 'asc' }, { email: 'asc' }]
@@ -209,7 +157,7 @@ app.get('/admin/employees', requireAdmin, async (_req, res) => {
   res.status(200).json(employees);
 });
 
-app.get('/employees', async (_req, res) => {
+app.get('/employees', requireAuth, async (_req, res) => {
   const employees = await prisma.employee.findMany({
     where: { isActive: true },
     select: {
@@ -223,8 +171,8 @@ app.get('/employees', async (_req, res) => {
   res.status(200).json(employees);
 });
 
-app.post('/admin/employees', requireAdmin, async (req, res) => {
-  const { email, displayName } = req.body as { email?: string; displayName?: string };
+app.post('/admin/employees', requireAuth, requireAdmin, async (req, res) => {
+  const { email, displayName, isAdmin } = req.body as { email?: string; displayName?: string; isAdmin?: boolean };
 
   if (!email || !displayName) {
     res.status(400).json({ error: 'validation', message: 'email and displayName are required' });
@@ -248,7 +196,8 @@ app.post('/admin/employees', requireAdmin, async (req, res) => {
     const employee = await prisma.employee.create({
       data: {
         email: normalizedEmail,
-        displayName: normalizedDisplayName
+        displayName: normalizedDisplayName,
+        ...(typeof isAdmin === 'boolean' ? { isAdmin } : {})
       },
       select: employeeSelect
     });
@@ -264,16 +213,16 @@ app.post('/admin/employees', requireAdmin, async (req, res) => {
   }
 });
 
-app.patch('/admin/employees/:id', requireAdmin, async (req, res) => {
+app.patch('/admin/employees/:id', requireAuth, requireAdmin, async (req, res) => {
   const id = getRouteId(req.params.id);
   if (!id) {
     res.status(400).json({ error: 'validation', message: 'id is required' });
     return;
   }
 
-  const { displayName, isActive } = req.body as { displayName?: string; isActive?: boolean };
-  if (typeof displayName === 'undefined' && typeof isActive === 'undefined') {
-    res.status(400).json({ error: 'validation', message: 'displayName or isActive must be provided' });
+  const { displayName, isActive, isAdmin } = req.body as { displayName?: string; isActive?: boolean; isAdmin?: boolean };
+  if (typeof displayName === 'undefined' && typeof isActive === 'undefined' && typeof isAdmin === 'undefined') {
+    res.status(400).json({ error: 'validation', message: 'displayName, isActive or isAdmin must be provided' });
     return;
   }
 
@@ -288,7 +237,8 @@ app.patch('/admin/employees/:id', requireAdmin, async (req, res) => {
       where: { id },
       data: {
         ...(typeof trimmedDisplayName === 'string' ? { displayName: trimmedDisplayName } : {}),
-        ...(typeof isActive === 'boolean' ? { isActive } : {})
+        ...(typeof isActive === 'boolean' ? { isActive } : {}),
+        ...(typeof isAdmin === 'boolean' ? { isAdmin } : {})
       },
       select: employeeSelect
     });
@@ -304,7 +254,7 @@ app.patch('/admin/employees/:id', requireAdmin, async (req, res) => {
   }
 });
 
-app.delete('/admin/employees/:id', requireAdmin, async (req, res) => {
+app.delete('/admin/employees/:id', requireAuth, requireAdmin, async (req, res) => {
   const id = getRouteId(req.params.id);
   if (!id) {
     res.status(400).json({ error: 'validation', message: 'id is required' });
@@ -329,22 +279,23 @@ app.delete('/admin/employees/:id', requireAdmin, async (req, res) => {
   }
 });
 
-app.get('/me', (_req, res) => {
-  res.status(200).json({
-    id: 'demo-user',
-    email: 'demo@example.com',
-    displayName: 'Demo User',
-    role: 'user'
-  });
+app.get('/me', requireAuth, (req, res) => {
+  res.status(200).json(req.user);
 });
 
-app.get('/floorplans', async (_req, res) => {
+app.get('/floorplans', requireAuth, async (_req, res) => {
   const floorplans = await prisma.floorplan.findMany({ orderBy: { createdAt: 'desc' } });
   res.status(200).json(floorplans);
 });
 
-app.get('/floorplans/:id', async (req, res) => {
-  const floorplan = await prisma.floorplan.findUnique({ where: { id: req.params.id } });
+app.get('/floorplans/:id', requireAuth, async (req, res) => {
+    const id = getRouteId(req.params.id);
+  if (!id) {
+    res.status(400).json({ error: 'validation', message: 'id is required' });
+    return;
+  }
+
+  const floorplan = await prisma.floorplan.findUnique({ where: { id } });
 
   if (!floorplan) {
     res.status(404).json({ error: 'not_found', message: 'Floorplan not found' });
@@ -354,16 +305,22 @@ app.get('/floorplans/:id', async (req, res) => {
   res.status(200).json(floorplan);
 });
 
-app.get('/floorplans/:id/desks', async (req, res) => {
+app.get('/floorplans/:id/desks', requireAuth, async (req, res) => {
+  const id = getRouteId(req.params.id);
+  if (!id) {
+    res.status(400).json({ error: 'validation', message: 'id is required' });
+    return;
+  }
+
   const desks = await prisma.desk.findMany({
-    where: { floorplanId: req.params.id },
+    where: { floorplanId: id },
     orderBy: { createdAt: 'asc' }
   });
 
   res.status(200).json(desks);
 });
 
-app.post('/bookings', async (req, res) => {
+app.post('/bookings', requireAuth, async (req, res) => {
   const { deskId, userEmail, date } = req.body as { deskId?: string; userEmail?: string; date?: string };
 
   if (!deskId || !userEmail || !date) {
@@ -431,7 +388,7 @@ app.post('/bookings', async (req, res) => {
   res.status(201).json(booking);
 });
 
-app.post('/bookings/range', async (req, res) => {
+app.post('/bookings/range', requireAuth, async (req, res) => {
   const { deskId, userEmail, from, to, weekdaysOnly } = req.body as {
     deskId?: string;
     userEmail?: string;
@@ -534,7 +491,7 @@ app.post('/bookings/range', async (req, res) => {
   res.status(201).json({ createdCount: created.length, dates: created });
 });
 
-app.get('/bookings', async (req, res) => {
+app.get('/bookings', requireAuth, async (req, res) => {
   const from = typeof req.query.from === 'string' ? req.query.from : undefined;
   const to = typeof req.query.to === 'string' ? req.query.to : undefined;
   const floorplanId = typeof req.query.floorplanId === 'string' ? req.query.floorplanId : undefined;
@@ -588,7 +545,7 @@ app.get('/bookings', async (req, res) => {
   res.status(200).json(enrichedBookings);
 });
 
-app.get('/occupancy', async (req, res) => {
+app.get('/occupancy', requireAuth, async (req, res) => {
   const floorplanId = typeof req.query.floorplanId === 'string' ? req.query.floorplanId : undefined;
   const date = typeof req.query.date === 'string' ? req.query.date : undefined;
 
@@ -716,7 +673,7 @@ app.get('/occupancy', async (req, res) => {
   });
 });
 
-app.post('/recurring-bookings', async (req, res) => {
+app.post('/recurring-bookings', requireAuth, async (req, res) => {
   const { deskId, userEmail, weekday, validFrom, validTo } = req.body as {
     deskId?: string;
     userEmail?: string;
@@ -797,7 +754,7 @@ app.post('/recurring-bookings', async (req, res) => {
   res.status(201).json(recurringBooking);
 });
 
-app.post('/recurring-bookings/bulk', async (req, res) => {
+app.post('/recurring-bookings/bulk', requireAuth, async (req, res) => {
   const { deskId, userEmail, weekdays, validFrom, validTo } = req.body as {
     deskId?: string;
     userEmail?: string;
@@ -906,7 +863,7 @@ app.post('/recurring-bookings/bulk', async (req, res) => {
   res.status(201).json(recurringBookings);
 });
 
-app.get('/recurring-bookings', async (req, res) => {
+app.get('/recurring-bookings', requireAuth, async (req, res) => {
   const floorplanId = typeof req.query.floorplanId === 'string' ? req.query.floorplanId : undefined;
 
   const recurringBookings = await prisma.recurringBooking.findMany({
@@ -917,7 +874,7 @@ app.get('/recurring-bookings', async (req, res) => {
   res.status(200).json(recurringBookings);
 });
 
-app.post('/admin/floorplans', requireAdmin, async (req, res) => {
+app.post('/admin/floorplans', requireAuth, requireAdmin, async (req, res) => {
   const { name, imageUrl } = req.body as { name?: string; imageUrl?: string };
 
   if (!name || !imageUrl) {
@@ -929,7 +886,7 @@ app.post('/admin/floorplans', requireAdmin, async (req, res) => {
   res.status(201).json(floorplan);
 });
 
-app.patch('/admin/floorplans/:id', requireAdmin, async (req, res) => {
+app.patch('/admin/floorplans/:id', requireAuth, requireAdmin, async (req, res) => {
   const id = getRouteId(req.params.id);
   if (!id) {
     res.status(400).json({ error: 'validation', message: 'id is required' });
@@ -965,7 +922,7 @@ app.patch('/admin/floorplans/:id', requireAdmin, async (req, res) => {
   }
 });
 
-app.delete('/admin/floorplans/:id', requireAdmin, async (req, res) => {
+app.delete('/admin/floorplans/:id', requireAuth, requireAdmin, async (req, res) => {
   const id = getRouteId(req.params.id);
   if (!id) {
     res.status(400).json({ error: 'validation', message: 'id is required' });
@@ -985,7 +942,7 @@ app.delete('/admin/floorplans/:id', requireAdmin, async (req, res) => {
   }
 });
 
-app.post('/admin/floorplans/:id/desks', requireAdmin, async (req, res) => {
+app.post('/admin/floorplans/:id/desks', requireAuth, requireAdmin, async (req, res) => {
   const id = getRouteId(req.params.id);
   if (!id) {
     res.status(400).json({ error: 'validation', message: 'id is required' });
@@ -1009,7 +966,7 @@ app.post('/admin/floorplans/:id/desks', requireAdmin, async (req, res) => {
   res.status(201).json(desk);
 });
 
-app.delete('/admin/desks/:id', requireAdmin, async (req, res) => {
+app.delete('/admin/desks/:id', requireAuth, requireAdmin, async (req, res) => {
   const id = getRouteId(req.params.id);
   if (!id) {
     res.status(400).json({ error: 'validation', message: 'id is required' });
@@ -1028,7 +985,7 @@ app.delete('/admin/desks/:id', requireAdmin, async (req, res) => {
   }
 });
 
-app.patch('/admin/desks/:id', requireAdmin, async (req, res) => {
+app.patch('/admin/desks/:id', requireAuth, requireAdmin, async (req, res) => {
   const id = getRouteId(req.params.id);
   if (!id) {
     res.status(400).json({ error: 'validation', message: 'id is required' });
@@ -1077,7 +1034,7 @@ app.patch('/admin/desks/:id', requireAdmin, async (req, res) => {
   }
 });
 
-app.get('/admin/bookings', requireAdmin, async (req, res) => {
+app.get('/admin/bookings', requireAuth, requireAdmin, async (req, res) => {
   const date = typeof req.query.date === 'string' ? req.query.date : undefined;
   const floorplanId = typeof req.query.floorplanId === 'string' ? req.query.floorplanId : undefined;
 
@@ -1112,7 +1069,7 @@ app.get('/admin/bookings', requireAdmin, async (req, res) => {
   res.status(200).json(bookings);
 });
 
-app.delete('/admin/bookings/:id', requireAdmin, async (req, res) => {
+app.delete('/admin/bookings/:id', requireAuth, requireAdmin, async (req, res) => {
   const id = getRouteId(req.params.id);
   if (!id) {
     res.status(400).json({ error: 'validation', message: 'id is required' });
@@ -1131,7 +1088,7 @@ app.delete('/admin/bookings/:id', requireAdmin, async (req, res) => {
   }
 });
 
-app.patch('/admin/bookings/:id', requireAdmin, async (req, res) => {
+app.patch('/admin/bookings/:id', requireAuth, requireAdmin, async (req, res) => {
   const id = getRouteId(req.params.id);
   if (!id) {
     res.status(400).json({ error: 'validation', message: 'id is required' });
@@ -1207,7 +1164,7 @@ app.patch('/admin/bookings/:id', requireAdmin, async (req, res) => {
   res.status(200).json(updated);
 });
 
-app.get('/admin/recurring-bookings', requireAdmin, async (req, res) => {
+app.get('/admin/recurring-bookings', requireAuth, requireAdmin, async (req, res) => {
   const floorplanId = typeof req.query.floorplanId === 'string' ? req.query.floorplanId : undefined;
 
   const recurringBookings = await prisma.recurringBooking.findMany({
@@ -1227,7 +1184,7 @@ app.get('/admin/recurring-bookings', requireAdmin, async (req, res) => {
   res.status(200).json(recurringBookings);
 });
 
-app.delete('/admin/recurring-bookings/:id', requireAdmin, async (req, res) => {
+app.delete('/admin/recurring-bookings/:id', requireAuth, requireAdmin, async (req, res) => {
   const id = getRouteId(req.params.id);
   if (!id) {
     res.status(400).json({ error: 'validation', message: 'id is required' });
@@ -1246,7 +1203,7 @@ app.delete('/admin/recurring-bookings/:id', requireAdmin, async (req, res) => {
   }
 });
 
-app.patch('/admin/recurring-bookings/:id', requireAdmin, async (req, res) => {
+app.patch('/admin/recurring-bookings/:id', requireAuth, requireAdmin, async (req, res) => {
   const id = getRouteId(req.params.id);
   if (!id) {
     res.status(400).json({ error: 'validation', message: 'id is required' });
@@ -1305,6 +1262,14 @@ app.patch('/admin/recurring-bookings/:id', requireAdmin, async (req, res) => {
   res.status(200).json(updated);
 });
 
-app.listen(port, '0.0.0.0', () => {
-  console.log(`API listening on ${port}`);
+const start = async () => {
+  await bootstrapBreakglassAdmin();
+  app.listen(port, '0.0.0.0', () => {
+    console.log(`API listening on ${port}`);
+  });
+};
+
+start().catch((error) => {
+  console.error('Failed to start server', error);
+  process.exit(1);
 });

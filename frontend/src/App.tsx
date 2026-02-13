@@ -1,6 +1,7 @@
 import { FormEvent, MouseEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { API_BASE, ApiError, del, get, patch, post } from './api';
+import { API_BASE, ApiError, del, get, patch, post, setAuthTokenProvider } from './api';
+import { entraScope, getActiveAccount, msalInstance } from './auth';
 
 type Floorplan = { id: string; name: string; imageUrl: string; createdAt: string };
 type OccupancyDesk = {
@@ -30,7 +31,7 @@ type AdminRecurringBooking = {
   validTo: string | null;
   desk: { id: string; name: string; floorplanId: string };
 };
-type MeResponse = { email: string };
+type MeResponse = { employeeId: string; email: string; displayName: string; isAdmin: boolean; authProvider: 'breakglass' | 'entra' };
 type BookingMode = 'single' | 'range' | 'series';
 
 const today = new Date().toISOString().slice(0, 10);
@@ -101,10 +102,10 @@ export function App() {
   const [popupPosition, setPopupPosition] = useState<{ left: number; top: number } | null>(null);
   const popupRef = useRef<HTMLDivElement | null>(null);
 
-  const [meEmail, setMeEmail] = useState('demo@example.com');
+  const [me, setMe] = useState<MeResponse | null>(null);
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [selectedEmployeeEmail, setSelectedEmployeeEmail] = useState('');
-  const [manualBookingEmail, setManualBookingEmail] = useState('demo@example.com');
+  const [manualBookingEmail, setManualBookingEmail] = useState('');
   const [errorMessage, setErrorMessage] = useState('');
   const [infoMessage, setInfoMessage] = useState('');
   const [bookingMode, setBookingMode] = useState<BookingMode>('single');
@@ -116,11 +117,12 @@ export function App() {
   const [seriesValidTo, setSeriesValidTo] = useState(endOfYear());
   const [bookingConflictDates, setBookingConflictDates] = useState<string[]>([]);
 
-  const [adminToken, setAdminToken] = useState(localStorage.getItem('adminToken') ?? '');
-  const isAdminMode = !!adminToken;
+  const [breakglassToken, setBreakglassToken] = useState(localStorage.getItem('breakglassToken') ?? '');
+  const [isAuthenticating, setIsAuthenticating] = useState(true);
   const [showAdminLogin, setShowAdminLogin] = useState(false);
   const [adminEmail, setAdminEmail] = useState('admin@example.com');
   const [adminPassword, setAdminPassword] = useState('');
+  const isAdminMode = me?.isAdmin === true;
   const [adminTab, setAdminTab] = useState<'floorplans' | 'desks' | 'bookings' | 'employees'>('floorplans');
 
   const [createName, setCreateName] = useState('');
@@ -143,7 +145,7 @@ export function App() {
   const [editBookingEmail, setEditBookingEmail] = useState('');
   const [editBookingDate, setEditBookingDate] = useState('');
 
-  const adminHeaders = useMemo(() => (adminToken ? { Authorization: `Bearer ${adminToken}` } : undefined), [adminToken]);
+  const adminHeaders = useMemo(() => (isAdminMode ? {} : undefined), [isAdminMode]);
   const selectedFloorplan = useMemo(
     () => floorplans.find((floorplan) => floorplan.id === selectedFloorplanId) ?? null,
     [floorplans, selectedFloorplanId]
@@ -162,8 +164,8 @@ export function App() {
     if (error instanceof ApiError) {
       setErrorMessage(error.message);
       if (error.status === 401) {
-        localStorage.removeItem('adminToken');
-        setAdminToken('');
+        localStorage.removeItem('breakglassToken');
+        setBreakglassToken('');
       }
       return;
     }
@@ -197,15 +199,9 @@ export function App() {
   };
 
   const loadMe = async () => {
-    try {
-      const me = await get<MeResponse>('/me');
-      if (me.email) {
-        setMeEmail(me.email);
-        setManualBookingEmail(me.email);
-      }
-    } catch {
-      // ignore /me failures and keep default
-    }
+    const current = await get<MeResponse>('/me');
+    setMe(current);
+    setManualBookingEmail((prev) => prev || current.email);
   };
 
   const loadEmployees = async () => {
@@ -245,9 +241,39 @@ export function App() {
 
   useEffect(() => {
     document.title = 'AVENCY Booking';
-    loadFloorplans();
-    loadMe();
-    loadEmployees();
+
+    setAuthTokenProvider(async () => {
+      const breakglass = localStorage.getItem('breakglassToken');
+      if (breakglass) return breakglass;
+
+      const account = getActiveAccount();
+      if (!account) return null;
+
+      const token = await msalInstance.acquireTokenSilent();
+      return token.accessToken;
+    });
+
+    const bootstrap = async () => {
+      try {
+        await msalInstance.initialize();
+        const redirect = await msalInstance.handleRedirectPromise();
+        if (redirect?.account) {
+          msalInstance.setActiveAccount(redirect.account);
+        } else {
+          const account = getActiveAccount();
+          if (account) msalInstance.setActiveAccount(account);
+        }
+
+        await loadMe();
+        await Promise.all([loadFloorplans(), loadEmployees()]);
+      } catch {
+        setMe(null);
+      } finally {
+        setIsAuthenticating(false);
+      }
+    };
+
+    bootstrap();
   }, []);
 
   useEffect(() => {
@@ -256,7 +282,7 @@ export function App() {
       return;
     }
 
-    const meEmailNormalized = meEmail.toLowerCase();
+    const meEmailNormalized = (me?.email ?? '').toLowerCase();
     const meMatch = activeEmployees.find((employee) => employee.email.toLowerCase() === meEmailNormalized)?.email;
     setSelectedEmployeeEmail((prev) => {
       if (prev && activeEmployees.some((employee) => employee.email === prev)) {
@@ -265,7 +291,7 @@ export function App() {
 
       return meMatch ?? activeEmployees[0]?.email ?? '';
     });
-  }, [activeEmployees, meEmail]);
+  }, [activeEmployees, me?.email]);
 
   useEffect(() => {
     if (selectedFloorplanId) {
@@ -320,7 +346,8 @@ export function App() {
       }
     };
     window.addEventListener('keydown', onEscape);
-    return () => window.removeEventListener('keydown', onEscape);
+  
+  return () => window.removeEventListener('keydown', onEscape);
   }, [repositioningDeskId, selectedDeskId]);
 
   useEffect(() => {
@@ -355,9 +382,10 @@ export function App() {
     event.preventDefault();
     setErrorMessage('');
     try {
-      const data = await post<{ token: string }>('/admin/login', { email: adminEmail, password: adminPassword });
-      localStorage.setItem('adminToken', data.token);
-      setAdminToken(data.token);
+      const data = await post<{ token: string }>('/auth/breakglass/login', { email: adminEmail, password: adminPassword });
+      localStorage.setItem('breakglassToken', data.token);
+      setBreakglassToken(data.token);
+      await loadMe();
       setShowAdminLogin(false);
       setAdminPassword('');
       setInfoMessage('Admin Mode aktiviert.');
@@ -367,8 +395,9 @@ export function App() {
   };
 
   const logoutAdmin = () => {
-    localStorage.removeItem('adminToken');
-    setAdminToken('');
+    localStorage.removeItem('breakglassToken');
+    setBreakglassToken('');
+    setMe(null);
     setInfoMessage('Zurück im Booking Mode.');
   };
 
@@ -600,6 +629,32 @@ export function App() {
     setSelectedDate(dayKey);
     setVisibleMonth(new Date(Date.UTC(day.getUTCFullYear(), day.getUTCMonth(), 1)));
   };
+
+  const loginWithMicrosoft = async () => {
+    await msalInstance.loginRedirect();
+  };
+
+  if (isAuthenticating) {
+    return <div className="app-shell"><p>Lade Anmeldung…</p></div>;
+  }
+
+  if (!me) {
+    return (
+      <div className="app-shell" style={{ maxWidth: 480, margin: '3rem auto' }}>
+        <h1>AVENCY Booking Login</h1>
+        <button type="button" onClick={loginWithMicrosoft}>Sign in with Microsoft</button>
+        <hr />
+        <h2>Breakglass admin login</h2>
+        <form onSubmit={loginAdmin}>
+          <label>Email<input value={adminEmail} onChange={(event) => setAdminEmail(event.target.value)} /></label>
+          <label>Passwort<input type="password" value={adminPassword} onChange={(event) => setAdminPassword(event.target.value)} /></label>
+          <button type="submit">Breakglass anmelden</button>
+        </form>
+        {errorMessage && <p>{errorMessage}</p>}
+      </div>
+    );
+  }
+
 
   return (
     <main className="app-shell">

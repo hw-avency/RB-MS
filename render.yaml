@@ -26,6 +26,12 @@ services:
         sync: false
       - key: ADMIN_PASSWORD
         sync: false
+      - key: ENTRA_TENANT_ID
+        sync: false
+      - key: ENTRA_API_AUDIENCE
+        sync: false
+      - key: ENTRA_JWKS_CACHE_TTL_SECONDS
+        value: "3600"
       - key: RUN_SEED
         value: "false"
 
@@ -38,4 +44,12 @@ services:
     autoDeploy: true
     envVars:
       - key: VITE_API_BASE_URL
+        sync: false
+      - key: VITE_ENTRA_CLIENT_ID
+        sync: false
+      - key: VITE_ENTRA_TENANT_ID
+        sync: false
+      - key: VITE_ENTRA_REDIRECT_URI
+        sync: false
+      - key: VITE_ENTRA_SCOPE
         sync: false
