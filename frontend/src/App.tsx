@@ -11,7 +11,7 @@ type OccupancyDesk = {
   status: 'free' | 'booked';
   booking: { id?: string; userEmail: string; userDisplayName?: string; deskName?: string; type: 'single' | 'recurring' } | null;
 };
-type OccupancyPerson = { email: string; userEmail: string; displayName?: string; deskName?: string };
+type OccupancyPerson = { email: string; userEmail: string; displayName?: string; deskName?: string; deskId?: string };
 type OccupancyResponse = { date: string; floorplanId: string; desks: OccupancyDesk[]; people: OccupancyPerson[] };
 type Employee = { id: string; email: string; displayName: string; isActive: boolean };
 type BookingEmployee = { id: string; email: string; displayName: string };
@@ -94,7 +94,9 @@ export function App() {
   const [selectedDate, setSelectedDate] = useState(today);
   const [visibleMonth, setVisibleMonth] = useState(startOfMonth(today));
   const [occupancy, setOccupancy] = useState<OccupancyResponse | null>(null);
-  const [activeDeskId, setActiveDeskId] = useState('');
+  const [selectedDeskId, setSelectedDeskId] = useState('');
+  const [hoveredDeskId, setHoveredDeskId] = useState('');
+  const [repositioningDeskId, setRepositioningDeskId] = useState('');
   const [popupAnchor, setPopupAnchor] = useState<{ left: number; top: number } | null>(null);
   const [popupPosition, setPopupPosition] = useState<{ left: number; top: number } | null>(null);
   const popupRef = useRef<HTMLDivElement | null>(null);
@@ -147,7 +149,7 @@ export function App() {
     [floorplans, selectedFloorplanId]
   );
   const desks = occupancy?.desks ?? [];
-  const activeDesk = useMemo(() => desks.find((desk) => desk.id === activeDeskId) ?? null, [desks, activeDeskId]);
+  const activeDesk = useMemo(() => desks.find((desk) => desk.id === selectedDeskId) ?? null, [desks, selectedDeskId]);
   const activeEmployees = useMemo(() => employees.filter((employee) => employee.isActive), [employees]);
   const people = useMemo(() => {
     const source = occupancy?.people ?? [];
@@ -221,7 +223,7 @@ export function App() {
     try {
       const occupancyData = await get<OccupancyResponse>(`/occupancy?floorplanId=${floorplanId}&date=${date}`);
       setOccupancy(occupancyData);
-      setActiveDeskId((prev) => (occupancyData.desks.some((desk) => desk.id === prev) ? prev : ''));
+      setSelectedDeskId((prev) => (occupancyData.desks.some((desk) => desk.id === prev) ? prev : ''));
     } catch (error) {
       handleApiError(error);
     }
@@ -272,9 +274,11 @@ export function App() {
   }, [selectedFloorplanId, selectedDate]);
 
   useEffect(() => {
-    setActiveDeskId('');
+    setSelectedDeskId('');
+    setHoveredDeskId('');
     setPopupAnchor(null);
     setPopupPosition(null);
+    setRepositioningDeskId('');
   }, [selectedDate, selectedFloorplanId]);
 
 
@@ -286,7 +290,7 @@ export function App() {
 
   useEffect(() => {
     setBookingConflictDates([]);
-  }, [activeDeskId, bookingMode]);
+  }, [selectedDeskId, bookingMode]);
 
   useLayoutEffect(() => {
     if (!popupAnchor || !popupRef.current) {
@@ -301,19 +305,23 @@ export function App() {
       left: Math.min(Math.max(popupAnchor.left, margin), Math.max(maxLeft, margin)),
       top: Math.min(Math.max(popupAnchor.top, margin), Math.max(maxTop, margin))
     });
-  }, [popupAnchor, activeDeskId]);
+  }, [popupAnchor, selectedDeskId]);
 
   useEffect(() => {
-    if (!activeDeskId) return;
     const onEscape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        setActiveDeskId('');
+      if (event.key !== 'Escape') return;
+      if (repositioningDeskId) {
+        setRepositioningDeskId('');
+        return;
+      }
+      if (selectedDeskId) {
+        setSelectedDeskId('');
         setPopupAnchor(null);
       }
     };
     window.addEventListener('keydown', onEscape);
     return () => window.removeEventListener('keydown', onEscape);
-  }, [activeDeskId]);
+  }, [repositioningDeskId, selectedDeskId]);
 
   useEffect(() => {
     if (isAdminMode) {
@@ -330,6 +338,12 @@ export function App() {
     setDeskNameInput(activeDesk?.name ?? '');
     setDeskActionMessage('');
   }, [activeDesk?.id]);
+
+  useEffect(() => {
+    if (adminTab !== 'desks' && repositioningDeskId) {
+      setRepositioningDeskId('');
+    }
+  }, [adminTab, repositioningDeskId]);
 
   useEffect(() => {
     setFloorplanNameInput(selectedFloorplan?.name ?? '');
@@ -399,7 +413,7 @@ export function App() {
   };
 
   const createDeskAtPosition = async (event: MouseEvent<HTMLDivElement>) => {
-    if (!adminHeaders || !selectedFloorplan || adminTab !== 'desks') return;
+    if (!adminHeaders || !selectedFloorplan || adminTab !== 'desks' || !!repositioningDeskId) return;
     const target = event.target as HTMLElement;
     if (target.dataset.pin === 'desk-pin') return;
 
@@ -416,12 +430,28 @@ export function App() {
     }
   };
 
+  const repositionDesk = async (event: MouseEvent<HTMLDivElement>) => {
+    if (!adminHeaders || !selectedFloorplan || !repositioningDeskId) return;
+
+    const rect = event.currentTarget.getBoundingClientRect();
+    const x = (event.clientX - rect.left) / rect.width;
+    const y = (event.clientY - rect.top) / rect.height;
+
+    try {
+      await patch(`/admin/desks/${repositioningDeskId}`, { x, y }, adminHeaders);
+      setRepositioningDeskId('');
+      await Promise.all([loadOccupancy(selectedFloorplan.id, selectedDate), loadAdminLists()]);
+    } catch (error) {
+      handleApiError(error);
+    }
+  };
+
   const deleteDesk = async () => {
     if (!adminHeaders || !activeDesk) return;
     try {
       await del(`/admin/desks/${activeDesk.id}`, adminHeaders);
       await loadOccupancy(selectedFloorplanId, selectedDate);
-      setActiveDeskId('');
+      setSelectedDeskId('');
     } catch (error) {
       handleApiError(error);
     }
@@ -472,7 +502,7 @@ export function App() {
         });
       }
 
-      setActiveDeskId('');
+      setSelectedDeskId('');
       setPopupAnchor(null);
       await loadOccupancy(selectedFloorplanId, selectedDate);
       if (isAdminMode) await loadAdminLists();
@@ -644,19 +674,26 @@ export function App() {
                 {!selectedFloorplan ? <p>Kein Floorplan ausgewählt.</p> : (
                   <>
                     <h2>{selectedFloorplan.name}</h2>
-                    {adminTab === 'desks' && <p className="muted">Klick auf freie Fläche, um einen Desk anzulegen.</p>}
+                    {adminTab === 'desks' && <p className="muted">{repositioningDeskId ? 'Klicke auf neue Position im Floorplan' : 'Klick auf freie Fläche, um einen Desk anzulegen.'}</p>}
                     {(adminTab === 'floorplans' || adminTab === 'desks' || adminTab === 'bookings') && (
-                      <div onClick={adminTab === 'desks' ? createDeskAtPosition : undefined} className="floorplan-canvas" role="presentation">
+                      <div
+                        onClick={adminTab === 'desks' ? (repositioningDeskId ? repositionDesk : createDeskAtPosition) : undefined}
+                        className={`floorplan-canvas ${repositioningDeskId ? 'reposition-mode' : ''}`}
+                        role="presentation"
+                      >
                         <img src={selectedFloorplan.imageUrl} alt={selectedFloorplan.name} />
                         {(adminTab === 'desks' || adminTab === 'bookings') && desks.map((desk) => (
                           <button
                             key={desk.id}
                             data-pin="desk-pin"
                             type="button"
-                            className={`desk-pin ${desk.status} ${activeDeskId === desk.id ? 'selected' : ''}`}
+                            className={`desk-pin ${desk.status} ${selectedDeskId === desk.id ? 'selected' : ''} ${hoveredDeskId === desk.id ? 'hovered' : ''}`}
+                            onMouseEnter={() => setHoveredDeskId(desk.id)}
+                            onMouseLeave={() => setHoveredDeskId('')}
                             onClick={(event) => {
                               event.stopPropagation();
-                              setActiveDeskId(desk.id);
+                              if (repositioningDeskId) return;
+                              setSelectedDeskId(desk.id);
                             }}
                             style={{ left: `${desk.x * 100}%`, top: `${desk.y * 100}%` }}
                           />
@@ -686,10 +723,10 @@ export function App() {
                       <h3>Desk Properties</h3>
                       <form onSubmit={renameDesk} className="form-grid">
                         <input value={deskNameInput} onChange={(e) => setDeskNameInput(e.target.value)} placeholder="Desk name" />
-                        <input readOnly value={activeDesk.x.toFixed(3)} />
-                        <input readOnly value={activeDesk.y.toFixed(3)} />
                         <button className="btn btn-primary" type="submit">Save</button>
                       </form>
+                      <button className="btn btn-secondary" type="button" onClick={() => setRepositioningDeskId(activeDesk.id)}>Neu anordnen</button>
+                      {repositioningDeskId && <button className="linkish" type="button" onClick={() => setRepositioningDeskId('')}>Abbrechen</button>}
                       <button className="btn btn-danger" onClick={deleteDesk}>Delete</button>
                     </div>
                   )
@@ -699,7 +736,13 @@ export function App() {
                     <thead><tr><th>Desk</th><th>Employee</th><th>Type</th><th>Edit</th><th>Delete</th></tr></thead>
                     <tbody>
                       {adminBookings.map((booking) => (
-                        <tr key={booking.id}>
+                        <tr
+                          key={booking.id}
+                          className={selectedDeskId === booking.desk.id ? 'row-selected' : ''}
+                          onMouseEnter={() => setHoveredDeskId(booking.desk.id)}
+                          onMouseLeave={() => setHoveredDeskId('')}
+                          onClick={() => setSelectedDeskId(booking.desk.id)}
+                        >
                           <td>{booking.desk.name}</td>
                           <td>{booking.userEmail}</td>
                           <td>Single</td>
@@ -708,7 +751,13 @@ export function App() {
                         </tr>
                       ))}
                       {adminRecurring.map((booking) => (
-                        <tr key={booking.id}>
+                        <tr
+                          key={booking.id}
+                          className={selectedDeskId === booking.desk.id ? 'row-selected' : ''}
+                          onMouseEnter={() => setHoveredDeskId(booking.desk.id)}
+                          onMouseLeave={() => setHoveredDeskId('')}
+                          onClick={() => setSelectedDeskId(booking.desk.id)}
+                        >
                           <td>{booking.desk.name}</td><td>{booking.userEmail}</td><td>Recurring</td><td>-</td>
                           <td><button className="btn btn-danger" onClick={() => deleteAdminRecurring(booking.id)}>Delete</button></td>
                         </tr>
@@ -787,10 +836,12 @@ export function App() {
                         key={desk.id}
                         data-pin="desk-pin"
                         type="button"
-                        className={`desk-pin ${desk.status} ${activeDeskId === desk.id ? 'selected' : ''}`}
+                        className={`desk-pin ${desk.status} ${selectedDeskId === desk.id ? 'selected' : ''} ${hoveredDeskId === desk.id ? 'hovered' : ''}`}
+                        onMouseEnter={() => setHoveredDeskId(desk.id)}
+                        onMouseLeave={() => setHoveredDeskId('')}
                         onClick={(event) => {
                           event.stopPropagation();
-                          setActiveDeskId(desk.id);
+                          setSelectedDeskId(desk.id);
                           const rect = event.currentTarget.getBoundingClientRect();
                           setPopupAnchor({ left: rect.left + rect.width + 10, top: rect.top });
                         }}
@@ -810,7 +861,16 @@ export function App() {
                     const fallbackName = person.email.split('@')[0] || person.email;
                     const primaryName = person.displayName?.trim() || fallbackName;
                     return (
-                      <li key={`${person.email}-${person.deskName ?? 'none'}`} className="person-item">
+                      <li
+                        key={`${person.email}-${person.deskName ?? 'none'}`}
+                        className={`person-item ${selectedDeskId === person.deskId ? 'row-selected' : ''}`}
+                        onMouseEnter={() => setHoveredDeskId(person.deskId ?? '')}
+                        onMouseLeave={() => setHoveredDeskId('')}
+                        onClick={() => {
+                          if (!person.deskId) return;
+                          setSelectedDeskId(person.deskId);
+                        }}
+                      >
                         <div>
                           <p className="person-primary">{primaryName}</p>
                           <p className="people-meta">{person.email}</p>
@@ -846,7 +906,7 @@ export function App() {
 
       {!isAdminMode && activeDesk && popupPosition && createPortal(
         <>
-          <div className="booking-portal-backdrop" onClick={() => { setActiveDeskId(''); setPopupAnchor(null); }} />
+          <div className="booking-portal-backdrop" onClick={() => { setSelectedDeskId(''); setPopupAnchor(null); }} />
           <div ref={popupRef} className="booking-overlay card" style={{ left: popupPosition.left, top: popupPosition.top }} onClick={(event) => event.stopPropagation()}>
             <h3>{activeDesk.name}</h3>
             <p className="muted">{selectedDate}</p>
@@ -947,7 +1007,7 @@ export function App() {
             ) : (
               <p className="muted">Gebucht von {activeDesk.booking?.userDisplayName ?? activeDesk.booking?.userEmail}</p>
             )}
-            <button className="btn btn-secondary" onClick={() => { setActiveDeskId(''); setPopupAnchor(null); }}>Schließen</button>
+            <button className="btn btn-secondary" onClick={() => { setSelectedDeskId(''); setPopupAnchor(null); }}>Schließen</button>
           </div>
         </>,
         document.body

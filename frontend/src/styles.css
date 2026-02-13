@@ -64,13 +64,15 @@ input, select {
   min-height: 70vh;
 }
 .floorplan-canvas img { width: 100%; min-height: 70vh; display: block; object-fit: contain; }
+.floorplan-canvas.reposition-mode { cursor: crosshair; }
 
 .desk-pin {
   position: absolute; transform: translate(-50%, -50%); width: 18px; height: 18px; border-radius: 999px;
   border: 2px solid #1f6feb; background: #fff; cursor: pointer;
 }
 .desk-pin.booked { background: #d62f3d; border-color: #d62f3d; }
-.desk-pin.selected { box-shadow: 0 0 0 4px rgba(31, 111, 235, .25); }
+.desk-pin.selected { box-shadow: 0 0 0 5px rgba(31, 111, 235, .45); }
+.desk-pin.hovered { box-shadow: 0 0 0 4px rgba(31, 111, 235, .25); }
 
 .booking-overlay {
   position: fixed;
@@ -113,6 +115,7 @@ input, select {
 .people-meta { font-size: .8rem; }
 
 .person-item {
+  cursor: pointer;
   list-style: none;
   display: flex;
   justify-content: space-between;
@@ -126,6 +129,7 @@ input, select {
 
 table { width: 100%; border-collapse: collapse; }
 th, td { text-align: left; padding: 8px 2px; border-bottom: 1px solid #eef2f7; }
+tr.row-selected { background: #eef4ff; }
 
 .modal-backdrop {
   position: fixed; inset: 0; background: rgba(16, 24, 40, .45);

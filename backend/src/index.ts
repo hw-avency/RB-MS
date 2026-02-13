@@ -651,6 +651,7 @@ app.get('/occupancy', async (req, res) => {
           userEmail: single.userEmail,
           userDisplayName: employeesByEmail.get(normalizeEmail(single.userEmail))?.displayName,
           deskName: desk.name,
+        deskId: desk.id,
           type: 'single' as const
         }
       };
@@ -669,6 +670,7 @@ app.get('/occupancy', async (req, res) => {
           userEmail: recurring.userEmail,
           userDisplayName: employeesByEmail.get(normalizeEmail(recurring.userEmail))?.displayName,
           deskName: desk.name,
+        deskId: desk.id,
           type: 'recurring' as const
         }
       };
@@ -684,7 +686,7 @@ app.get('/occupancy', async (req, res) => {
     };
   });
 
-  const uniquePeopleByEmail = new Map<string, { email: string; userEmail: string; displayName?: string; deskName?: string }>();
+  const uniquePeopleByEmail = new Map<string, { email: string; userEmail: string; displayName?: string; deskName?: string; deskId?: string }>();
   occupancyDesks
     .filter((desk) => desk.booking)
     .forEach((desk) => {
@@ -698,7 +700,8 @@ app.get('/occupancy', async (req, res) => {
         email: userEmail,
         userEmail,
         displayName: employeesByEmail.get(normalizedEmail)?.displayName,
-        deskName: desk.name
+        deskName: desk.name,
+        deskId: desk.id
       });
     });
 
@@ -1032,19 +1035,38 @@ app.patch('/admin/desks/:id', requireAdmin, async (req, res) => {
     return;
   }
 
-  const { name } = req.body as { name?: string };
-  if (typeof name === 'undefined') {
-    res.status(400).json({ error: 'validation', message: 'name must be provided' });
+  const { name, x, y } = req.body as { name?: string; x?: number; y?: number };
+  const hasName = typeof name !== 'undefined';
+  const hasX = typeof x !== 'undefined';
+  const hasY = typeof y !== 'undefined';
+
+  if (!hasName && !hasX && !hasY) {
+    res.status(400).json({ error: 'validation', message: 'name, x or y must be provided' });
     return;
   }
 
-  if (name.trim().length === 0) {
+  if (hasName && name.trim().length === 0) {
     res.status(400).json({ error: 'validation', message: 'name must not be empty' });
     return;
   }
 
+  if (hasX && typeof x !== 'number') {
+    res.status(400).json({ error: 'validation', message: 'x must be a number' });
+    return;
+  }
+
+  if (hasY && typeof y !== 'number') {
+    res.status(400).json({ error: 'validation', message: 'y must be a number' });
+    return;
+  }
+
+  const data: { name?: string; x?: number; y?: number } = {};
+  if (hasName) data.name = name.trim();
+  if (hasX) data.x = x;
+  if (hasY) data.y = y;
+
   try {
-    const updatedDesk = await prisma.desk.update({ where: { id }, data: { name: name.trim() } });
+    const updatedDesk = await prisma.desk.update({ where: { id }, data });
     res.status(200).json(updatedDesk);
   } catch (error) {
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2025') {
