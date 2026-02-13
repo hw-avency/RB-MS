@@ -1,6 +1,5 @@
-# AVENCY Booking (Render Deploy ohne Blueprint)
+# AVENCY Booking 
 
-Dieses Repository kann auf dem **Render Free Tier ohne Blueprint** deployed werden.
 
 ## Monorepo Struktur
 
@@ -9,18 +8,16 @@ Dieses Repository kann auf dem **Render Free Tier ohne Blueprint** deployed werd
 - `docs/` – Dokumentation
 - `infra/` – Infrastrukturartefakte
 
-## Render Setup (ohne Blueprint)
+## Setup 
 
-### Backend als Render Web Service
-
-Erstelle in Render einen neuen **Web Service** mit diesen Einstellungen:
+### Backend als Web Service
 
 - **Runtime:** Docker
 - **Root Directory:** `backend`
 - **Dockerfile Path:** `Dockerfile`
 - **Docker Build Context:** `.`
 
-Setze folgende **Environment Variables**:
+ **Environment Variables**:
 
 - `DATABASE_URL`
 - `JWT_SECRET`
@@ -30,15 +27,13 @@ Setze folgende **Environment Variables**:
 
 Hinweis: Beim Container-Start werden automatisch `prisma generate`, `prisma migrate deploy` und optional `prisma db seed` (bei `RUN_SEED=true`) ausgeführt.
 
-### Frontend als Render Static Site
-
-Erstelle in Render eine **Static Site** mit diesen Einstellungen:
+### Frontend als Static Site
 
 - **Root Directory:** `frontend`
 - **Build Command:** `npm install && npm run build`
 - **Publish Directory:** `dist`
 
-Setze folgende **Environment Variable**:
+ **Environment Variable**:
 
 - `VITE_API_BASE_URL` (auf die URL des Backend-Services, z. B. `https://rbms-backend.onrender.com`)
 
