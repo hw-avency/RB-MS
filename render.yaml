@@ -12,9 +12,6 @@ services:
     dockerContext: backend
     dockerfilePath: backend/Dockerfile
     autoDeploy: true
-    preDeployCommand: >-
-      npx prisma migrate deploy &&
-      if [ "$RUN_SEED" = "true" ]; then npx prisma db seed; else echo "Skipping seed"; fi
     envVars:
       - key: DATABASE_URL
         fromDatabase:
@@ -33,7 +30,7 @@ services:
     name: rbms-frontend
     env: static
     rootDir: frontend
-    buildCommand: npm ci && npm run build
+    buildCommand: npm ci --no-audit --no-fund && npm run build
     staticPublishPath: dist
     autoDeploy: true
     envVars:
