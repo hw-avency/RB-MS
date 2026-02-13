@@ -93,6 +93,20 @@ app.get('/floorplans/:id', async (req, res) => {
   res.status(200).json(floorplan);
 });
 
+app.delete('/floorplans/:id', async (req, res) => {
+  try {
+    await prisma.floorplan.delete({ where: { id: req.params.id } });
+    res.status(204).send();
+  } catch (error) {
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2025') {
+      res.status(404).json({ error: 'not_found', message: 'Floorplan not found' });
+      return;
+    }
+
+    throw error;
+  }
+});
+
 app.post('/floorplans/:id/desks', async (req, res) => {
   const { name, x, y } = req.body as { name?: string; x?: number; y?: number };
 

@@ -1,5 +1,5 @@
 import { FormEvent, MouseEvent, useEffect, useMemo, useState } from 'react';
-import { API_BASE, ApiError, get, post } from './api';
+import { API_BASE, ApiError, del, get, post } from './api';
 
 type Me = { id: string; email: string; displayName: string; role: string };
 type Floorplan = { id: string; name: string; imageUrl: string; createdAt: string; updatedAt: string };
@@ -114,6 +114,33 @@ export function App() {
     }
   }, [selectedFloorplanId]);
 
+
+  const deleteFloorplan = async (floorplan: Floorplan) => {
+    const confirmed = window.confirm(`Floorplan "${floorplan.name}" wirklich löschen?`);
+    if (!confirmed) {
+      return;
+    }
+
+    setErrorMessage('');
+    setInfoMessage('');
+    try {
+      await del<void>(`/floorplans/${floorplan.id}`);
+      await loadFloorplans();
+
+      if (selectedFloorplanId === floorplan.id) {
+        setSelectedFloorplanId('');
+        setSelectedFloorplan(null);
+        setDesks([]);
+        setBookings([]);
+        setSelectedDeskId('');
+      }
+
+      setInfoMessage(`Floorplan "${floorplan.name}" gelöscht.`);
+    } catch (error) {
+      handleApiError(error);
+    }
+  };
+
   const createFloorplan = async (event: FormEvent) => {
     event.preventDefault();
     setErrorMessage('');
@@ -214,11 +241,16 @@ export function App() {
           <h2>Floorplans</h2>
           <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
             {floorplans.map((floorplan) => (
-              <li key={floorplan.id} style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
+              <li key={floorplan.id} style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6, gap: 8 }}>
                 <span>{floorplan.name}</span>
-                <button type="button" onClick={() => setSelectedFloorplanId(floorplan.id)}>
-                  Open
-                </button>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <button type="button" onClick={() => setSelectedFloorplanId(floorplan.id)}>
+                    Open
+                  </button>
+                  <button type="button" onClick={() => deleteFloorplan(floorplan)}>
+                    Delete
+                  </button>
+                </div>
               </li>
             ))}
           </ul>

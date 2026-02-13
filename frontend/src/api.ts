@@ -47,4 +47,8 @@ export function post<T>(path: string, payload: unknown): Promise<T> {
   });
 }
 
+export function del<T>(path: string): Promise<T> {
+  return request<T>(path, { method: 'DELETE' });
+}
+
 export { API_BASE };
