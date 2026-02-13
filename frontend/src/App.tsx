@@ -19,6 +19,7 @@ type OccupancyResponse = {
 };
 
 type Tab = 'single' | 'recurring';
+type ApiStatus = 'connecting' | 'connected' | 'error';
 
 const today = new Date();
 const toISODate = (date: Date) => date.toISOString().slice(0, 10);
@@ -33,6 +34,22 @@ const WEEKDAYS = [
   { label: 'Sonntag', value: 0 }
 ];
 
+const dayName = (value: number) => WEEKDAYS.find((d) => d.value === value)?.label ?? 'Unbekannt';
+
+function getTomorrow(base: string) {
+  const date = new Date(`${base}T00:00:00`);
+  date.setDate(date.getDate() + 1);
+  return toISODate(date);
+}
+
+function getNextMonday(base: string) {
+  const date = new Date(`${base}T00:00:00`);
+  const current = date.getDay();
+  const delta = ((1 - current + 7) % 7) || 7;
+  date.setDate(date.getDate() + delta);
+  return toISODate(date);
+}
+
 export function App() {
   const [floorplans, setFloorplans] = useState<Floorplan[]>([]);
   const [selectedFloorplanId, setSelectedFloorplanId] = useState<string>('');
@@ -44,6 +61,8 @@ export function App() {
   const [selectedDate, setSelectedDate] = useState(toISODate(today));
   const [createName, setCreateName] = useState('');
   const [createImageUrl, setCreateImageUrl] = useState('');
+  const [showCreateFloorplan, setShowCreateFloorplan] = useState(false);
+  const [deleteCandidate, setDeleteCandidate] = useState<Floorplan | null>(null);
 
   const [singleDate, setSingleDate] = useState(toISODate(today));
   const [weekday, setWeekday] = useState<number>(1);
@@ -53,20 +72,31 @@ export function App() {
   const [me, setMe] = useState<Me | null>(null);
   const [userEmail, setUserEmail] = useState('demo@example.com');
 
+  const [apiStatus, setApiStatus] = useState<ApiStatus>('connecting');
+  const [isLoadingFloorplans, setIsLoadingFloorplans] = useState(false);
+  const [isLoadingOccupancy, setIsLoadingOccupancy] = useState(false);
+
   const [errorMessage, setErrorMessage] = useState('');
   const [infoMessage, setInfoMessage] = useState('');
 
   const desks = occupancy?.desks ?? [];
   const peopleInOffice = useMemo(
-    () => [...(occupancy?.people ?? [])].sort((a, b) => a.userEmail.localeCompare(b.userEmail)),
+    () =>
+      [...new Set((occupancy?.people ?? []).map((person) => person.userEmail))]
+        .sort((a, b) => a.localeCompare(b))
+        .map((userEmail) => ({ userEmail })),
     [occupancy]
   );
   const selectedDesk = useMemo(() => desks.find((desk) => desk.id === selectedDeskId) ?? null, [desks, selectedDeskId]);
 
+  useEffect(() => {
+    setSingleDate(selectedDate);
+  }, [selectedDate]);
+
   const handleApiError = (error: unknown) => {
     if (error instanceof ApiError) {
       if (error.status === 409) {
-        setErrorMessage('Konflikt: bereits gebucht oder durch wiederkehrende Buchung blockiert.');
+        setErrorMessage('Dieser Platz ist für die gewählte Zeit bereits belegt. Bitte wähle eine andere Option.');
         return;
       }
       setErrorMessage(error.message);
@@ -76,15 +106,21 @@ export function App() {
   };
 
   const loadFloorplans = async () => {
+    setIsLoadingFloorplans(true);
     try {
       const data = await get<Floorplan[]>('/floorplans');
       setFloorplans(data);
+      setApiStatus('connected');
     } catch (error) {
+      setApiStatus('error');
       handleApiError(error);
+    } finally {
+      setIsLoadingFloorplans(false);
     }
   };
 
   const loadFloorplanAndOccupancy = async (floorplanId: string, date: string) => {
+    setIsLoadingOccupancy(true);
     try {
       const [floorplan, occupancyData] = await Promise.all([
         get<Floorplan>(`/floorplans/${floorplanId}`),
@@ -92,11 +128,15 @@ export function App() {
       ]);
       setSelectedFloorplan(floorplan);
       setOccupancy(occupancyData);
+      setApiStatus('connected');
       setSelectedDeskId((currentDeskId) =>
         occupancyData.desks.some((desk) => desk.id === currentDeskId) ? currentDeskId : ''
       );
     } catch (error) {
+      setApiStatus('error');
       handleApiError(error);
+    } finally {
+      setIsLoadingOccupancy(false);
     }
   };
 
@@ -105,16 +145,21 @@ export function App() {
       return;
     }
 
+    setIsLoadingOccupancy(true);
     try {
       const occupancyData = await get<OccupancyResponse>(
         `/occupancy?floorplanId=${selectedFloorplanId}&date=${selectedDate}`
       );
       setOccupancy(occupancyData);
+      setApiStatus('connected');
       setSelectedDeskId((currentDeskId) =>
         occupancyData.desks.some((desk) => desk.id === currentDeskId) ? currentDeskId : ''
       );
     } catch (error) {
+      setApiStatus('error');
       handleApiError(error);
+    } finally {
+      setIsLoadingOccupancy(false);
     }
   };
 
@@ -122,10 +167,12 @@ export function App() {
     loadFloorplans();
     get<Me>('/me')
       .then((meData) => {
+        setApiStatus('connected');
         setMe(meData);
         setUserEmail(meData.email || 'demo@example.com');
       })
       .catch(() => {
+        setApiStatus('error');
         setUserEmail('demo@example.com');
       });
   }, []);
@@ -139,15 +186,11 @@ export function App() {
   }, [selectedFloorplanId, selectedDate]);
 
   const deleteFloorplan = async (floorplan: Floorplan) => {
-    const confirmed = window.confirm(`Floorplan "${floorplan.name}" wirklich löschen?`);
-    if (!confirmed) {
-      return;
-    }
-
     setErrorMessage('');
     setInfoMessage('');
     try {
       await del<void>(`/floorplans/${floorplan.id}`);
+      setDeleteCandidate(null);
       await loadFloorplans();
 
       if (selectedFloorplanId === floorplan.id) {
@@ -173,6 +216,7 @@ export function App() {
       setCreateImageUrl('');
       await loadFloorplans();
       setSelectedFloorplanId(created.id);
+      setShowCreateFloorplan(false);
       setInfoMessage(`Floorplan "${created.name}" erstellt.`);
     } catch (error) {
       handleApiError(error);
@@ -244,71 +288,100 @@ export function App() {
   };
 
   return (
-    <main style={{ fontFamily: 'Arial, sans-serif', padding: '1rem' }}>
-      <h1>RB-MS Floorplan MVP</h1>
-      <p style={{ marginTop: 0 }}>API: {API_BASE}</p>
-      {me && <p>Aktueller User: {me.email}</p>}
+    <main className="app-shell">
+      <div className="container">
+        <header className="topbar card">
+          <div>
+            <p className="eyebrow">Desk Booking</p>
+            <h1>RB-MS</h1>
+            {me && <p className="muted">Angemeldet als {me.email}</p>}
+          </div>
+          <div className="topbar-controls">
+            <label className="field">
+              <span>Datum</span>
+              <input type="date" value={selectedDate} onChange={(event) => setSelectedDate(event.target.value)} />
+            </label>
+            <div className={`status status-${apiStatus}`}>{apiStatus === 'connected' ? 'API connected' : apiStatus === 'error' ? 'API error' : 'API connecting'}</div>
+          </div>
+        </header>
 
-      <label style={{ display: 'inline-flex', alignItems: 'center', gap: 8, marginBottom: '1rem' }}>
-        Datum
-        <input type="date" value={selectedDate} onChange={(event) => setSelectedDate(event.target.value)} />
-      </label>
+        {!!errorMessage && <p className="toast toast-error">{errorMessage}</p>}
+        {!!infoMessage && <p className="toast toast-success">{infoMessage}</p>}
 
-      {errorMessage && <p style={{ color: '#b00020', fontWeight: 700 }}>{errorMessage}</p>}
-      {infoMessage && <p style={{ color: '#0a7a32', fontWeight: 700 }}>{infoMessage}</p>}
+        <section className="layout-grid">
+          <aside className="card sidebar">
+            <h2>Floorplans</h2>
+            {isLoadingFloorplans ? (
+              <p className="muted">Lade Floorplans…</p>
+            ) : floorplans.length === 0 ? (
+              <p className="muted">Noch kein Floorplan. Lege links einen an.</p>
+            ) : (
+              <ul className="floorplan-list">
+                {floorplans.map((floorplan) => (
+                  <li key={floorplan.id} className={`floorplan-item ${selectedFloorplanId === floorplan.id ? 'active' : ''}`}>
+                    <span>{floorplan.name}</span>
+                    <span className="actions">
+                      <button type="button" className="btn btn-secondary" onClick={() => setSelectedFloorplanId(floorplan.id)}>
+                        Öffnen
+                      </button>
+                      <button type="button" className="btn btn-danger" onClick={() => setDeleteCandidate(floorplan)}>
+                        Löschen
+                      </button>
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
 
-      <section style={{ display: 'grid', gridTemplateColumns: '320px 1fr', gap: '1rem', alignItems: 'start' }}>
-        <aside style={{ border: '1px solid #ddd', borderRadius: 8, padding: '0.75rem' }}>
-          <h2>Floorplans</h2>
-          <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
-            {floorplans.map((floorplan) => (
-              <li key={floorplan.id} style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6, gap: 8 }}>
-                <span>{floorplan.name}</span>
-                <div style={{ display: 'flex', gap: 8 }}>
-                  <button type="button" onClick={() => setSelectedFloorplanId(floorplan.id)}>
-                    Open
-                  </button>
-                  <button type="button" onClick={() => deleteFloorplan(floorplan)}>
-                    Delete
-                  </button>
-                </div>
-              </li>
-            ))}
-          </ul>
+            <button className="btn btn-secondary full" type="button" onClick={() => setShowCreateFloorplan((s) => !s)}>
+              {showCreateFloorplan ? 'Formular schließen' : 'Create floorplan'}
+            </button>
 
-          <h3 style={{ marginTop: '1rem' }}>Floorplan erstellen</h3>
-          <form onSubmit={createFloorplan} style={{ display: 'grid', gap: 8 }}>
-            <input required value={createName} onChange={(event) => setCreateName(event.target.value)} placeholder="Name" />
-            <input
-              required
-              value={createImageUrl}
-              onChange={(event) => setCreateImageUrl(event.target.value)}
-              placeholder="Image URL"
-            />
-            <button type="submit">Create</button>
-          </form>
-        </aside>
+            {showCreateFloorplan && (
+              <form onSubmit={createFloorplan} className="form-grid">
+                <label className="field">
+                  <span>Name</span>
+                  <input required value={createName} onChange={(event) => setCreateName(event.target.value)} />
+                </label>
+                <label className="field">
+                  <span>Image URL</span>
+                  <input
+                    required
+                    value={createImageUrl}
+                    onChange={(event) => setCreateImageUrl(event.target.value)}
+                    placeholder="https://..."
+                  />
+                  <small>Direkter Link zum Floorplan-Bild.</small>
+                </label>
+                <button className="btn btn-primary" type="submit">
+                  Erstellen
+                </button>
+              </form>
+            )}
+          </aside>
 
-        <section style={{ border: '1px solid #ddd', borderRadius: 8, padding: '0.75rem' }}>
-          {!selectedFloorplan && <p>Bitte links einen Floorplan öffnen.</p>}
+          <section className="card canvas-card">
+            {!selectedFloorplan ? (
+              <div className="empty-state">
+                <h2>Kein Floorplan ausgewählt</h2>
+                <p>Wähle links einen Floorplan aus, um Belegung und Desks zu sehen.</p>
+              </div>
+            ) : (
+              <>
+                <h2>{selectedFloorplan.name}</h2>
+                <p className="muted">Klick auf freie Fläche, um einen neuen Desk-Pin zu setzen.</p>
 
-          {selectedFloorplan && (
-            <>
-              <h2>{selectedFloorplan.name}</h2>
-              <p>Klick ins Bild, um einen Desk-Pin zu setzen.</p>
+                {isLoadingOccupancy ? <div className="skeleton">Belegung wird geladen…</div> : null}
 
-              <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 280px', gap: '1rem', alignItems: 'start' }}>
-                <div
-                  onClick={createDeskAtPosition}
-                  style={{ position: 'relative', display: 'inline-block', border: '1px solid #bbb', maxWidth: '100%' }}
-                >
-                  <img src={selectedFloorplan.imageUrl} alt={selectedFloorplan.name} style={{ maxWidth: '100%', display: 'block' }} />
+                <div onClick={createDeskAtPosition} className="floorplan-canvas" role="presentation">
+                  <img src={selectedFloorplan.imageUrl} alt={selectedFloorplan.name} />
                   {desks.map((desk) => (
                     <button
                       key={desk.id}
                       data-pin="desk-pin"
                       type="button"
-                      title={`${desk.name}\nStatus: ${desk.status}${
+                      className={`desk-pin ${desk.status} ${selectedDeskId === desk.id ? 'selected' : ''}`}
+                      title={`${desk.name}\nStatus: ${desk.status === 'booked' ? 'belegt' : 'frei'}${
                         desk.booking
                           ? `\nUser: ${desk.booking.userEmail}\nTyp: ${desk.booking.type === 'single' ? 'single' : 'recurring'}`
                           : ''
@@ -317,93 +390,97 @@ export function App() {
                         event.stopPropagation();
                         setSelectedDeskId(desk.id);
                       }}
-                      style={{
-                        position: 'absolute',
-                        left: `${desk.x * 100}%`,
-                        top: `${desk.y * 100}%`,
-                        transform: 'translate(-50%, -50%)',
-                        width: 16,
-                        height: 16,
-                        borderRadius: '50%',
-                        border: selectedDeskId === desk.id ? '2px solid #111' : '2px solid #fff',
-                        background: desk.status === 'booked' ? '#d32f2f' : '#2e7d32',
-                        cursor: 'pointer'
-                      }}
+                      style={{ left: `${desk.x * 100}%`, top: `${desk.y * 100}%` }}
                     />
                   ))}
                 </div>
+              </>
+            )}
+          </section>
 
-                <aside style={{ border: '1px solid #ddd', borderRadius: 8, padding: '0.75rem' }}>
-                  <h3 style={{ marginTop: 0 }}>Im Büro am {selectedDate}</h3>
-                  <p style={{ marginTop: 0 }}>Anzahl: {peopleInOffice.length}</p>
-                  {peopleInOffice.length === 0 ? (
-                    <p>Niemand eingetragen.</p>
-                  ) : (
-                    <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                      <thead>
-                        <tr>
-                          <th style={{ textAlign: 'left', borderBottom: '1px solid #ddd', paddingBottom: 6 }}>User Email</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {peopleInOffice.map((person) => (
-                          <tr key={person.userEmail}>
-                            <td style={{ padding: '6px 0', borderBottom: '1px solid #f0f0f0' }}>{person.userEmail}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  )}
-                </aside>
-              </div>
+          <aside className="right-panel">
+            <section className="card">
+              <h3>Im Büro am {selectedDate}</h3>
+              <p className="muted">{peopleInOffice.length} Personen</p>
+              {peopleInOffice.length === 0 ? (
+                <p className="muted">Für dieses Datum gibt es aktuell keine Buchung.</p>
+              ) : (
+                <table>
+                  <thead>
+                    <tr>
+                      <th>E-Mail</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {peopleInOffice.map((person) => (
+                      <tr key={person.userEmail}>
+                        <td>{person.userEmail}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </section>
 
-              {selectedDesk && (
-                <div style={{ marginTop: '1rem', borderTop: '1px solid #ddd', paddingTop: '0.75rem' }}>
-                  <h3>Desk: {selectedDesk.name}</h3>
-                  <p style={{ marginTop: 0 }}>
-                    Status am {selectedDate}: <strong>{selectedDesk.status}</strong>
-                    {selectedDesk.booking && (
-                      <>
-                        {' '}
-                        – {selectedDesk.booking.userEmail} ({selectedDesk.booking.type})
-                      </>
-                    )}
+            <section className="card">
+              <h3>Desk booking</h3>
+              {!selectedDesk ? (
+                <p className="muted">Wähle einen Desk-Pin, um Details und Buchung zu öffnen.</p>
+              ) : (
+                <>
+                  <p className="desk-title">{selectedDesk.name}</p>
+                  <p className="muted">
+                    Status: <strong>{selectedDesk.status === 'booked' ? 'Belegt' : 'Frei'}</strong>
+                    {selectedDesk.booking ? ` · ${selectedDesk.booking.userEmail} (${selectedDesk.booking.type})` : ''}
                   </p>
 
-                  <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
-                    <button type="button" onClick={() => setTab('single')} disabled={tab === 'single'}>
+                  <div className="tabs">
+                    <button className={`tab ${tab === 'single' ? 'active' : ''}`} type="button" onClick={() => setTab('single')}>
                       Einzeltag
                     </button>
-                    <button type="button" onClick={() => setTab('recurring')} disabled={tab === 'recurring'}>
+                    <button
+                      className={`tab ${tab === 'recurring' ? 'active' : ''}`}
+                      type="button"
+                      onClick={() => setTab('recurring')}
+                    >
                       Wiederkehrend
                     </button>
                   </div>
 
-                  <label style={{ display: 'block', marginBottom: 8 }}>
-                    User Email
-                    <input style={{ marginLeft: 8 }} value={userEmail} onChange={(event) => setUserEmail(event.target.value)} />
+                  <label className="field">
+                    <span>E-Mail</span>
+                    <input value={userEmail} onChange={(event) => setUserEmail(event.target.value)} />
+                    <small>Vorausgefüllt aus /me, bei Bedarf anpassbar.</small>
                   </label>
 
                   {tab === 'single' && (
-                    <form onSubmit={createSingleBooking} style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                      <label>
-                        Datum
-                        <input
-                          type="date"
-                          value={singleDate}
-                          onChange={(event) => setSingleDate(event.target.value)}
-                          style={{ marginLeft: 8 }}
-                        />
+                    <form onSubmit={createSingleBooking} className="form-grid">
+                      <label className="field">
+                        <span>Datum</span>
+                        <input type="date" value={singleDate} onChange={(event) => setSingleDate(event.target.value)} />
                       </label>
-                      <button type="submit">Buchen</button>
+                      <div className="quick-actions">
+                        <button type="button" className="btn btn-secondary" onClick={() => setSingleDate(toISODate(new Date()))}>
+                          Heute
+                        </button>
+                        <button type="button" className="btn btn-secondary" onClick={() => setSingleDate(getTomorrow(selectedDate))}>
+                          Morgen
+                        </button>
+                        <button type="button" className="btn btn-secondary" onClick={() => setSingleDate(getNextMonday(selectedDate))}>
+                          Nächster Mo
+                        </button>
+                      </div>
+                      <button type="submit" className="btn btn-primary">
+                        Buchen
+                      </button>
                     </form>
                   )}
 
                   {tab === 'recurring' && (
-                    <form onSubmit={createRecurringBooking} style={{ display: 'grid', gap: 8, maxWidth: 420 }}>
-                      <label>
-                        Wochentag
-                        <select value={weekday} onChange={(event) => setWeekday(Number(event.target.value))} style={{ marginLeft: 8 }}>
+                    <form onSubmit={createRecurringBooking} className="form-grid">
+                      <label className="field">
+                        <span>Wochentag</span>
+                        <select value={weekday} onChange={(event) => setWeekday(Number(event.target.value))}>
                           {WEEKDAYS.map((day) => (
                             <option key={day.label} value={day.value}>
                               {day.label}
@@ -411,33 +488,48 @@ export function App() {
                           ))}
                         </select>
                       </label>
-                      <label>
-                        Valid From
-                        <input
-                          type="date"
-                          value={validFrom}
-                          onChange={(event) => setValidFrom(event.target.value)}
-                          style={{ marginLeft: 8 }}
-                        />
+                      <label className="field">
+                        <span>Valid from</span>
+                        <input type="date" value={validFrom} onChange={(event) => setValidFrom(event.target.value)} />
                       </label>
-                      <label>
-                        Valid To (optional)
-                        <input
-                          type="date"
-                          value={validTo}
-                          onChange={(event) => setValidTo(event.target.value)}
-                          style={{ marginLeft: 8 }}
-                        />
+                      <label className="field">
+                        <span>Valid to (optional)</span>
+                        <input type="date" value={validTo} onChange={(event) => setValidTo(event.target.value)} />
                       </label>
-                      <button type="submit">Wiederkehrend buchen</button>
+                      <p className="muted summary">
+                        Wiederkehrende Buchung jeden {dayName(weekday)} ab {validFrom}
+                        {validTo ? ` bis ${validTo}` : ' ohne Enddatum'}.
+                      </p>
+                      <button type="submit" className="btn btn-primary">
+                        Wiederkehrend buchen
+                      </button>
                     </form>
                   )}
-                </div>
+                </>
               )}
-            </>
-          )}
+            </section>
+          </aside>
         </section>
-      </section>
+
+        <p className="api-base">API: {API_BASE}</p>
+      </div>
+
+      {deleteCandidate && (
+        <div className="modal-backdrop">
+          <div className="modal card">
+            <h3>Floorplan löschen?</h3>
+            <p>Willst du „{deleteCandidate.name}“ wirklich entfernen?</p>
+            <div className="modal-actions">
+              <button className="btn btn-secondary" type="button" onClick={() => setDeleteCandidate(null)}>
+                Abbrechen
+              </button>
+              <button className="btn btn-danger" type="button" onClick={() => deleteFloorplan(deleteCandidate)}>
+                Löschen
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </main>
   );
 }

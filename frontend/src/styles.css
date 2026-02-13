@@ -1,0 +1,103 @@
+:root {
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+  color: #102033;
+  background: #f3f6fb;
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; }
+
+.app-shell { min-height: 100vh; padding: 24px; }
+.container { max-width: 1440px; margin: 0 auto; display: grid; gap: 16px; }
+
+.card {
+  background: #fff;
+  border: 1px solid #d9e0ea;
+  border-radius: 14px;
+  box-shadow: 0 1px 2px rgba(16, 32, 51, 0.06);
+  padding: 16px;
+}
+
+h1 { margin: 0; font-size: 1.8rem; }
+h2 { margin: 0 0 8px; font-size: 1.25rem; }
+h3 { margin: 0 0 8px; font-size: 1rem; }
+.eyebrow { margin: 0 0 2px; font-size: .75rem; text-transform: uppercase; letter-spacing: .08em; color: #5b6f87; }
+.muted { color: #5b6f87; margin: 0; }
+
+.topbar { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; }
+.topbar-controls { display: flex; gap: 12px; align-items: end; }
+
+.layout-grid { display: grid; grid-template-columns: 290px minmax(0, 1fr) 360px; gap: 16px; align-items: start; }
+.sidebar { display: grid; gap: 12px; }
+.right-panel { display: grid; gap: 16px; }
+
+.floorplan-list { list-style: none; padding: 0; margin: 0; display: grid; gap: 8px; }
+.floorplan-item {
+  width: 100%; border: 1px solid #d9e0ea; border-radius: 10px; padding: 10px;
+  display: flex; justify-content: space-between; align-items: center; background: #fff; cursor: pointer;
+}
+.floorplan-item.active { border-color: #2266ee; background: #eef4ff; }
+.actions { display: flex; gap: 8px; }
+
+.field { display: grid; gap: 6px; font-size: .85rem; }
+input, select {
+  width: 100%; border: 1px solid #c5cfdd; border-radius: 10px; padding: 8px 10px; font: inherit;
+}
+small { color: #667a93; }
+.form-grid { display: grid; gap: 10px; }
+
+.btn {
+  border: 1px solid transparent; border-radius: 10px; padding: 8px 12px;
+  font-weight: 600; cursor: pointer; background: #fff;
+}
+.btn-primary { background: #1f6feb; border-color: #1f6feb; color: #fff; }
+.btn-secondary { border-color: #c5cfdd; color: #1c2d41; }
+.btn-danger { background: #d62f3d; border-color: #d62f3d; color: #fff; }
+.full { width: 100%; }
+
+.canvas-card { display: grid; gap: 10px; min-height: 620px; }
+.floorplan-canvas { position: relative; border: 1px solid #d3dbe7; border-radius: 12px; overflow: hidden; background: #fafcff; }
+.floorplan-canvas img { width: 100%; display: block; }
+
+.desk-pin {
+  position: absolute; transform: translate(-50%, -50%); width: 18px; height: 18px; border-radius: 999px;
+  border: 2px solid #1f6feb; background: #fff; cursor: pointer;
+}
+.desk-pin.booked { background: #d62f3d; border-color: #d62f3d; }
+.desk-pin.selected { box-shadow: 0 0 0 4px rgba(31, 111, 235, .25); }
+
+.status { border-radius: 999px; padding: 6px 10px; font-size: .8rem; font-weight: 700; }
+.status-connected { background: #e7f7ec; color: #12783a; }
+.status-error { background: #fdecee; color: #a72b35; }
+.status-connecting { background: #edf2f8; color: #44576d; }
+
+.toast { margin: 0; padding: 10px 12px; border-radius: 10px; font-weight: 600; }
+.toast-error { background: #fdecee; color: #8f2430; border: 1px solid #f2cdd1; }
+.toast-success { background: #e7f7ec; color: #0f6a34; border: 1px solid #caead5; }
+
+.tabs { display: flex; gap: 8px; margin: 6px 0; }
+.tab { border: 1px solid #c5cfdd; background: #fff; padding: 8px 10px; border-radius: 8px; cursor: pointer; }
+.tab.active { background: #1f6feb; border-color: #1f6feb; color: #fff; }
+.quick-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.summary { font-size: .86rem; }
+.desk-title { font-weight: 700; margin: 0; }
+
+table { width: 100%; border-collapse: collapse; }
+th, td { text-align: left; padding: 8px 2px; border-bottom: 1px solid #eef2f7; }
+
+.skeleton { padding: 8px; border-radius: 8px; background: #eef2f8; color: #5f6f82; }
+.empty-state { display: grid; place-items: center; text-align: center; min-height: 420px; }
+
+.modal-backdrop {
+  position: fixed; inset: 0; background: rgba(16, 24, 40, .45);
+  display: grid; place-items: center; padding: 16px;
+}
+.modal { max-width: 460px; width: 100%; }
+.modal-actions { display: flex; justify-content: flex-end; gap: 10px; }
+
+.api-base { margin: 0; color: #7b899a; font-size: .8rem; }
+
+@media (max-width: 1180px) {
+  .layout-grid { grid-template-columns: 1fr; }
+  .canvas-card { min-height: auto; }
+}
