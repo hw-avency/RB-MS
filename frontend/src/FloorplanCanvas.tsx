@@ -147,10 +147,13 @@ export function FloorplanCanvas({
               onMouseEnter={() => onHoverDesk(desk.id)}
               onMouseLeave={() => onHoverDesk('')}
               onClick={(event) => {
+                if (import.meta.env.DEV) {
+                  console.debug('[booking] desk click', { deskId: desk.id, clientX: event.clientX, clientY: event.clientY });
+                }
                 event.stopPropagation();
                 onSelectDesk(desk.id, event.currentTarget.getBoundingClientRect());
               }}
-              style={{ left: `${normalizedDesk.xPct * overlayRect.width}px`, top: `${normalizedDesk.yPct * overlayRect.height}px` }}
+              style={{ left: `${normalizedDesk.xPct * overlayRect.width}px`, top: `${normalizedDesk.yPct * overlayRect.height}px`, pointerEvents: 'auto' }}
             />
           );
         })}
