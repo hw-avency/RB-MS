@@ -54,12 +54,30 @@ type BreakglassVerificationResult =
 
 type EntraVerificationResult =
   | { ok: true; identity: { email: string; displayName: string } }
-  | { ok: false; reason: AuthFailReason };
+  | { ok: false; reason: AuthFailReason; receivedAud?: unknown; expectedAudiences?: string[] };
 
 let discoveryCache: { expiresAt: number; document: DiscoveryDocument } | null = null;
 let jwksCache: { expiresAt: number; document: Jwks } | null = null;
 
 const discoveryUrl = `https://login.microsoftonline.com/${ENTRA_TENANT_ID}/v2.0/.well-known/openid-configuration`;
+
+const GUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+const buildAcceptedAudiences = (configuredAudience: string): string[] => {
+  const trimmed = configuredAudience.trim();
+  const audiences = new Set<string>([trimmed]);
+
+  if (GUID_REGEX.test(trimmed)) audiences.add(`api://${trimmed}`);
+
+  if (trimmed.startsWith('api://')) {
+    const withoutPrefix = trimmed.slice('api://'.length);
+    if (GUID_REGEX.test(withoutPrefix)) audiences.add(withoutPrefix);
+  }
+
+  return Array.from(audiences);
+};
+
+const ACCEPTED_ENTRA_AUDIENCES = buildAcceptedAudiences(ENTRA_API_AUDIENCE);
 
 const toBase64Url = (value: string) => Buffer.from(value).toString('base64url');
 const fromBase64Url = (value: string) => Buffer.from(value, 'base64url').toString('utf8');
@@ -189,8 +207,18 @@ const verifyEntraJwt = async (token: string): Promise<EntraVerificationResult> =
     if (claims.iss !== discovery.issuer) return { ok: false, reason: 'bad_issuer' };
 
     const aud = claims.aud;
-    const audienceValid = Array.isArray(aud) ? aud.includes(ENTRA_API_AUDIENCE) : aud === ENTRA_API_AUDIENCE;
-    if (!audienceValid) return { ok: false, reason: 'bad_audience' };
+    const tokenAudiences = Array.isArray(aud) ? aud : [aud];
+    const audienceValid = tokenAudiences.some(
+      (audience): audience is string => typeof audience === 'string' && ACCEPTED_ENTRA_AUDIENCES.includes(audience)
+    );
+    if (!audienceValid) {
+      return {
+        ok: false,
+        reason: 'bad_audience',
+        receivedAud: aud,
+        expectedAudiences: ACCEPTED_ENTRA_AUDIENCES
+      };
+    }
 
     const emailClaim =
       (typeof claims.preferred_username === 'string' && claims.preferred_username) ||
@@ -261,6 +289,17 @@ export const requireAuth: RequestHandler = async (req, res, next) => {
 
   const entraResult = await verifyEntraJwt(token);
   if (!entraResult.ok) {
+    if (entraResult.reason === 'bad_audience') {
+      console.info(
+        JSON.stringify({
+          event: 'auth_bad_audience',
+          path: req.path,
+          method: req.method,
+          receivedAud: entraResult.receivedAud ?? null,
+          expectedAudiences: entraResult.expectedAudiences ?? ACCEPTED_ENTRA_AUDIENCES
+        })
+      );
+    }
     logAuthValidation(req, { branch: 'entra', result: 'fail', reason: entraResult.reason, snapshot });
     res.status(401).json({ error: 'unauthorized', code: entraResult.reason, message: 'Invalid token' });
     return;
