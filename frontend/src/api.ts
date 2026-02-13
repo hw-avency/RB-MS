@@ -13,12 +13,22 @@ export class ApiError extends Error {
 }
 
 type HttpMethod = 'GET' | 'POST' | 'PATCH' | 'DELETE';
+type TokenProvider = () => Promise<string | null>;
+
+let authTokenProvider: TokenProvider | null = null;
+
+export const setAuthTokenProvider = (provider: TokenProvider) => {
+  authTokenProvider = provider;
+};
 
 async function request<T>(path: string, method: HttpMethod, payload?: unknown, headers?: Record<string, string>): Promise<T> {
+  const token = authTokenProvider ? await authTokenProvider() : null;
+
   const response = await fetch(`${API_BASE}${path}`, {
     method,
     headers: {
       'Content-Type': 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
       ...(headers ?? {})
     },
     ...(typeof payload === 'undefined' ? {} : { body: JSON.stringify(payload) })
