@@ -74,6 +74,8 @@ const monthLabel = (monthStart: Date): string =>
 
 const clamp = (value: number, min: number, max: number): number => Math.min(Math.max(value, min), max);
 
+const defaultPopupPosition = { left: '50%', top: '50%', transform: 'translate(-50%, -50%)' } as const;
+
 const bookingDisplayName = (employee: Pick<Employee, 'displayName' | 'email'>): string => {
   const trimmedName = employee.displayName?.trim();
   if (trimmedName) return trimmedName;
@@ -107,8 +109,10 @@ export function App() {
   const [selectedDeskId, setSelectedDeskId] = useState('');
   const [hoveredDeskId, setHoveredDeskId] = useState('');
   const [repositioningDeskId, setRepositioningDeskId] = useState('');
+  const [popupOpen, setPopupOpen] = useState(false);
+  const [popupDeskId, setPopupDeskId] = useState('');
   const [popupAnchor, setPopupAnchor] = useState<{ left: number; top: number; right: number; bottom: number } | null>(null);
-  const [popupPosition, setPopupPosition] = useState<{ left: number; top: number } | null>(null);
+  const [popupPosition, setPopupPosition] = useState<{ left: string; top: string; transform?: string }>(defaultPopupPosition);
   const popupRef = useRef<HTMLDivElement | null>(null);
 
   const [meEmail, setMeEmail] = useState('demo@example.com');
@@ -166,6 +170,25 @@ export function App() {
   );
   const desks = occupancy?.desks ?? [];
   const activeDesk = useMemo(() => desks.find((desk) => desk.id === selectedDeskId) ?? null, [desks, selectedDeskId]);
+  const popupDesk = useMemo(() => desks.find((desk) => desk.id === popupDeskId) ?? null, [desks, popupDeskId]);
+
+
+  const closeBookingPopup = useCallback(() => {
+    setPopupOpen(false);
+    setPopupDeskId('');
+    setPopupAnchor(null);
+    setPopupPosition(defaultPopupPosition);
+  }, []);
+
+  const openBookingPopup = useCallback((deskId: string, anchorRect: DOMRect) => {
+    setPopupOpen(true);
+    setPopupDeskId(deskId);
+    setPopupAnchor({ left: anchorRect.left, top: anchorRect.top, right: anchorRect.right, bottom: anchorRect.bottom });
+    setPopupPosition(defaultPopupPosition);
+    if (import.meta.env.DEV) {
+      console.debug('[booking] open popup', { deskId });
+    }
+  }, []);
   const activeEmployees = useMemo(() => employees.filter((employee) => employee.isActive), [employees]);
   const people = useMemo(() => {
     const source = occupancy?.people ?? [];
@@ -314,10 +337,9 @@ export function App() {
   useEffect(() => {
     setSelectedDeskId('');
     setHoveredDeskId('');
-    setPopupAnchor(null);
-    setPopupPosition(null);
+    closeBookingPopup();
     setRepositioningDeskId('');
-  }, [selectedDate, selectedFloorplanId]);
+  }, [closeBookingPopup, selectedDate, selectedFloorplanId]);
 
 
   useEffect(() => {
@@ -342,43 +364,48 @@ export function App() {
   }, [employeePage, employeePageCount]);
 
   const updatePopupPosition = useCallback(() => {
-    if (!popupAnchor || !popupRef.current) {
-      setPopupPosition(null);
+    if (!popupOpen || !popupAnchor || !popupRef.current) {
       return;
     }
 
-    const viewportPadding = 12;
-    const gap = 10;
-    const { width, height } = popupRef.current.getBoundingClientRect();
+    try {
+      const viewportPadding = 12;
+      const gap = 10;
+      const { width, height } = popupRef.current.getBoundingClientRect();
 
-    let preferredLeft = popupAnchor.right + gap;
-    if (preferredLeft + width + viewportPadding > window.innerWidth) {
-      preferredLeft = popupAnchor.left - width - gap;
-    }
+      let preferredLeft = popupAnchor.right + gap;
+      if (preferredLeft + width + viewportPadding > window.innerWidth) {
+        preferredLeft = popupAnchor.left - width - gap;
+      }
 
-    let preferredTop = popupAnchor.top;
-    if (preferredTop + height + viewportPadding > window.innerHeight) {
-      preferredTop = popupAnchor.bottom - height;
-      if (preferredTop < viewportPadding) {
-        preferredTop = popupAnchor.top - height - gap;
+      let preferredTop = popupAnchor.top;
+      if (preferredTop + height + viewportPadding > window.innerHeight) {
+        preferredTop = popupAnchor.bottom - height;
+        if (preferredTop < viewportPadding) {
+          preferredTop = popupAnchor.top - height - gap;
+        }
+      }
+
+      const maxLeft = Math.max(viewportPadding, window.innerWidth - width - viewportPadding);
+      const maxTop = Math.max(viewportPadding, window.innerHeight - height - viewportPadding);
+
+      setPopupPosition({
+        left: `${clamp(preferredLeft, viewportPadding, maxLeft)}px`,
+        top: `${clamp(preferredTop, viewportPadding, maxTop)}px`
+      });
+    } catch (error) {
+      if (import.meta.env.DEV) {
+        console.debug('[booking] popup position fallback', error);
       }
     }
-
-    const maxLeft = Math.max(viewportPadding, window.innerWidth - width - viewportPadding);
-    const maxTop = Math.max(viewportPadding, window.innerHeight - height - viewportPadding);
-
-    setPopupPosition({
-      left: clamp(preferredLeft, viewportPadding, maxLeft),
-      top: clamp(preferredTop, viewportPadding, maxTop)
-    });
-  }, [popupAnchor]);
+  }, [popupAnchor, popupOpen]);
 
   useLayoutEffect(() => {
     updatePopupPosition();
-  }, [updatePopupPosition, selectedDeskId, bookingMode, bookingConflictDates.length]);
+  }, [updatePopupPosition, popupOpen, popupDeskId, bookingMode, bookingConflictDates.length]);
 
   useEffect(() => {
-    if (!popupAnchor) return;
+    if (!popupOpen || !popupAnchor) return;
     const handleViewportChange = () => updatePopupPosition();
     window.addEventListener('resize', handleViewportChange);
     window.addEventListener('scroll', handleViewportChange, true);
@@ -386,7 +413,7 @@ export function App() {
       window.removeEventListener('resize', handleViewportChange);
       window.removeEventListener('scroll', handleViewportChange, true);
     };
-  }, [popupAnchor, updatePopupPosition]);
+  }, [popupAnchor, popupOpen, updatePopupPosition]);
 
   useEffect(() => {
     const onEscape = (event: KeyboardEvent) => {
@@ -395,14 +422,13 @@ export function App() {
         setRepositioningDeskId('');
         return;
       }
-      if (selectedDeskId) {
-        setSelectedDeskId('');
-        setPopupAnchor(null);
+      if (popupOpen) {
+        closeBookingPopup();
       }
     };
     window.addEventListener('keydown', onEscape);
     return () => window.removeEventListener('keydown', onEscape);
-  }, [repositioningDeskId, selectedDeskId]);
+  }, [closeBookingPopup, popupOpen, repositioningDeskId]);
 
   useEffect(() => {
     if (isAdminMode) {
@@ -542,7 +568,7 @@ export function App() {
 
   const createBooking = async (event: FormEvent) => {
     event.preventDefault();
-    if (!activeDesk || activeDesk.status !== 'free') return;
+    if (!popupDesk || popupDesk.status !== 'free') return;
 
     const bookingEmail = activeEmployees.length ? selectedEmployeeEmail : manualBookingEmail.trim();
     if (!bookingEmail) {
@@ -554,10 +580,10 @@ export function App() {
 
     try {
       if (bookingMode === 'single') {
-        await post('/bookings', { deskId: activeDesk.id, userEmail: bookingEmail, date: selectedDate });
+        await post('/bookings', { deskId: popupDesk.id, userEmail: bookingEmail, date: selectedDate });
       } else if (bookingMode === 'range') {
         await post('/bookings/range', {
-          deskId: activeDesk.id,
+          deskId: popupDesk.id,
           userEmail: bookingEmail,
           from: rangeFrom,
           to: rangeTo,
@@ -565,7 +591,7 @@ export function App() {
         });
       } else {
         await post('/recurring-bookings/bulk', {
-          deskId: activeDesk.id,
+          deskId: popupDesk.id,
           userEmail: bookingEmail,
           weekdays: seriesWeekdays,
           validFrom: seriesValidFrom,
@@ -574,7 +600,7 @@ export function App() {
       }
 
       setSelectedDeskId('');
-      setPopupAnchor(null);
+      closeBookingPopup();
       await loadOccupancy(selectedFloorplanId, selectedDate);
       if (isAdminMode) await loadAdminLists();
       setInfoMessage('Buchung erstellt.');
@@ -937,12 +963,7 @@ export function App() {
                     onHoverDesk={setHoveredDeskId}
                     onSelectDesk={(deskId, anchorRect) => {
                       setSelectedDeskId(deskId);
-                      setPopupAnchor({
-                        left: anchorRect.left,
-                        right: anchorRect.right,
-                        top: anchorRect.top,
-                        bottom: anchorRect.bottom
-                      });
+                      openBookingPopup(deskId, anchorRect);
                     }}
                   />
                 </>
@@ -962,9 +983,11 @@ export function App() {
                         className={`person-item ${selectedDeskId === person.deskId ? 'row-selected' : ''}`}
                         onMouseEnter={() => setHoveredDeskId(person.deskId ?? '')}
                         onMouseLeave={() => setHoveredDeskId('')}
-                        onClick={() => {
+                        onClick={(event) => {
                           if (!person.deskId) return;
                           setSelectedDeskId(person.deskId);
+                          const rect = (event.currentTarget as HTMLLIElement).getBoundingClientRect();
+                          openBookingPopup(person.deskId, rect);
                         }}
                       >
                         <div>
@@ -1045,13 +1068,19 @@ export function App() {
         </div>
       )}
 
-      {!isAdminMode && activeDesk && popupPosition && createPortal(
+      {!isAdminMode && popupOpen && popupDesk && createPortal(
         <>
-          <div className="booking-portal-backdrop" onClick={() => { setSelectedDeskId(''); setPopupAnchor(null); }} />
-          <div ref={popupRef} className="booking-overlay card" style={{ left: popupPosition.left, top: popupPosition.top }} onClick={(event) => event.stopPropagation()}>
-            <h3>{activeDesk.name}</h3>
+          <div className="booking-portal-backdrop" onClick={closeBookingPopup} />
+          <div
+            ref={popupRef}
+            className="booking-overlay card"
+            style={popupPosition}
+            onClick={(event) => event.stopPropagation()}
+          >
+            {import.meta.env.DEV && console.debug('[booking] popup render', { isOpen: popupOpen, deskId: popupDesk.id })}
+            <h3>{popupDesk.name}</h3>
             <p className="muted">{selectedDate}</p>
-            {activeDesk.status === 'free' ? (
+            {popupDesk.status === 'free' ? (
               <form onSubmit={createBooking} className="booking-form">
                 <div className="booking-form-body form-grid">
                   <label className="field">
@@ -1147,17 +1176,17 @@ export function App() {
 
                 <div className="booking-form-footer">
                   <button className="btn btn-primary" type="submit" disabled={bookingMode === 'series' && !isSeriesValid}>Buchen</button>
-                  <button type="button" className="btn btn-secondary" onClick={() => { setSelectedDeskId(''); setPopupAnchor(null); }}>Schließen</button>
+                  <button type="button" className="btn btn-secondary" onClick={closeBookingPopup}>Schließen</button>
                 </div>
               </form>
             ) : (
               <div className="booking-form-body form-grid">
-                <p className="muted">Gebucht von {activeDesk.booking?.userDisplayName ?? activeDesk.booking?.userEmail}</p>
+                <p className="muted">Gebucht von {popupDesk.booking?.userDisplayName ?? popupDesk.booking?.userEmail}</p>
               </div>
             )}
-            {activeDesk.status !== 'free' && (
+            {popupDesk.status !== 'free' && (
               <div className="booking-form-footer">
-                <button className="btn btn-secondary" onClick={() => { setSelectedDeskId(''); setPopupAnchor(null); }}>Schließen</button>
+                <button className="btn btn-secondary" onClick={closeBookingPopup}>Schließen</button>
               </div>
             )}
           </div>
