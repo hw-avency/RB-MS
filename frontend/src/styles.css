@@ -10,6 +10,90 @@ body { margin: 0; }
 .app-shell { min-height: 100vh; padding: 24px; }
 .container { max-width: 1680px; margin: 0 auto; display: grid; gap: 16px; }
 
+.login-page {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.login-card {
+  width: min(100%, 460px);
+  padding: 28px;
+  display: grid;
+  gap: 18px;
+  border-radius: 16px;
+  box-shadow: 0 10px 30px rgba(16, 32, 51, 0.08);
+}
+
+.login-divider {
+  position: relative;
+  text-align: center;
+  color: #6b7f95;
+  font-size: .85rem;
+}
+
+.login-divider::before {
+  content: '';
+  position: absolute;
+  inset: 50% 0 auto;
+  border-top: 1px solid #d9e0ea;
+}
+
+.login-divider span {
+  position: relative;
+  background: #fff;
+  padding: 0 10px;
+}
+
+.microsoft-btn {
+  height: 44px;
+  display: grid;
+  grid-template-columns: 20px 1fr;
+  align-items: center;
+  gap: 10px;
+  background: #fff;
+  border-color: #c8d1df;
+  color: #1c2d41;
+}
+
+.microsoft-btn:hover { background: #f8fafc; }
+.microsoft-btn:focus-visible,
+.btn:focus-visible,
+input:focus-visible,
+select:focus-visible {
+  outline: 2px solid #1f6feb;
+  outline-offset: 2px;
+}
+
+.microsoft-btn img { width: 20px; height: 20px; }
+.microsoft-btn span { text-align: center; margin-right: 30px; }
+
+.field-error {
+  color: #a42a36;
+  font-size: .78rem;
+  font-weight: 600;
+}
+
+.alert {
+  border-radius: 10px;
+  padding: 10px 12px;
+  border: 1px solid transparent;
+}
+
+.alert-error {
+  background: #fdecee;
+  border-color: #f2cdd1;
+  color: #8f2430;
+}
+
+.alert-title {
+  margin: 0 0 4px;
+  font-weight: 700;
+}
+
+.alert-message { margin: 0; }
+
+
 .card {
   background: #fff;
   border: 1px solid #d9e0ea;
@@ -42,13 +126,13 @@ h3 { margin: 0 0 8px; font-size: 1rem; }
 
 .field { display: grid; gap: 6px; font-size: .85rem; }
 input, select {
-  width: 100%; border: 1px solid #c5cfdd; border-radius: 10px; padding: 8px 10px; font: inherit;
+  width: 100%; border: 1px solid #c5cfdd; border-radius: 10px; padding: 8px 10px; min-height: 44px; font: inherit;
 }
 .form-grid { display: grid; gap: 10px; }
 .gap-3 { gap: 12px; }
 
 .btn {
-  border: 1px solid transparent; border-radius: 10px; padding: 8px 12px;
+  border: 1px solid transparent; border-radius: 10px; padding: 8px 12px; min-height: 44px;
   font-weight: 600; cursor: pointer; background: #fff;
 }
 .btn-primary { background: #1f6feb; border-color: #1f6feb; color: #fff; }
