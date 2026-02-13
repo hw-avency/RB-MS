@@ -8,6 +8,9 @@ declare global {
       displayName: string;
       isAdmin: boolean;
       authProvider: 'breakglass' | 'entra';
+      isActive: boolean;
+      created: boolean;
+      photoBase64: string | null;
     }
 
     interface Request {

@@ -290,3 +290,18 @@ tr.row-selected { background: #eef4ff; }
 }
 .status-pill.active { background: #e7f7ec; color: #12783a; }
 .status-pill.inactive { background: #fdecee; color: #8f2430; }
+
+.mode-switch { display: flex; gap: 6px; }
+.user-chip { display: flex; align-items: center; gap: 8px; font-weight: 600; color: #1c2d41; }
+.avatar {
+  width: 32px;
+  height: 32px;
+  border-radius: 999px;
+  object-fit: cover;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid #d9e0ea;
+}
+.avatar-fallback { background: #eef4ff; color: #1f6feb; font-size: .75rem; font-weight: 700; }
+.avatar-small { width: 26px; height: 26px; }

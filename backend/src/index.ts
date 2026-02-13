@@ -116,7 +116,8 @@ const employeeSelect = {
   email: true,
   displayName: true,
   isActive: true,
-  isAdmin: true
+  isAdmin: true,
+  photoBase64: true
 } satisfies Prisma.EmployeeSelect;
 
 const getActiveEmployeesByEmail = async (emails: string[]): Promise<Map<string, { displayName: string }>> => {
@@ -238,7 +239,7 @@ app.post('/admin/employees', requireAuth, requireAdmin, async (req, res) => {
   }
 });
 
-app.patch('/admin/employees/:id', requireAuth, requireAdmin, async (req, res) => {
+const patchEmployeeHandler: express.RequestHandler = async (req, res) => {
   const id = getRouteId(req.params.id);
   if (!id) {
     res.status(400).json({ error: 'validation', message: 'id is required' });
@@ -257,27 +258,42 @@ app.patch('/admin/employees/:id', requireAuth, requireAdmin, async (req, res) =>
     return;
   }
 
-  try {
-    const updated = await prisma.employee.update({
-      where: { id },
-      data: {
-        ...(typeof trimmedDisplayName === 'string' ? { displayName: trimmedDisplayName } : {}),
-        ...(typeof isActive === 'boolean' ? { isActive } : {}),
-        ...(typeof isAdmin === 'boolean' ? { isAdmin } : {})
-      },
-      select: employeeSelect
-    });
+  const target = await prisma.employee.findUnique({ where: { id }, select: { id: true, email: true, isAdmin: true } });
+  if (!target) {
+    res.status(404).json({ error: 'not_found', message: 'Employee not found' });
+    return;
+  }
 
-    res.status(200).json(updated);
-  } catch (error) {
-    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2025') {
-      res.status(404).json({ error: 'not_found', message: 'Employee not found' });
+  const normalizedBreakglassEmail = normalizeEmail(ADMIN_EMAIL);
+  if (isActive === false && normalizeEmail(target.email) === normalizedBreakglassEmail) {
+    res.status(409).json({ error: 'conflict', message: 'Breakglass admin cannot be deactivated' });
+    return;
+  }
+
+  const wouldRemoveAdmin = target.isAdmin && isAdmin === false;
+  if (wouldRemoveAdmin) {
+    const adminCount = await prisma.employee.count({ where: { isAdmin: true, isActive: true } });
+    if (adminCount <= 1) {
+      res.status(409).json({ error: 'conflict', message: 'Mindestens ein Admin erforderlich' });
       return;
     }
-
-    throw error;
   }
-});
+
+  const updated = await prisma.employee.update({
+    where: { id },
+    data: {
+      ...(typeof trimmedDisplayName === 'string' ? { displayName: trimmedDisplayName } : {}),
+      ...(typeof isActive === 'boolean' ? { isActive } : {}),
+      ...(typeof isAdmin === 'boolean' ? { isAdmin } : {})
+    },
+    select: employeeSelect
+  });
+
+  res.status(200).json(updated);
+};
+
+app.patch('/admin/employees/:id', requireAuth, requireAdmin, patchEmployeeHandler);
+app.patch('/employees/:id', requireAuth, requireAdmin, patchEmployeeHandler);
 
 app.delete('/admin/employees/:id', requireAuth, requireAdmin, async (req, res) => {
   const id = getRouteId(req.params.id);

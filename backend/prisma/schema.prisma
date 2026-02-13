@@ -23,6 +23,9 @@ model Employee {
   displayName String
   isActive    Boolean  @default(true)
   isAdmin     Boolean  @default(false)
+  externalId  String?  @unique
+  photoBase64 String?
+  photoFetchedAt DateTime?
   createdAt   DateTime @default(now())
 }
 

@@ -15,7 +15,7 @@ type OccupancyDesk = {
 };
 type OccupancyPerson = { email: string; userEmail: string; displayName?: string; deskName?: string; deskId?: string };
 type OccupancyResponse = { date: string; floorplanId: string; desks: OccupancyDesk[]; people: OccupancyPerson[] };
-type Employee = { id: string; email: string; displayName: string; isActive: boolean };
+type Employee = { id: string; email: string; displayName: string; isActive: boolean; isAdmin: boolean; photoBase64?: string | null };
 type BookingEmployee = { id: string; email: string; displayName: string };
 type AdminBooking = {
   id: string;
@@ -32,7 +32,7 @@ type AdminRecurringBooking = {
   validTo: string | null;
   desk: { id: string; name: string; floorplanId: string };
 };
-type MeResponse = { employeeId: string; email: string; displayName: string; isAdmin: boolean; authProvider: 'breakglass' | 'entra' };
+type MeResponse = { employeeId: string; email: string; displayName: string; isAdmin: boolean; authProvider: 'breakglass' | 'entra'; isActive: boolean; photoBase64?: string | null; created?: boolean };
 type BookingMode = 'single' | 'range' | 'series';
 type BootstrapState = 'initializing' | 'backend_down' | 'unauthenticated' | 'authenticated';
 
@@ -128,7 +128,9 @@ export function App() {
   const [adminEmailError, setAdminEmailError] = useState('');
   const [adminPasswordError, setAdminPasswordError] = useState('');
   const [hasLoginAttempted, setHasLoginAttempted] = useState(false);
-  const isAdminMode = me?.isAdmin === true;
+  const canAccessAdmin = me?.isAdmin === true;
+  const [uiMode, setUiMode] = useState<'booking' | 'admin'>(() => (localStorage.getItem('uiMode') === 'admin' ? 'admin' : 'booking'));
+  const isAdminMode = canAccessAdmin && uiMode === 'admin';
   const [adminTab, setAdminTab] = useState<'floorplans' | 'desks' | 'bookings' | 'employees'>('floorplans');
 
   const [createName, setCreateName] = useState('');
@@ -146,7 +148,7 @@ export function App() {
   const [employeeActionMessage, setEmployeeActionMessage] = useState('');
   const [employeeErrorMessage, setEmployeeErrorMessage] = useState('');
   const [employeeSearch, setEmployeeSearch] = useState('');
-  const [employeeSortKey, setEmployeeSortKey] = useState<'displayName' | 'email' | 'isActive'>('displayName');
+  const [employeeSortKey, setEmployeeSortKey] = useState<'displayName' | 'email' | 'isActive' | 'isAdmin'>('displayName');
   const [employeeSortDirection, setEmployeeSortDirection] = useState<'asc' | 'desc'>('asc');
   const [employeePage, setEmployeePage] = useState(1);
   const [selectedAdminEmployeeId, setSelectedAdminEmployeeId] = useState('');
@@ -156,7 +158,7 @@ export function App() {
   const [editBookingEmail, setEditBookingEmail] = useState('');
   const [editBookingDate, setEditBookingDate] = useState('');
 
-  const adminHeaders = useMemo(() => (isAdminMode ? {} : undefined), [isAdminMode]);
+  const adminHeaders = useMemo(() => (canAccessAdmin ? {} : undefined), [canAccessAdmin]);
   const selectedFloorplan = useMemo(
     () => floorplans.find((floorplan) => floorplan.id === selectedFloorplanId) ?? null,
     [floorplans, selectedFloorplanId]
@@ -182,8 +184,8 @@ export function App() {
       : employees;
 
     return [...source].sort((a, b) => {
-      if (employeeSortKey === 'isActive') {
-        const value = Number(a.isActive) - Number(b.isActive);
+      if (employeeSortKey === 'isActive' || employeeSortKey === 'isAdmin') {
+        const value = Number(a[employeeSortKey]) - Number(b[employeeSortKey]);
         if (value === 0) return a.displayName.localeCompare(b.displayName, 'de');
         return employeeSortDirection === 'asc' ? value : -value;
       }
@@ -202,6 +204,7 @@ export function App() {
     () => employees.find((employee) => employee.id === selectedAdminEmployeeId) ?? null,
     [employees, selectedAdminEmployeeId]
   );
+  const activeAdminCount = useMemo(() => employees.filter((employee) => employee.isAdmin && employee.isActive).length, [employees]);
 
   const handleApiError = (error: unknown) => {
     if (error instanceof ApiError) {
@@ -245,6 +248,9 @@ export function App() {
     const current = await get<MeResponse>('/me', undefined, 10000);
     setMe(current);
     setManualBookingEmail((prev) => prev || current.email);
+    if (current.created) {
+      setInfoMessage('Willkommen, Profil angelegt');
+    }
   };
 
   const readEntraToken = (): string => localStorage.getItem('entraAccessToken') ?? '';
@@ -282,7 +288,7 @@ export function App() {
     try {
       const data = adminHeaders
         ? await get<Employee[]>('/admin/employees', adminHeaders)
-        : (await get<BookingEmployee[]>('/employees')).map((employee) => ({ ...employee, isActive: true }));
+        : (await get<BookingEmployee[]>('/employees')).map((employee) => ({ ...employee, isActive: true, isAdmin: false, photoBase64: null }));
       setEmployees(data);
     } catch (error) {
       handleApiError(error);
@@ -312,6 +318,17 @@ export function App() {
       handleApiError(error);
     }
   };
+
+
+  useEffect(() => {
+    localStorage.setItem('uiMode', uiMode);
+  }, [uiMode]);
+
+  useEffect(() => {
+    if (!canAccessAdmin && uiMode !== 'booking') {
+      setUiMode('booking');
+    }
+  }, [canAccessAdmin, uiMode]);
 
   useEffect(() => {
     document.title = 'AVENCY Booking';
@@ -795,10 +812,23 @@ export function App() {
     setEmployeeErrorMessage('');
 
     try {
-      await patch(`/admin/employees/${id}`, { displayName: editingEmployeeName }, adminHeaders);
+      await patch(`/employees/${id}`, { displayName: editingEmployeeName }, adminHeaders);
       setEditingEmployeeId('');
       setEditingEmployeeName('');
       setEmployeeActionMessage('Mitarbeiter aktualisiert.');
+      await loadEmployees();
+    } catch (error) {
+      handleEmployeeError(error);
+    }
+  };
+
+  const toggleEmployeeAdmin = async (employee: Employee) => {
+    if (!adminHeaders) return;
+    setEmployeeErrorMessage('');
+
+    try {
+      await patch(`/employees/${employee.id}`, { isAdmin: !employee.isAdmin }, adminHeaders);
+      setEmployeeActionMessage(employee.isAdmin ? 'Admin-Rolle entfernt.' : 'Admin-Rolle gesetzt.');
       await loadEmployees();
     } catch (error) {
       handleEmployeeError(error);
@@ -810,7 +840,7 @@ export function App() {
     setEmployeeErrorMessage('');
 
     try {
-      await patch(`/admin/employees/${employee.id}`, { isActive: !employee.isActive }, adminHeaders);
+      await patch(`/employees/${employee.id}`, { isActive: !employee.isActive }, adminHeaders);
       setEmployeeActionMessage(employee.isActive ? 'Mitarbeiter deaktiviert.' : 'Mitarbeiter aktiviert.');
       await loadEmployees();
     } catch (error) {
@@ -818,7 +848,7 @@ export function App() {
     }
   };
 
-  const toggleEmployeeSort = (key: 'displayName' | 'email' | 'isActive') => {
+  const toggleEmployeeSort = (key: 'displayName' | 'email' | 'isActive' | 'isAdmin') => {
     if (employeeSortKey === key) {
       setEmployeeSortDirection((prev) => (prev === 'asc' ? 'desc' : 'asc'));
       return;
@@ -962,14 +992,23 @@ export function App() {
             <h1>AVENCY Booking</h1>
           </div>
           <div className="topbar-controls">
-            {isAdminMode ? (
-              <>
-                <span className="status status-connected">Admin Mode</span>
-                <button className="btn btn-secondary" onClick={logoutAdmin}>Logout</button>
-              </>
-            ) : (
-              <button className="btn btn-secondary" onClick={() => setShowAdminLogin(true)}>Admin</button>
+            {canAccessAdmin && (
+              <div className="mode-switch" role="tablist" aria-label="Modus wechseln">
+                <button className={`tab-btn ${uiMode === 'booking' ? 'active' : ''}`} role="tab" onClick={() => setUiMode('booking')}>Buchen</button>
+                <button className={`tab-btn ${uiMode === 'admin' ? 'active' : ''}`} role="tab" onClick={() => setUiMode('admin')}>Admin</button>
+              </div>
             )}
+            {me && (
+              <div className="user-chip">
+                {me.photoBase64 ? <img className="avatar avatar-small" src={me.photoBase64} alt={me.displayName} /> : <span className="avatar avatar-fallback avatar-small">{(me.displayName[0] ?? '?').toUpperCase()}</span>}
+                <span>{me.displayName}</span>
+              </div>
+            )}
+            {breakglassToken ? (
+              <button className="btn btn-secondary" onClick={logoutAdmin}>Logout</button>
+            ) : !canAccessAdmin ? (
+              <button className="btn btn-secondary" onClick={() => setShowAdminLogin(true)}>Admin</button>
+            ) : null}
           </div>
         </header>
 
@@ -1049,26 +1088,50 @@ export function App() {
                     <table className="employee-table">
                       <thead>
                         <tr>
+                          <th>Avatar</th>
                           <th><button className="table-sort-btn" onClick={() => toggleEmployeeSort('displayName')}>Name</button></th>
                           <th><button className="table-sort-btn" onClick={() => toggleEmployeeSort('email')}>E-Mail</button></th>
+                          <th><button className="table-sort-btn" onClick={() => toggleEmployeeSort('isAdmin')}>Admin</button></th>
                           <th><button className="table-sort-btn" onClick={() => toggleEmployeeSort('isActive')}>Status</button></th>
                         </tr>
                       </thead>
                       <tbody>
-                        {pagedEmployees.map((employee) => (
-                          <tr
-                            key={employee.id}
-                            className={selectedAdminEmployeeId === employee.id ? 'row-selected' : ''}
-                            onClick={() => selectAdminEmployee(employee)}
-                          >
-                            <td>{employee.displayName}</td>
-                            <td>{employee.email}</td>
-                            <td>{employee.isActive ? 'Aktiv' : 'Inaktiv'}</td>
-                          </tr>
-                        ))}
+                        {pagedEmployees.map((employee) => {
+                          const initials = employee.displayName.split(' ').map((part) => part[0] ?? '').join('').slice(0, 2).toUpperCase();
+                          const isLastAdmin = employee.isAdmin && employee.isActive && activeAdminCount <= 1;
+                          return (
+                            <tr
+                              key={employee.id}
+                              className={selectedAdminEmployeeId === employee.id ? 'row-selected' : ''}
+                              onClick={() => selectAdminEmployee(employee)}
+                            >
+                              <td>
+                                {employee.photoBase64 ? (
+                                  <img className="avatar" src={employee.photoBase64} alt={employee.displayName} />
+                                ) : (
+                                  <span className="avatar avatar-fallback">{initials || '?'}</span>
+                                )}
+                              </td>
+                              <td>{employee.displayName}</td>
+                              <td>{employee.email}</td>
+                              <td>
+                                <label title={isLastAdmin ? 'Mindestens ein Admin erforderlich' : ''}>
+                                  <input
+                                    type="checkbox"
+                                    checked={employee.isAdmin}
+                                    disabled={isLastAdmin}
+                                    onClick={(event) => event.stopPropagation()}
+                                    onChange={() => toggleEmployeeAdmin(employee)}
+                                  />
+                                </label>
+                              </td>
+                              <td>{employee.isActive ? 'Aktiv' : 'Inaktiv'}</td>
+                            </tr>
+                          );
+                        })}
                         {!pagedEmployees.length && (
                           <tr>
-                            <td colSpan={3} className="muted">Keine Mitarbeiter gefunden.</td>
+                            <td colSpan={5} className="muted">Keine Mitarbeiter gefunden.</td>
                           </tr>
                         )}
                       </tbody>
