@@ -2,6 +2,7 @@ import { FormEvent, MouseEvent, useEffect, useLayoutEffect, useMemo, useRef, use
 import { createPortal } from 'react-dom';
 import { API_BASE, ApiError, del, get, patch, post, setAuthTokenProvider } from './api';
 import { entraScope, getActiveAccount, msalInstance } from './auth';
+import { FloorplanCanvas } from './FloorplanCanvas';
 import microsoftLogo from './assets/microsoft.svg';
 
 type Floorplan = { id: string; name: string; imageUrl: string; createdAt: string };
@@ -92,6 +93,7 @@ const buildCalendarDays = (monthStart: Date): Date[] => {
 };
 
 export function App() {
+  const floorplanDebug = import.meta.env.DEV && localStorage.getItem('floorplan-debug') === '1';
   const [floorplans, setFloorplans] = useState<Floorplan[]>([]);
   const [selectedFloorplanId, setSelectedFloorplanId] = useState('');
   const [selectedDate, setSelectedDate] = useState(today);
@@ -635,14 +637,8 @@ export function App() {
     }
   };
 
-  const createDeskAtPosition = async (event: MouseEvent<HTMLDivElement>) => {
+  const createDeskAtPosition = async (x: number, y: number) => {
     if (!adminHeaders || !selectedFloorplan || adminTab !== 'desks' || !!repositioningDeskId) return;
-    const target = event.target as HTMLElement;
-    if (target.dataset.pin === 'desk-pin') return;
-
-    const rect = event.currentTarget.getBoundingClientRect();
-    const x = (event.clientX - rect.left) / rect.width;
-    const y = (event.clientY - rect.top) / rect.height;
     const name = `Desk ${desks.length + 1}`;
 
     try {
@@ -653,12 +649,8 @@ export function App() {
     }
   };
 
-  const repositionDesk = async (event: MouseEvent<HTMLDivElement>) => {
+  const repositionDesk = async (x: number, y: number) => {
     if (!adminHeaders || !selectedFloorplan || !repositioningDeskId) return;
-
-    const rect = event.currentTarget.getBoundingClientRect();
-    const x = (event.clientX - rect.left) / rect.width;
-    const y = (event.clientY - rect.top) / rect.height;
 
     try {
       await patch(`/admin/desks/${repositioningDeskId}`, { x, y }, adminHeaders);
@@ -1085,29 +1077,30 @@ export function App() {
                       <h2>{selectedFloorplan.name}</h2>
                       {adminTab === 'desks' && <p className="muted">{repositioningDeskId ? 'Klicke auf neue Position im Floorplan' : 'Klick auf freie Fläche, um einen Desk anzulegen.'}</p>}
                       {(adminTab === 'floorplans' || adminTab === 'desks' || adminTab === 'bookings') && (
-                        <div
-                          onClick={adminTab === 'desks' ? (repositioningDeskId ? repositionDesk : createDeskAtPosition) : undefined}
-                          className={`floorplan-canvas ${repositioningDeskId ? 'reposition-mode' : ''}`}
-                          role="presentation"
-                        >
-                          <img src={selectedFloorplan.imageUrl} alt={selectedFloorplan.name} />
-                          {(adminTab === 'desks' || adminTab === 'bookings') && desks.map((desk) => (
-                            <button
-                              key={desk.id}
-                              data-pin="desk-pin"
-                              type="button"
-                              className={`desk-pin ${desk.status} ${selectedDeskId === desk.id ? 'selected' : ''} ${hoveredDeskId === desk.id ? 'hovered' : ''}`}
-                              onMouseEnter={() => setHoveredDeskId(desk.id)}
-                              onMouseLeave={() => setHoveredDeskId('')}
-                              onClick={(event) => {
-                                event.stopPropagation();
-                                if (repositioningDeskId) return;
-                                setSelectedDeskId(desk.id);
-                              }}
-                              style={{ left: `${desk.x * 100}%`, top: `${desk.y * 100}%` }}
-                            />
-                          ))}
-                        </div>
+                        <FloorplanCanvas
+                          imageUrl={selectedFloorplan.imageUrl}
+                          imageAlt={selectedFloorplan.name}
+                          desks={adminTab === 'desks' || adminTab === 'bookings' ? desks : []}
+                          selectedDeskId={selectedDeskId}
+                          hoveredDeskId={hoveredDeskId}
+                          repositionMode={!!repositioningDeskId}
+                          interactive={adminTab === 'desks'}
+                          debug={floorplanDebug}
+                          onCanvasPoint={({ xPct, yPct }) => {
+                            if (repositioningDeskId) {
+                              repositionDesk(xPct, yPct);
+                              return;
+                            }
+                            createDeskAtPosition(xPct, yPct);
+                          }}
+                          onDeskMouseEnter={(deskId) => setHoveredDeskId(deskId)}
+                          onDeskMouseLeave={() => setHoveredDeskId('')}
+                          onDeskClick={(deskId, event) => {
+                            event.stopPropagation();
+                            if (repositioningDeskId) return;
+                            setSelectedDeskId(deskId);
+                          }}
+                        />
                       )}
                     </>
                   )
@@ -1236,26 +1229,22 @@ export function App() {
               {!selectedFloorplan ? <p>Kein Floorplan ausgewählt.</p> : (
                 <>
                   <h2>{selectedFloorplan.name}</h2>
-                  <div className="floorplan-canvas" role="presentation">
-                    <img src={selectedFloorplan.imageUrl} alt={selectedFloorplan.name} />
-                    {desks.map((desk) => (
-                      <button
-                        key={desk.id}
-                        data-pin="desk-pin"
-                        type="button"
-                        className={`desk-pin ${desk.status} ${selectedDeskId === desk.id ? 'selected' : ''} ${hoveredDeskId === desk.id ? 'hovered' : ''}`}
-                        onMouseEnter={() => setHoveredDeskId(desk.id)}
-                        onMouseLeave={() => setHoveredDeskId('')}
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          setSelectedDeskId(desk.id);
-                          const rect = event.currentTarget.getBoundingClientRect();
-                          setPopupAnchor({ left: rect.left + rect.width + 10, top: rect.top });
-                        }}
-                        style={{ left: `${desk.x * 100}%`, top: `${desk.y * 100}%` }}
-                      />
-                    ))}
-                  </div>
+                  <FloorplanCanvas
+                    imageUrl={selectedFloorplan.imageUrl}
+                    imageAlt={selectedFloorplan.name}
+                    desks={desks}
+                    selectedDeskId={selectedDeskId}
+                    hoveredDeskId={hoveredDeskId}
+                    debug={floorplanDebug}
+                    onDeskMouseEnter={(deskId) => setHoveredDeskId(deskId)}
+                    onDeskMouseLeave={() => setHoveredDeskId('')}
+                    onDeskClick={(deskId, event) => {
+                      event.stopPropagation();
+                      setSelectedDeskId(deskId);
+                      const rect = event.currentTarget.getBoundingClientRect();
+                      setPopupAnchor({ left: rect.left + rect.width + 10, top: rect.top });
+                    }}
+                  />
                 </>
               )}
             </section>

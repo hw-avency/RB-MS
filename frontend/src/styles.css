@@ -149,12 +149,12 @@ input, select {
   background: #fafcff;
   min-height: 70vh;
 }
-.floorplan-canvas img { width: 100%; min-height: 70vh; display: block; object-fit: contain; }
+.floorplan-canvas img { width: 100%; height: auto; display: block; }
 .floorplan-canvas.reposition-mode { cursor: crosshair; }
 
 .desk-pin {
   position: absolute; transform: translate(-50%, -50%); width: 18px; height: 18px; border-radius: 999px;
-  border: 2px solid #1f6feb; background: #fff; cursor: pointer;
+  border: 2px solid #1f6feb; background: #fff; cursor: pointer; pointer-events: auto;
 }
 .desk-pin.booked { background: #d62f3d; border-color: #d62f3d; }
 .desk-pin.selected { box-shadow: 0 0 0 5px rgba(31, 111, 235, .45); }
