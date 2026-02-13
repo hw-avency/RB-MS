@@ -102,6 +102,23 @@ const toDateOnly = (value: string): Date | null => {
 
 const toISODateOnly = (value: Date): string => value.toISOString().slice(0, 10);
 
+const endOfCurrentYear = (): Date => {
+  const now = new Date();
+  return new Date(Date.UTC(now.getUTCFullYear(), 11, 31));
+};
+
+const datesInRange = (from: Date, to: Date): Date[] => {
+  const dates: Date[] = [];
+  const cursor = new Date(from);
+
+  while (cursor <= to) {
+    dates.push(new Date(cursor));
+    cursor.setUTCDate(cursor.getUTCDate() + 1);
+  }
+
+  return dates;
+};
+
 const isDateWithinRange = (date: Date, start: Date, end?: Date | null): boolean => {
   if (date < start) {
     return false;
@@ -414,6 +431,109 @@ app.post('/bookings', async (req, res) => {
   res.status(201).json(booking);
 });
 
+app.post('/bookings/range', async (req, res) => {
+  const { deskId, userEmail, from, to, weekdaysOnly } = req.body as {
+    deskId?: string;
+    userEmail?: string;
+    from?: string;
+    to?: string;
+    weekdaysOnly?: boolean;
+  };
+
+  if (!deskId || !userEmail || !from || !to) {
+    res.status(400).json({ error: 'validation', message: 'deskId, userEmail, from and to are required' });
+    return;
+  }
+
+  const parsedFrom = toDateOnly(from);
+  const parsedTo = toDateOnly(to);
+  if (!parsedFrom || !parsedTo) {
+    res.status(400).json({ error: 'validation', message: 'from/to must be in YYYY-MM-DD format' });
+    return;
+  }
+
+  if (parsedTo < parsedFrom) {
+    res.status(400).json({ error: 'validation', message: 'to must be on or after from' });
+    return;
+  }
+
+  const desk = await prisma.desk.findUnique({ where: { id: deskId } });
+  if (!desk) {
+    res.status(404).json({ error: 'not_found', message: 'Desk not found' });
+    return;
+  }
+
+  const includeWeekdaysOnly = weekdaysOnly !== false;
+  const targetDates = datesInRange(parsedFrom, parsedTo).filter((date) => {
+    if (!includeWeekdaysOnly) {
+      return true;
+    }
+
+    const day = date.getUTCDay();
+    return day >= 1 && day <= 5;
+  });
+
+  if (targetDates.length === 0) {
+    res.status(201).json({ createdCount: 0, dates: [] });
+    return;
+  }
+
+  const [singleConflicts, recurringRules] = await Promise.all([
+    prisma.booking.findMany({
+      where: {
+        deskId,
+        date: { in: targetDates }
+      },
+      orderBy: { date: 'asc' }
+    }),
+    prisma.recurringBooking.findMany({
+      where: {
+        deskId,
+        validFrom: { lte: parsedTo },
+        OR: [{ validTo: null }, { validTo: { gte: parsedFrom } }]
+      }
+    })
+  ]);
+
+  const conflictDates = new Set(singleConflicts.map((booking) => toISODateOnly(booking.date)));
+  for (const date of targetDates) {
+    if (conflictDates.has(toISODateOnly(date))) {
+      continue;
+    }
+
+    const recurringConflict = recurringRules.find(
+      (rule) => rule.weekday === date.getUTCDay() && isDateWithinRange(date, rule.validFrom, rule.validTo)
+    );
+    if (recurringConflict) {
+      conflictDates.add(toISODateOnly(date));
+    }
+  }
+
+  if (conflictDates.size > 0) {
+    const sortedConflicts = Array.from(conflictDates).sort();
+    sendConflict(res, 'Range booking has conflicting dates', {
+      deskId,
+      from,
+      to,
+      weekdaysOnly: includeWeekdaysOnly,
+      conflictingDates: sortedConflicts,
+      conflictingDatesPreview: sortedConflicts.slice(0, 10)
+    });
+    return;
+  }
+
+  const normalizedUserEmail = normalizeEmail(userEmail);
+  const created = await prisma.$transaction(async (tx) => {
+    await tx.booking.createMany({
+      data: targetDates.map((date) => ({ deskId, userEmail: normalizedUserEmail, date }))
+    });
+
+    return targetDates.map((date) => toISODateOnly(date));
+  });
+
+  res.status(201).json({ createdCount: created.length, dates: created });
+});
+
 app.get('/bookings', async (req, res) => {
   const from = typeof req.query.from === 'string' ? req.query.from : undefined;
   const to = typeof req.query.to === 'string' ? req.query.to : undefined;
@@ -672,6 +792,115 @@ app.post('/recurring-bookings', async (req, res) => {
   });
 
   res.status(201).json(recurringBooking);
+});
+
+app.post('/recurring-bookings/bulk', async (req, res) => {
+  const { deskId, userEmail, weekdays, validFrom, validTo } = req.body as {
+    deskId?: string;
+    userEmail?: string;
+    weekdays?: number[];
+    validFrom?: string;
+    validTo?: string;
+  };
+
+  if (!deskId || !userEmail || !Array.isArray(weekdays) || !validFrom) {
+    res.status(400).json({ error: 'validation', message: 'deskId, userEmail, weekdays and validFrom are required' });
+    return;
+  }
+
+  const uniqueWeekdays = Array.from(new Set(weekdays));
+  if (uniqueWeekdays.length !== weekdays.length || uniqueWeekdays.length === 0) {
+    res.status(400).json({ error: 'validation', message: 'weekdays must be unique and non-empty' });
+    return;
+  }
+
+  if (uniqueWeekdays.some((weekday) => !Number.isInteger(weekday) || weekday < 0 || weekday > 6)) {
+    res.status(400).json({ error: 'validation', message: 'weekdays must contain values between 0 and 6' });
+    return;
+  }
+
+  const parsedValidFrom = toDateOnly(validFrom);
+  const parsedValidTo = validTo ? toDateOnly(validTo) : endOfCurrentYear();
+  if (!parsedValidFrom || !parsedValidTo) {
+    res.status(400).json({ error: 'validation', message: 'validFrom/validTo must be in YYYY-MM-DD format' });
+    return;
+  }
+
+  if (parsedValidTo < parsedValidFrom) {
+    res.status(400).json({ error: 'validation', message: 'validTo must be on or after validFrom' });
+    return;
+  }
+
+  const desk = await prisma.desk.findUnique({ where: { id: deskId } });
+  if (!desk) {
+    res.status(404).json({ error: 'not_found', message: 'Desk not found' });
+    return;
+  }
+
+  const overlappingRecurring = await prisma.recurringBooking.findMany({
+    where: {
+      deskId,
+      weekday: { in: uniqueWeekdays },
+      validFrom: { lte: parsedValidTo },
+      OR: [{ validTo: null }, { validTo: { gte: parsedValidFrom } }]
+    },
+    orderBy: [{ weekday: 'asc' }, { validFrom: 'asc' }]
+  });
+
+  if (overlappingRecurring.length > 0) {
+    sendConflict(res, 'Recurring series conflicts with existing recurring booking', {
+      deskId,
+      weekdays: uniqueWeekdays,
+      validFrom,
+      validTo: toISODateOnly(parsedValidTo),
+      conflicts: overlappingRecurring.slice(0, 10).map((conflict) => ({
+        id: conflict.id,
+        weekday: conflict.weekday,
+        validFrom: toISODateOnly(conflict.validFrom),
+        validTo: conflict.validTo ? toISODateOnly(conflict.validTo) : null
+      }))
+    });
+    return;
+  }
+
+  const targetDates = datesInRange(parsedValidFrom, parsedValidTo).filter((date) => uniqueWeekdays.includes(date.getUTCDay()));
+  const conflictingSingles = await prisma.booking.findMany({
+    where: {
+      deskId,
+      date: { in: targetDates }
+    },
+    orderBy: { date: 'asc' }
+  });
+
+  if (conflictingSingles.length > 0) {
+    const conflictingDates = conflictingSingles.map((booking) => toISODateOnly(booking.date));
+    sendConflict(res, 'Recurring series conflicts with existing single-day bookings', {
+      deskId,
+      weekdays: uniqueWeekdays,
+      validFrom,
+      validTo: toISODateOnly(parsedValidTo),
+      conflictingDates,
+      conflictingDatesPreview: conflictingDates.slice(0, 10)
+    });
+    return;
+  }
+
+  const normalizedUserEmail = normalizeEmail(userEmail);
+  const recurringBookings = await prisma.$transaction(
+    uniqueWeekdays.map((weekday) =>
+      prisma.recurringBooking.create({
+        data: {
+          deskId,
+          userEmail: normalizedUserEmail,
+          weekday,
+          validFrom: parsedValidFrom,
+          validTo: parsedValidTo
+        }
+      })
+    )
+  );
+
+  res.status(201).json(recurringBookings);
 });
 
 app.get('/recurring-bookings', async (req, res) => {

@@ -31,10 +31,41 @@ type AdminRecurringBooking = {
   desk: { id: string; name: string; floorplanId: string };
 };
 type MeResponse = { email: string };
+type BookingMode = 'single' | 'range' | 'series';
 
 const today = new Date().toISOString().slice(0, 10);
 const weekdays = ['Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa', 'So'];
 const weekdayNames = ['Sonntag', 'Montag', 'Dienstag', 'Mittwoch', 'Donnerstag', 'Freitag', 'Samstag'];
+const jsToApiWeekday = [1, 2, 3, 4, 5, 6, 0];
+
+const endOfYear = (date = new Date()): string => new Date(Date.UTC(date.getUTCFullYear(), 11, 31)).toISOString().slice(0, 10);
+
+const countRangeDays = (from: string, to: string): number => {
+  if (!from || !to) return 0;
+  const start = new Date(`${from}T00:00:00.000Z`);
+  const end = new Date(`${to}T00:00:00.000Z`);
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || end < start) return 0;
+  return Math.floor((end.getTime() - start.getTime()) / 86400000) + 1;
+};
+
+const countRangeBookings = (from: string, to: string, weekdaysOnly: boolean): number => {
+  if (!from || !to) return 0;
+  const start = new Date(`${from}T00:00:00.000Z`);
+  const end = new Date(`${to}T00:00:00.000Z`);
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || end < start) return 0;
+
+  let count = 0;
+  const cursor = new Date(start);
+  while (cursor <= end) {
+    const day = cursor.getUTCDay();
+    if (!weekdaysOnly || (day >= 1 && day <= 5)) {
+      count += 1;
+    }
+    cursor.setUTCDate(cursor.getUTCDate() + 1);
+  }
+
+  return count;
+};
 
 const toDateKey = (value: Date): string => value.toISOString().slice(0, 10);
 const monthLabel = (monthStart: Date): string =>
@@ -74,6 +105,14 @@ export function App() {
   const [manualBookingEmail, setManualBookingEmail] = useState('demo@example.com');
   const [errorMessage, setErrorMessage] = useState('');
   const [infoMessage, setInfoMessage] = useState('');
+  const [bookingMode, setBookingMode] = useState<BookingMode>('single');
+  const [rangeFrom, setRangeFrom] = useState(today);
+  const [rangeTo, setRangeTo] = useState(today);
+  const [rangeWeekdaysOnly, setRangeWeekdaysOnly] = useState(true);
+  const [seriesWeekdays, setSeriesWeekdays] = useState<number[]>([1, 2, 3, 4, 5]);
+  const [seriesValidFrom, setSeriesValidFrom] = useState(today);
+  const [seriesValidTo, setSeriesValidTo] = useState(endOfYear());
+  const [bookingConflictDates, setBookingConflictDates] = useState<string[]>([]);
 
   const [adminToken, setAdminToken] = useState(localStorage.getItem('adminToken') ?? '');
   const isAdminMode = !!adminToken;
@@ -115,6 +154,7 @@ export function App() {
     return [...source].sort((a, b) => (a.displayName ?? a.email).localeCompare(b.displayName ?? b.email, 'de'));
   }, [occupancy]);
   const calendarDays = useMemo(() => buildCalendarDays(visibleMonth), [visibleMonth]);
+  const isSeriesValid = seriesWeekdays.length > 0 && !!seriesValidFrom && !!seriesValidTo;
 
   const handleApiError = (error: unknown) => {
     if (error instanceof ApiError) {
@@ -236,6 +276,17 @@ export function App() {
     setPopupAnchor(null);
     setPopupPosition(null);
   }, [selectedDate, selectedFloorplanId]);
+
+
+  useEffect(() => {
+    setRangeFrom(selectedDate);
+    setRangeTo(selectedDate);
+    setSeriesValidFrom(selectedDate);
+  }, [selectedDate]);
+
+  useEffect(() => {
+    setBookingConflictDates([]);
+  }, [activeDeskId, bookingMode]);
 
   useLayoutEffect(() => {
     if (!popupAnchor || !popupRef.current) {
@@ -388,7 +439,7 @@ export function App() {
     }
   };
 
-  const createSingleBooking = async (event: FormEvent) => {
+  const createBooking = async (event: FormEvent) => {
     event.preventDefault();
     if (!activeDesk || activeDesk.status !== 'free') return;
 
@@ -398,17 +449,46 @@ export function App() {
       return;
     }
 
+    setBookingConflictDates([]);
+
     try {
-      await post('/bookings', { deskId: activeDesk.id, userEmail: bookingEmail, date: selectedDate });
+      if (bookingMode === 'single') {
+        await post('/bookings', { deskId: activeDesk.id, userEmail: bookingEmail, date: selectedDate });
+      } else if (bookingMode === 'range') {
+        await post('/bookings/range', {
+          deskId: activeDesk.id,
+          userEmail: bookingEmail,
+          from: rangeFrom,
+          to: rangeTo,
+          weekdaysOnly: rangeWeekdaysOnly
+        });
+      } else {
+        await post('/recurring-bookings/bulk', {
+          deskId: activeDesk.id,
+          userEmail: bookingEmail,
+          weekdays: seriesWeekdays,
+          validFrom: seriesValidFrom,
+          validTo: seriesValidTo
+        });
+      }
+
       setActiveDeskId('');
       setPopupAnchor(null);
       await loadOccupancy(selectedFloorplanId, selectedDate);
       if (isAdminMode) await loadAdminLists();
       setInfoMessage('Buchung erstellt.');
     } catch (error) {
+      if (error instanceof ApiError && error.status === 409) {
+        const payload = (error.details && typeof error.details === 'object' ? error.details : {}) as {
+          details?: { conflictingDates?: string[]; conflictingDatesPreview?: string[] };
+        };
+        const conflictDates = payload.details?.conflictingDatesPreview ?? payload.details?.conflictingDates ?? [];
+        setBookingConflictDates(conflictDates.slice(0, 5));
+      }
       handleApiError(error);
     }
   };
+
 
   const deleteAdminBooking = async (id: string) => {
     if (!adminHeaders) return;
@@ -771,7 +851,7 @@ export function App() {
             <h3>{activeDesk.name}</h3>
             <p className="muted">{selectedDate}</p>
             {activeDesk.status === 'free' ? (
-              <form onSubmit={createSingleBooking} className="form-grid">
+              <form onSubmit={createBooking} className="form-grid">
                 <label className="field">
                   <span>Für wen buchen?</span>
                   {activeEmployees.length ? (
@@ -784,7 +864,85 @@ export function App() {
                     <input value={manualBookingEmail} onChange={(e) => setManualBookingEmail(e.target.value)} placeholder="E-Mail" />
                   )}
                 </label>
-                <button className="btn btn-primary" type="submit">Buchen</button>
+
+                <div className="field">
+                  <span>Buchungstyp</span>
+                  <div className="segmented-control">
+                    <button type="button" className={`segment-btn ${bookingMode === 'single' ? 'active' : ''}`} onClick={() => setBookingMode('single')}>Einzeltag</button>
+                    <button type="button" className={`segment-btn ${bookingMode === 'range' ? 'active' : ''}`} onClick={() => setBookingMode('range')}>Zeitraum</button>
+                    <button type="button" className={`segment-btn ${bookingMode === 'series' ? 'active' : ''}`} onClick={() => setBookingMode('series')}>Serie</button>
+                  </div>
+                </div>
+
+                {bookingMode === 'single' && <p className="muted">Datum: {selectedDate}</p>}
+
+                {bookingMode === 'range' && (
+                  <>
+                    <label className="field">
+                      <span>Von</span>
+                      <input type="date" value={rangeFrom} onChange={(e) => setRangeFrom(e.target.value)} />
+                    </label>
+                    <label className="field">
+                      <span>Bis</span>
+                      <input type="date" value={rangeTo} onChange={(e) => setRangeTo(e.target.value)} />
+                    </label>
+                    <label className="toggle-row">
+                      <input type="checkbox" checked={rangeWeekdaysOnly} onChange={(e) => setRangeWeekdaysOnly(e.target.checked)} />
+                      <span>Nur Werktage</span>
+                    </label>
+                    <p className="muted">
+                      {countRangeDays(rangeFrom, rangeTo)} Tage ({countRangeBookings(rangeFrom, rangeTo, rangeWeekdaysOnly)} Buchungen)
+                    </p>
+                  </>
+                )}
+
+                {bookingMode === 'series' && (
+                  <>
+                    <div className="field">
+                      <span>Wochentage</span>
+                      <div className="weekday-chips">
+                        {weekdays.map((weekday, index) => {
+                          const apiDay = jsToApiWeekday[index] as number;
+                          const selected = seriesWeekdays.includes(apiDay);
+                          return (
+                            <button
+                              key={weekday}
+                              type="button"
+                              className={`weekday-chip ${selected ? 'active' : ''}`}
+                              onClick={() => {
+                                setSeriesWeekdays((prev) =>
+                                  prev.includes(apiDay) ? prev.filter((day) => day !== apiDay) : [...prev, apiDay].sort((a, b) => a - b)
+                                );
+                              }}
+                            >
+                              {weekday}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                    <label className="field">
+                      <span>Gültig ab</span>
+                      <input type="date" value={seriesValidFrom} onChange={(e) => setSeriesValidFrom(e.target.value)} />
+                    </label>
+                    <label className="field">
+                      <span>Gültig bis</span>
+                      <input type="date" value={seriesValidTo} onChange={(e) => setSeriesValidTo(e.target.value)} />
+                    </label>
+                    <button type="button" className="btn btn-secondary" onClick={() => setSeriesValidTo(endOfYear())}>bis Jahresende</button>
+                  </>
+                )}
+
+                {!!bookingConflictDates.length && (
+                  <div className="conflict-box">
+                    <p>Konflikt mit bestehenden Buchungen:</p>
+                    <ul>
+                      {bookingConflictDates.map((date) => <li key={date}>{date}</li>)}
+                    </ul>
+                  </div>
+                )}
+
+                <button className="btn btn-primary" type="submit" disabled={bookingMode === 'series' && !isSeriesValid}>Buchen</button>
               </form>
             ) : (
               <p className="muted">Gebucht von {activeDesk.booking?.userDisplayName ?? activeDesk.booking?.userEmail}</p>
