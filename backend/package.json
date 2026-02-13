@@ -10,7 +10,7 @@
     "prisma:generate": "prisma generate",
     "prisma:migrate:deploy": "prisma migrate deploy",
     "seed": "prisma db seed",
-    "start:render": "npm run prisma:generate && npm run prisma:migrate:deploy && node dist/index.js"
+    "start:render": "node dist/index.js"
   },
   "dependencies": {
     "@prisma/client": "^6.2.1",
