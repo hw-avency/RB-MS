@@ -27,7 +27,7 @@ Setze folgende **Environment Variables**:
 - `ADMIN_EMAIL` (optional, Default: `admin@example.com`)
 - `ADMIN_PASSWORD`
 - `ENTRA_TENANT_ID`
-- `ENTRA_API_AUDIENCE`
+- `ENTRA_API_AUDIENCE` (GUID **oder** `api://<GUID>`, beides wird bei der JWT-Validierung akzeptiert)
 - `ENTRA_JWKS_CACHE_TTL_SECONDS` (optional, Default: `3600`)
 - `RUN_SEED` (optional)
 - `NODE_ENV=production`
