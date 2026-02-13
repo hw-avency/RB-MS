@@ -1,5 +1,47 @@
-import { FormEvent, MouseEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { ChangeEvent, FormEvent, MouseEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import {
+  Alert,
+  AlertIcon,
+  Avatar,
+  Box,
+  Button,
+  Card,
+  CardBody,
+  CardHeader,
+  Center,
+  Divider,
+  Flex,
+  FormControl,
+  FormErrorMessage,
+  FormLabel,
+  Heading,
+  HStack,
+  IconButton,
+  Input,
+  Menu,
+  MenuButton,
+  MenuItem,
+  MenuList,
+  Modal,
+  ModalBody,
+  ModalCloseButton,
+  ModalContent,
+  ModalFooter,
+  ModalHeader,
+  ModalOverlay,
+  Select as ChakraSelect,
+  Switch,
+  Table,
+  TableContainer,
+  Tbody,
+  Td,
+  Text,
+  Th,
+  Thead,
+  Tr,
+  VStack
+} from '@chakra-ui/react';
 import { API_BASE, ApiError, del, get, patch, post, setAuthTokenProvider } from './api';
 import { entraScope, getActiveAccount, msalInstance } from './auth';
 import { FloorplanCanvas } from './FloorplanCanvas';
@@ -16,7 +58,15 @@ type OccupancyDesk = {
 };
 type OccupancyPerson = { email: string; userEmail: string; displayName?: string; deskName?: string; deskId?: string };
 type OccupancyResponse = { date: string; floorplanId: string; desks: OccupancyDesk[]; people: OccupancyPerson[] };
-type Employee = { id: string; email: string; displayName: string; isActive: boolean };
+type Employee = {
+  id: string;
+  email: string;
+  displayName: string;
+  isActive: boolean;
+  isAdmin?: boolean;
+  photoUrl?: string | null;
+  photoBase64?: string | null;
+};
 type BookingEmployee = { id: string; email: string; displayName: string };
 type AdminBooking = {
   id: string;
@@ -154,6 +204,8 @@ export function App() {
   const [selectedAdminEmployeeId, setSelectedAdminEmployeeId] = useState('');
   const [editingEmployeeId, setEditingEmployeeId] = useState('');
   const [editingEmployeeName, setEditingEmployeeName] = useState('');
+  const [employeeActionTarget, setEmployeeActionTarget] = useState<Employee | null>(null);
+  const [employeeActionType, setEmployeeActionType] = useState<'toggle-active' | 'delete' | null>(null);
   const [editingBookingId, setEditingBookingId] = useState('');
   const [editBookingEmail, setEditBookingEmail] = useState('');
   const [editBookingDate, setEditBookingDate] = useState('');
@@ -810,6 +862,36 @@ export function App() {
     }
   };
 
+  const toggleEmployeeAdmin = async (employee: Employee, isAdmin: boolean) => {
+    if (!adminHeaders) return;
+    setEmployeeErrorMessage('');
+
+    try {
+      await patch(`/admin/employees/${employee.id}`, { isAdmin }, adminHeaders);
+      setEmployeeActionMessage(isAdmin ? 'Admin-Rechte aktiviert.' : 'Admin-Rechte entfernt.');
+      await loadEmployees();
+    } catch (error) {
+      handleEmployeeError(error);
+    }
+  };
+
+  const deleteEmployee = async (employee: Employee) => {
+    if (!adminHeaders) return;
+    setEmployeeErrorMessage('');
+
+    try {
+      await del(`/admin/employees/${employee.id}`, adminHeaders);
+      setEmployeeActionMessage('Mitarbeiter archiviert.');
+      if (selectedAdminEmployeeId === employee.id) {
+        setSelectedAdminEmployeeId('');
+        setEditingEmployeeName('');
+      }
+      await loadEmployees();
+    } catch (error) {
+      handleEmployeeError(error);
+    }
+  };
+
   const toggleEmployeeSort = (key: 'displayName' | 'email' | 'isActive') => {
     if (employeeSortKey === key) {
       setEmployeeSortDirection((prev) => (prev === 'asc' ? 'desc' : 'asc'));
@@ -861,88 +943,97 @@ export function App() {
 
   if (bootstrapState === 'backend_down') {
     return (
-      <div className="login-page app-shell">
-        <div className="card login-card">
-          <p className="eyebrow">AVENCY Booking</p>
-          <h1>Backend nicht erreichbar</h1>
-          <p className="muted">API-URL: {API_BASE}</p>
-          {bootstrapError && (
-            <div className="alert alert-error" role="alert" aria-live="polite">
-              <p className="alert-message">{bootstrapError}</p>
-            </div>
-          )}
-          <button type="button" className="btn btn-primary full" onClick={retryBackendCheck}>Erneut versuchen</button>
-        </div>
-      </div>
+      <Center minH="100vh" px={6}>
+        <Card w="full" maxW="lg">
+          <CardBody>
+            <VStack spacing={4} align="stretch">
+              <Text fontSize="xs" textTransform="uppercase" letterSpacing="0.08em" color="gray.500">AVENCY Booking</Text>
+              <Heading size="md">Backend nicht erreichbar</Heading>
+              <Text color="gray.600">API-URL: {API_BASE}</Text>
+              {bootstrapError && (
+                <Alert status="error" borderRadius="md">
+                  <AlertIcon />
+                  {bootstrapError}
+                </Alert>
+              )}
+              <Button colorScheme="blue" onClick={retryBackendCheck}>Erneut versuchen</Button>
+            </VStack>
+          </CardBody>
+        </Card>
+      </Center>
     );
   }
 
   if (bootstrapState === 'unauthenticated' || !me) {
     return (
-      <div className="login-page app-shell">
-        <div className="card login-card">
-          <p className="eyebrow">AVENCY Booking</p>
-          <h1>Login</h1>
+      <Center minH="100vh" px={6}>
+        <Card w="full" maxW="lg">
+          <CardBody>
+            <VStack spacing={5} align="stretch">
+              <Text fontSize="xs" textTransform="uppercase" letterSpacing="0.08em" color="gray.500">AVENCY Booking</Text>
+              <Heading size="lg">Login</Heading>
 
-          <button
-            type="button"
-            className="btn microsoft-btn full"
-            onClick={loginWithMicrosoft}
-            aria-label="Mit Microsoft anmelden"
-          >
-            <img src={microsoftLogo} alt="" aria-hidden="true" />
-            <span>Mit Microsoft anmelden</span>
-          </button>
+              <Button
+                type="button"
+                variant="outline"
+                leftIcon={<img src={microsoftLogo} alt="" aria-hidden="true" style={{ width: 18, height: 18 }} />}
+                onClick={loginWithMicrosoft}
+                aria-label="Mit Microsoft anmelden"
+              >
+                Mit Microsoft anmelden
+              </Button>
 
-          <div className="login-divider" role="separator" aria-label="oder">
-            <span>oder</span>
-          </div>
+              <Divider />
 
-          <section className="form-grid gap-3">
-            <div>
-              <h2>Breakglass Admin</h2>
-              <p className="muted">Nur für Notfallzugang (Admin).</p>
-            </div>
-            <form className="form-grid" onSubmit={loginAdmin} noValidate>
-              <label className="field">
-                Email
-                <input
-                  value={adminEmail}
-                  onChange={(event) => {
-                    setAdminEmail(event.target.value);
-                    if (adminEmailError) setAdminEmailError('');
-                  }}
-                  aria-invalid={adminEmailError ? 'true' : 'false'}
-                />
-                {adminEmailError && <span className="field-error">{adminEmailError}</span>}
-              </label>
-              <label className="field">
-                Passwort
-                <input
-                  type="password"
-                  value={adminPassword}
-                  onChange={(event) => {
-                    setAdminPassword(event.target.value);
-                    if (adminPasswordError) setAdminPasswordError('');
-                  }}
-                  aria-invalid={adminPasswordError ? 'true' : 'false'}
-                />
-                {adminPasswordError && <span className="field-error">{adminPasswordError}</span>}
-              </label>
-              <button className="btn btn-primary full" type="submit">Breakglass anmelden</button>
-            </form>
-          </section>
+              <Box>
+                <Heading size="sm" mb={1}>Breakglass Admin</Heading>
+                <Text color="gray.600" mb={3}>Nur für Notfallzugang (Admin).</Text>
+                <form onSubmit={loginAdmin} noValidate>
+                  <VStack spacing={3} align="stretch">
+                    <FormControl isInvalid={!!adminEmailError}>
+                      <FormLabel>Email</FormLabel>
+                      <Input
+                        value={adminEmail}
+                        onChange={(event: ChangeEvent<HTMLInputElement>) => {
+                          setAdminEmail(event.target.value);
+                          if (adminEmailError) setAdminEmailError('');
+                        }}
+                      />
+                      <FormErrorMessage>{adminEmailError}</FormErrorMessage>
+                    </FormControl>
+                    <FormControl isInvalid={!!adminPasswordError}>
+                      <FormLabel>Passwort</FormLabel>
+                      <Input
+                        type="password"
+                        value={adminPassword}
+                        onChange={(event: ChangeEvent<HTMLInputElement>) => {
+                          setAdminPassword(event.target.value);
+                          if (adminPasswordError) setAdminPasswordError('');
+                        }}
+                      />
+                      <FormErrorMessage>{adminPasswordError}</FormErrorMessage>
+                    </FormControl>
+                    <Button colorScheme="blue" type="submit">Breakglass anmelden</Button>
+                  </VStack>
+                </form>
+              </Box>
 
-          {hasLoginAttempted && (errorMessage || bootstrapError) && (
-            <div className="alert alert-error" role="alert" aria-live="polite">
-              <p className="alert-title">Anmeldung fehlgeschlagen</p>
-              <p className="alert-message">{errorMessage || bootstrapError}</p>
-            </div>
-          )}
-        </div>
-      </div>
+              {hasLoginAttempted && (errorMessage || bootstrapError) && (
+                <Alert status="error" borderRadius="md">
+                  <AlertIcon />
+                  <Box>
+                    <Text fontWeight="bold">Anmeldung fehlgeschlagen</Text>
+                    <Text>{errorMessage || bootstrapError}</Text>
+                  </Box>
+                </Alert>
+              )}
+            </VStack>
+          </CardBody>
+        </Card>
+      </Center>
     );
   }
+
 
 
   return (
@@ -976,6 +1067,181 @@ export function App() {
               <button className={`tab-btn ${adminTab === 'bookings' ? 'active' : ''}`} onClick={() => setAdminTab('bookings')}>Buchungen</button>
               <button className={`tab-btn ${adminTab === 'employees' ? 'active' : ''}`} onClick={() => setAdminTab('employees')}>Mitarbeiter</button>
             </nav>
+            {adminTab === 'employees' ? (
+              <VStack align="stretch" spacing={4}>
+                <Card>
+                  <CardBody>
+                    <Flex justify="space-between" gap={3} wrap="wrap" align="center">
+                      <Heading size="md">Mitarbeiter</Heading>
+                      <HStack spacing={2}>
+                        <Input
+                          maxW="320px"
+                          type="search"
+                          placeholder="Suchen nach Name oder E-Mail"
+                          value={employeeSearch}
+                          onChange={(e: ChangeEvent<HTMLInputElement>) => setEmployeeSearch(e.target.value)}
+                        />
+                        <ChakraSelect value={employeeSortKey} onChange={(e: ChangeEvent<HTMLSelectElement>) => setEmployeeSortKey(e.target.value as 'displayName' | 'email' | 'isActive')}>
+                          <option value="displayName">Sortierung: Name</option>
+                          <option value="email">Sortierung: E-Mail</option>
+                          <option value="isActive">Sortierung: Status</option>
+                        </ChakraSelect>
+                        <Button variant="outline" onClick={() => setEmployeeSortDirection((prev) => (prev === 'asc' ? 'desc' : 'asc'))}>
+                          {employeeSortDirection === 'asc' ? 'Aufsteigend' : 'Absteigend'}
+                        </Button>
+                      </HStack>
+                    </Flex>
+                  </CardBody>
+                </Card>
+
+                <Flex gap={4} align="start" direction={{ base: 'column', xl: 'row' }}>
+                  <Card flex="2" w="full">
+                    <CardBody>
+                      <TableContainer>
+                        <Table size="sm">
+                          <Thead>
+                            <Tr>
+                              <Th>Person</Th>
+                              <Th>E-Mail</Th>
+                              <Th>Status</Th>
+                              <Th>Admin</Th>
+                              <Th textAlign="right">Aktionen</Th>
+                            </Tr>
+                          </Thead>
+                          <Tbody>
+                            {pagedEmployees.map((employee) => {
+                              const initials = employee.displayName.split(' ').map((part) => part[0]).filter(Boolean).slice(0, 2).join('').toUpperCase() || employee.email.slice(0, 2).toUpperCase();
+                              return (
+                                <Tr key={employee.id} bg={selectedAdminEmployeeId === employee.id ? 'blue.50' : undefined} onClick={() => selectAdminEmployee(employee)} cursor="pointer">
+                                  <Td>
+                                    <HStack>
+                                      <Avatar size="sm" name={employee.displayName} src={employee.photoUrl ?? employee.photoBase64 ?? undefined}>{initials}</Avatar>
+                                      <Text fontWeight="medium">{employee.displayName}</Text>
+                                    </HStack>
+                                  </Td>
+                                  <Td>{employee.email}</Td>
+                                  <Td>{employee.isActive ? 'Aktiv' : 'Inaktiv'}</Td>
+                                  <Td>
+                                    <Switch
+                                      isChecked={employee.isAdmin === true}
+                                      onChange={(event: ChangeEvent<HTMLInputElement>) => {
+                                        event.stopPropagation();
+                                        void toggleEmployeeAdmin(employee, event.target.checked);
+                                      }}
+                                    />
+                                  </Td>
+                                  <Td textAlign="right">
+                                    <Menu>
+                                      <MenuButton
+                                        as={IconButton}
+                                        aria-label="Aktionen"
+                                        icon={<span>⋯</span>}
+                                        variant="ghost"
+                                        onClick={(event: MouseEvent<HTMLButtonElement>) => event.stopPropagation()}
+                                      />
+                                      <MenuList>
+                                        <MenuItem onClick={() => selectAdminEmployee(employee)}>Bearbeiten</MenuItem>
+                                        <MenuItem onClick={() => { setEmployeeActionTarget(employee); setEmployeeActionType('toggle-active'); }}>
+                                          {employee.isActive ? 'Deaktivieren' : 'Aktivieren'}
+                                        </MenuItem>
+                                        <MenuItem color="red.500" onClick={() => { setEmployeeActionTarget(employee); setEmployeeActionType('delete'); }}>
+                                          Entfernen
+                                        </MenuItem>
+                                      </MenuList>
+                                    </Menu>
+                                  </Td>
+                                </Tr>
+                              );
+                            })}
+                            {!pagedEmployees.length && (
+                              <Tr><Td colSpan={5}><Text color="gray.500">Keine Mitarbeiter gefunden.</Text></Td></Tr>
+                            )}
+                          </Tbody>
+                        </Table>
+                      </TableContainer>
+                      <Flex mt={4} justify="space-between" align="center" wrap="wrap" gap={2}>
+                        <Button variant="outline" onClick={() => setEmployeePage((prev) => Math.max(1, prev - 1))} isDisabled={employeePage <= 1}>Zurück</Button>
+                        <Text fontSize="sm">Seite {employeePage} von {employeeTotalPages}</Text>
+                        <Button variant="outline" onClick={() => setEmployeePage((prev) => Math.min(employeeTotalPages, prev + 1))} isDisabled={employeePage >= employeeTotalPages}>Weiter</Button>
+                      </Flex>
+                    </CardBody>
+                  </Card>
+
+                  <VStack flex="1" w="full" spacing={4} align="stretch">
+                    <Card>
+                      <CardHeader><Heading size="sm">Mitarbeiter hinzufügen</Heading></CardHeader>
+                      <CardBody>
+                        <VStack align="stretch" spacing={3}>
+                          {!!employeeActionMessage && <Alert status="success"><AlertIcon />{employeeActionMessage}</Alert>}
+                          {!!employeeErrorMessage && <Alert status="error"><AlertIcon />{employeeErrorMessage}</Alert>}
+                          <form onSubmit={addEmployee}>
+                            <VStack align="stretch" spacing={3}>
+                              <Input required placeholder="Name" value={newEmployeeDisplayName} onChange={(e: ChangeEvent<HTMLInputElement>) => setNewEmployeeDisplayName(e.target.value)} />
+                              <Input required placeholder="E-Mail" value={newEmployeeEmail} onChange={(e: ChangeEvent<HTMLInputElement>) => setNewEmployeeEmail(e.target.value)} />
+                              <Button colorScheme="blue" type="submit">Mitarbeiter hinzufügen</Button>
+                            </VStack>
+                          </form>
+                        </VStack>
+                      </CardBody>
+                    </Card>
+
+                    <Card>
+                      <CardHeader><Heading size="sm">Details</Heading></CardHeader>
+                      <CardBody>
+                        {!selectedAdminEmployee ? (
+                          <Text color="gray.500">Mitarbeiter in der Tabelle auswählen.</Text>
+                        ) : (
+                          <VStack align="stretch" spacing={3}>
+                            <FormControl>
+                              <FormLabel>Name</FormLabel>
+                              <Input value={editingEmployeeName} onChange={(e: ChangeEvent<HTMLInputElement>) => setEditingEmployeeName(e.target.value)} />
+                            </FormControl>
+                            <FormControl>
+                              <FormLabel>E-Mail</FormLabel>
+                              <Input value={selectedAdminEmployee.email} isDisabled />
+                            </FormControl>
+                            <Button colorScheme="blue" onClick={() => saveEmployeeName(selectedAdminEmployee.id)}>Speichern</Button>
+                          </VStack>
+                        )}
+                      </CardBody>
+                    </Card>
+                  </VStack>
+                </Flex>
+
+                <Modal isOpen={!!employeeActionTarget && !!employeeActionType} onClose={() => { setEmployeeActionTarget(null); setEmployeeActionType(null); }} isCentered>
+                  <ModalOverlay />
+                  <ModalContent>
+                    <ModalHeader>Aktion bestätigen</ModalHeader>
+                    <ModalCloseButton />
+                    <ModalBody>
+                      <Text>
+                        {employeeActionType === 'delete'
+                          ? `Soll ${employeeActionTarget?.displayName ?? 'dieser Eintrag'} wirklich entfernt werden?`
+                          : `Soll ${employeeActionTarget?.displayName ?? 'dieser Eintrag'} ${employeeActionTarget?.isActive ? 'deaktiviert' : 'aktiviert'} werden?`}
+                      </Text>
+                    </ModalBody>
+                    <ModalFooter gap={2}>
+                      <Button variant="ghost" onClick={() => { setEmployeeActionTarget(null); setEmployeeActionType(null); }}>Abbrechen</Button>
+                      <Button
+                        colorScheme={employeeActionType === 'delete' ? 'red' : 'blue'}
+                        onClick={async () => {
+                          if (!employeeActionTarget || !employeeActionType) return;
+                          if (employeeActionType === 'delete') {
+                            await deleteEmployee(employeeActionTarget);
+                          } else {
+                            await toggleEmployee(employeeActionTarget);
+                          }
+                          setEmployeeActionTarget(null);
+                          setEmployeeActionType(null);
+                        }}
+                      >
+                        Bestätigen
+                      </Button>
+                    </ModalFooter>
+                  </ModalContent>
+                </Modal>
+              </VStack>
+            ) : (
             <section className="layout-grid admin-editor-layout">
               <aside className="card sidebar">
                 {adminTab === 'floorplans' && (
@@ -1012,66 +1278,9 @@ export function App() {
                     <input type="date" value={selectedDate} onChange={(e) => setSelectedDate(e.target.value)} />
                   </label>
                 )}
-                {adminTab === 'employees' && (
-                  <section className="form-grid employee-form-card">
-                    <h3>Mitarbeiter hinzufügen</h3>
-                    {!!employeeActionMessage && <p className="toast toast-success toast-inline">{employeeActionMessage}</p>}
-                    {!!employeeErrorMessage && <p className="toast toast-error toast-inline">{employeeErrorMessage}</p>}
-                    <form onSubmit={addEmployee} className="form-grid gap-3">
-                      <input required placeholder="Name" value={newEmployeeDisplayName} onChange={(e) => setNewEmployeeDisplayName(e.target.value)} />
-                      <input required placeholder="E-Mail" value={newEmployeeEmail} onChange={(e) => setNewEmployeeEmail(e.target.value)} />
-                      <button className="btn btn-primary full" type="submit">Mitarbeiter hinzufügen</button>
-                    </form>
-                  </section>
-                )}
               </aside>
 
               <section className="card canvas-card">
-                {adminTab === 'employees' ? (
-                  <div className="employee-table-panel">
-                    <div className="employee-table-toolbar">
-                      <h3>Mitarbeiter</h3>
-                      <input
-                        type="search"
-                        placeholder="Suchen nach Name oder E-Mail"
-                        value={employeeSearch}
-                        onChange={(e) => setEmployeeSearch(e.target.value)}
-                      />
-                    </div>
-                    <table className="employee-table">
-                      <thead>
-                        <tr>
-                          <th><button className="table-sort-btn" onClick={() => toggleEmployeeSort('displayName')}>Name</button></th>
-                          <th><button className="table-sort-btn" onClick={() => toggleEmployeeSort('email')}>E-Mail</button></th>
-                          <th><button className="table-sort-btn" onClick={() => toggleEmployeeSort('isActive')}>Status</button></th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {pagedEmployees.map((employee) => (
-                          <tr
-                            key={employee.id}
-                            className={selectedAdminEmployeeId === employee.id ? 'row-selected' : ''}
-                            onClick={() => selectAdminEmployee(employee)}
-                          >
-                            <td>{employee.displayName}</td>
-                            <td>{employee.email}</td>
-                            <td>{employee.isActive ? 'Aktiv' : 'Inaktiv'}</td>
-                          </tr>
-                        ))}
-                        {!pagedEmployees.length && (
-                          <tr>
-                            <td colSpan={3} className="muted">Keine Mitarbeiter gefunden.</td>
-                          </tr>
-                        )}
-                      </tbody>
-                    </table>
-                    <div className="employee-pagination">
-                      <button className="btn btn-secondary" onClick={() => setEmployeePage((prev) => Math.max(1, prev - 1))} disabled={employeePage <= 1}>Zurück</button>
-                      <span>Seite {employeePage} von {employeeTotalPages}</span>
-                      <button className="btn btn-secondary" onClick={() => setEmployeePage((prev) => Math.min(employeeTotalPages, prev + 1))} disabled={employeePage >= employeeTotalPages}>Weiter</button>
-                    </div>
-                  </div>
-                ) : (
                   !selectedFloorplan ? <p>Kein Floorplan ausgewählt.</p> : (
                     <>
                       <h2>{selectedFloorplan.name}</h2>
@@ -1104,7 +1313,6 @@ export function App() {
                       )}
                     </>
                   )
-                )}
               </section>
 
               <aside className="right-panel">
@@ -1169,35 +1377,9 @@ export function App() {
                       </tbody>
                     </table>
                   </section>
-                )}
-                {adminTab === 'employees' && (
-                  <section className="card form-grid employee-detail-card">
-                    <h3>Details</h3>
-                    {!selectedAdminEmployee ? (
-                      <p className="muted">Mitarbeiter in der Tabelle auswählen.</p>
-                    ) : (
-                      <>
-                        <label className="field">
-                          <span>Name</span>
-                          <input value={editingEmployeeName} onChange={(e) => setEditingEmployeeName(e.target.value)} />
-                        </label>
-                        <label className="field">
-                          <span>E-Mail</span>
-                          <input value={selectedAdminEmployee.email} disabled />
-                        </label>
-                        <p className={`status-pill ${selectedAdminEmployee.isActive ? 'active' : 'inactive'}`}>
-                          {selectedAdminEmployee.isActive ? 'Aktiv' : 'Inaktiv'}
-                        </p>
-                        <button className="btn btn-primary" onClick={() => saveEmployeeName(selectedAdminEmployee.id)}>Speichern</button>
-                        <button className="btn btn-secondary" onClick={() => toggleEmployee(selectedAdminEmployee)}>
-                          {selectedAdminEmployee.isActive ? 'Deaktivieren' : 'Aktivieren'}
-                        </button>
-                      </>
-                    )}
-                  </section>
-                )}
-              </aside>
+                )}              </aside>
             </section>
+            )}
           </>
         ) : (
           <section className="layout-grid">
@@ -1303,7 +1485,7 @@ export function App() {
       {!isAdminMode && activeDesk && popupPosition && createPortal(
         <>
           <div className="booking-portal-backdrop" onClick={() => { setSelectedDeskId(''); setPopupAnchor(null); }} />
-          <div ref={popupRef} className="booking-overlay card" style={{ left: popupPosition.left, top: popupPosition.top }} onClick={(event) => event.stopPropagation()}>
+          <div ref={popupRef} className="booking-overlay card" style={{ left: popupPosition.left, top: popupPosition.top }} onClick={(event: MouseEvent<HTMLButtonElement>) => event.stopPropagation()}>
             <h3>{activeDesk.name}</h3>
             <p className="muted">{selectedDate}</p>
             {activeDesk.status === 'free' ? (
