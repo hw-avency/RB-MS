@@ -139,6 +139,11 @@ export function App() {
   const [newEmployeeDisplayName, setNewEmployeeDisplayName] = useState('');
   const [employeeActionMessage, setEmployeeActionMessage] = useState('');
   const [employeeErrorMessage, setEmployeeErrorMessage] = useState('');
+  const [employeeSearch, setEmployeeSearch] = useState('');
+  const [employeeSortKey, setEmployeeSortKey] = useState<'displayName' | 'email' | 'isActive'>('displayName');
+  const [employeeSortDirection, setEmployeeSortDirection] = useState<'asc' | 'desc'>('asc');
+  const [employeePage, setEmployeePage] = useState(1);
+  const [selectedAdminEmployeeId, setSelectedAdminEmployeeId] = useState('');
   const [editingEmployeeId, setEditingEmployeeId] = useState('');
   const [editingEmployeeName, setEditingEmployeeName] = useState('');
   const [editingBookingId, setEditingBookingId] = useState('');
@@ -159,6 +164,38 @@ export function App() {
   }, [occupancy]);
   const calendarDays = useMemo(() => buildCalendarDays(visibleMonth), [visibleMonth]);
   const isSeriesValid = seriesWeekdays.length > 0 && !!seriesValidFrom && !!seriesValidTo;
+  const employeePageSize = 8;
+
+  const filteredEmployees = useMemo(() => {
+    const search = employeeSearch.trim().toLowerCase();
+    const source = search
+      ? employees.filter((employee) => (
+        employee.displayName.toLowerCase().includes(search)
+        || employee.email.toLowerCase().includes(search)
+      ))
+      : employees;
+
+    return [...source].sort((a, b) => {
+      if (employeeSortKey === 'isActive') {
+        const value = Number(a.isActive) - Number(b.isActive);
+        if (value === 0) return a.displayName.localeCompare(b.displayName, 'de');
+        return employeeSortDirection === 'asc' ? value : -value;
+      }
+
+      const value = a[employeeSortKey].localeCompare(b[employeeSortKey], 'de');
+      return employeeSortDirection === 'asc' ? value : -value;
+    });
+  }, [employees, employeeSearch, employeeSortDirection, employeeSortKey]);
+
+  const employeeTotalPages = Math.max(1, Math.ceil(filteredEmployees.length / employeePageSize));
+  const pagedEmployees = useMemo(() => {
+    const start = (employeePage - 1) * employeePageSize;
+    return filteredEmployees.slice(start, start + employeePageSize);
+  }, [employeePage, filteredEmployees]);
+  const selectedAdminEmployee = useMemo(
+    () => employees.find((employee) => employee.id === selectedAdminEmployeeId) ?? null,
+    [employees, selectedAdminEmployeeId]
+  );
 
   const handleApiError = (error: unknown) => {
     if (error instanceof ApiError) {
@@ -292,6 +329,34 @@ export function App() {
       return meMatch ?? activeEmployees[0]?.email ?? '';
     });
   }, [activeEmployees, me?.email]);
+
+
+  useEffect(() => {
+    setEmployeePage(1);
+  }, [employeeSearch]);
+
+  useEffect(() => {
+    setEmployeePage((prev) => Math.min(prev, employeeTotalPages));
+  }, [employeeTotalPages]);
+
+  useEffect(() => {
+    if (!employees.length) {
+      setSelectedAdminEmployeeId('');
+      setEditingEmployeeId('');
+      setEditingEmployeeName('');
+      return;
+    }
+
+    if (!selectedAdminEmployeeId || !employees.some((employee) => employee.id === selectedAdminEmployeeId)) {
+      setSelectedAdminEmployeeId(employees[0].id);
+    }
+  }, [employees, selectedAdminEmployeeId]);
+
+  useEffect(() => {
+    if (!selectedAdminEmployee) return;
+    setEditingEmployeeId(selectedAdminEmployee.id);
+    setEditingEmployeeName(selectedAdminEmployee.displayName);
+  }, [selectedAdminEmployee?.id]);
 
   useEffect(() => {
     if (selectedFloorplanId) {
@@ -624,6 +689,22 @@ export function App() {
     }
   };
 
+  const toggleEmployeeSort = (key: 'displayName' | 'email' | 'isActive') => {
+    if (employeeSortKey === key) {
+      setEmployeeSortDirection((prev) => (prev === 'asc' ? 'desc' : 'asc'));
+      return;
+    }
+
+    setEmployeeSortKey(key);
+    setEmployeeSortDirection('asc');
+  };
+
+  const selectAdminEmployee = (employee: Employee) => {
+    setSelectedAdminEmployeeId(employee.id);
+    setEditingEmployeeId(employee.id);
+    setEditingEmployeeName(employee.displayName);
+  };
+
   const selectDay = (day: Date) => {
     const dayKey = toDateKey(day);
     setSelectedDate(dayKey);
@@ -723,39 +804,97 @@ export function App() {
                     <input type="date" value={selectedDate} onChange={(e) => setSelectedDate(e.target.value)} />
                   </label>
                 )}
+                {adminTab === 'employees' && (
+                  <section className="form-grid employee-form-card">
+                    <h3>Mitarbeiter hinzufügen</h3>
+                    {!!employeeActionMessage && <p className="toast toast-success toast-inline">{employeeActionMessage}</p>}
+                    {!!employeeErrorMessage && <p className="toast toast-error toast-inline">{employeeErrorMessage}</p>}
+                    <form onSubmit={addEmployee} className="form-grid gap-3">
+                      <input required placeholder="Name" value={newEmployeeDisplayName} onChange={(e) => setNewEmployeeDisplayName(e.target.value)} />
+                      <input required placeholder="E-Mail" value={newEmployeeEmail} onChange={(e) => setNewEmployeeEmail(e.target.value)} />
+                      <button className="btn btn-primary full" type="submit">Mitarbeiter hinzufügen</button>
+                    </form>
+                  </section>
+                )}
               </aside>
 
               <section className="card canvas-card">
-                {!selectedFloorplan ? <p>Kein Floorplan ausgewählt.</p> : (
-                  <>
-                    <h2>{selectedFloorplan.name}</h2>
-                    {adminTab === 'desks' && <p className="muted">{repositioningDeskId ? 'Klicke auf neue Position im Floorplan' : 'Klick auf freie Fläche, um einen Desk anzulegen.'}</p>}
-                    {(adminTab === 'floorplans' || adminTab === 'desks' || adminTab === 'bookings') && (
-                      <div
-                        onClick={adminTab === 'desks' ? (repositioningDeskId ? repositionDesk : createDeskAtPosition) : undefined}
-                        className={`floorplan-canvas ${repositioningDeskId ? 'reposition-mode' : ''}`}
-                        role="presentation"
-                      >
-                        <img src={selectedFloorplan.imageUrl} alt={selectedFloorplan.name} />
-                        {(adminTab === 'desks' || adminTab === 'bookings') && desks.map((desk) => (
-                          <button
-                            key={desk.id}
-                            data-pin="desk-pin"
-                            type="button"
-                            className={`desk-pin ${desk.status} ${selectedDeskId === desk.id ? 'selected' : ''} ${hoveredDeskId === desk.id ? 'hovered' : ''}`}
-                            onMouseEnter={() => setHoveredDeskId(desk.id)}
-                            onMouseLeave={() => setHoveredDeskId('')}
-                            onClick={(event) => {
-                              event.stopPropagation();
-                              if (repositioningDeskId) return;
-                              setSelectedDeskId(desk.id);
-                            }}
-                            style={{ left: `${desk.x * 100}%`, top: `${desk.y * 100}%` }}
-                          />
+                {adminTab === 'employees' ? (
+                  <div className="employee-table-panel">
+                    <div className="employee-table-toolbar">
+                      <h3>Mitarbeiter</h3>
+                      <input
+                        type="search"
+                        placeholder="Suchen nach Name oder E-Mail"
+                        value={employeeSearch}
+                        onChange={(e) => setEmployeeSearch(e.target.value)}
+                      />
+                    </div>
+                    <table className="employee-table">
+                      <thead>
+                        <tr>
+                          <th><button className="table-sort-btn" onClick={() => toggleEmployeeSort('displayName')}>Name</button></th>
+                          <th><button className="table-sort-btn" onClick={() => toggleEmployeeSort('email')}>E-Mail</button></th>
+                          <th><button className="table-sort-btn" onClick={() => toggleEmployeeSort('isActive')}>Status</button></th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {pagedEmployees.map((employee) => (
+                          <tr
+                            key={employee.id}
+                            className={selectedAdminEmployeeId === employee.id ? 'row-selected' : ''}
+                            onClick={() => selectAdminEmployee(employee)}
+                          >
+                            <td>{employee.displayName}</td>
+                            <td>{employee.email}</td>
+                            <td>{employee.isActive ? 'Aktiv' : 'Inaktiv'}</td>
+                          </tr>
                         ))}
-                      </div>
-                    )}
-                  </>
+                        {!pagedEmployees.length && (
+                          <tr>
+                            <td colSpan={3} className="muted">Keine Mitarbeiter gefunden.</td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
+                    <div className="employee-pagination">
+                      <button className="btn btn-secondary" onClick={() => setEmployeePage((prev) => Math.max(1, prev - 1))} disabled={employeePage <= 1}>Zurück</button>
+                      <span>Seite {employeePage} von {employeeTotalPages}</span>
+                      <button className="btn btn-secondary" onClick={() => setEmployeePage((prev) => Math.min(employeeTotalPages, prev + 1))} disabled={employeePage >= employeeTotalPages}>Weiter</button>
+                    </div>
+                  </div>
+                ) : (
+                  !selectedFloorplan ? <p>Kein Floorplan ausgewählt.</p> : (
+                    <>
+                      <h2>{selectedFloorplan.name}</h2>
+                      {adminTab === 'desks' && <p className="muted">{repositioningDeskId ? 'Klicke auf neue Position im Floorplan' : 'Klick auf freie Fläche, um einen Desk anzulegen.'}</p>}
+                      {(adminTab === 'floorplans' || adminTab === 'desks' || adminTab === 'bookings') && (
+                        <div
+                          onClick={adminTab === 'desks' ? (repositioningDeskId ? repositionDesk : createDeskAtPosition) : undefined}
+                          className={`floorplan-canvas ${repositioningDeskId ? 'reposition-mode' : ''}`}
+                          role="presentation"
+                        >
+                          <img src={selectedFloorplan.imageUrl} alt={selectedFloorplan.name} />
+                          {(adminTab === 'desks' || adminTab === 'bookings') && desks.map((desk) => (
+                            <button
+                              key={desk.id}
+                              data-pin="desk-pin"
+                              type="button"
+                              className={`desk-pin ${desk.status} ${selectedDeskId === desk.id ? 'selected' : ''} ${hoveredDeskId === desk.id ? 'hovered' : ''}`}
+                              onMouseEnter={() => setHoveredDeskId(desk.id)}
+                              onMouseLeave={() => setHoveredDeskId('')}
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                if (repositioningDeskId) return;
+                                setSelectedDeskId(desk.id);
+                              }}
+                              style={{ left: `${desk.x * 100}%`, top: `${desk.y * 100}%` }}
+                            />
+                          ))}
+                        </div>
+                      )}
+                    </>
+                  )
                 )}
               </section>
 
@@ -823,44 +962,30 @@ export function App() {
                   </section>
                 )}
                 {adminTab === 'employees' && (
-                  <>
-                    <section className="card form-grid employee-form-card">
-                      <h3>Mitarbeiter hinzufügen</h3>
-                      {!!employeeActionMessage && <p className="toast toast-success toast-inline">{employeeActionMessage}</p>}
-                      {!!employeeErrorMessage && <p className="toast toast-error toast-inline">{employeeErrorMessage}</p>}
-                      <form onSubmit={addEmployee} className="form-grid gap-3">
-                        <input required placeholder="Name" value={newEmployeeDisplayName} onChange={(e) => setNewEmployeeDisplayName(e.target.value)} />
-                        <input required placeholder="E-Mail" value={newEmployeeEmail} onChange={(e) => setNewEmployeeEmail(e.target.value)} />
-                        <button className="btn btn-primary full" type="submit">Mitarbeiter hinzufügen</button>
-                      </form>
-                    </section>
-
-                    <section className="card form-grid">
-                      <h3>Mitarbeiter</h3>
-                      <div className="table-scroll-wrap">
-                        <table>
-                          <thead><tr><th>Name</th><th>E-Mail</th><th>Status</th><th className="actions-col">Aktionen</th></tr></thead>
-                          <tbody>
-                            {employees.map((employee) => (
-                              <tr key={employee.id}>
-                                <td>{editingEmployeeId === employee.id ? <input value={editingEmployeeName} onChange={(e) => setEditingEmployeeName(e.target.value)} /> : employee.displayName}</td>
-                                <td>{employee.email}</td>
-                                <td>{employee.isActive ? 'Aktiv' : 'Inaktiv'}</td>
-                                <td className="inline-actions align-right">
-                                  {editingEmployeeId === employee.id ? (
-                                    <button className="btn btn-primary action-btn" onClick={() => saveEmployeeName(employee.id)}>Speichern</button>
-                                  ) : (
-                                    <button className="btn btn-secondary action-btn" onClick={() => { setEditingEmployeeId(employee.id); setEditingEmployeeName(employee.displayName); }}>Umbenennen</button>
-                                  )}
-                                  <button className="btn btn-danger action-btn" onClick={() => toggleEmployee(employee)}>{employee.isActive ? 'Deaktivieren' : 'Aktivieren'}</button>
-                                </td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
-                    </section>
-                  </>
+                  <section className="card form-grid employee-detail-card">
+                    <h3>Details</h3>
+                    {!selectedAdminEmployee ? (
+                      <p className="muted">Mitarbeiter in der Tabelle auswählen.</p>
+                    ) : (
+                      <>
+                        <label className="field">
+                          <span>Name</span>
+                          <input value={editingEmployeeName} onChange={(e) => setEditingEmployeeName(e.target.value)} />
+                        </label>
+                        <label className="field">
+                          <span>E-Mail</span>
+                          <input value={selectedAdminEmployee.email} disabled />
+                        </label>
+                        <p className={`status-pill ${selectedAdminEmployee.isActive ? 'active' : 'inactive'}`}>
+                          {selectedAdminEmployee.isActive ? 'Aktiv' : 'Inaktiv'}
+                        </p>
+                        <button className="btn btn-primary" onClick={() => saveEmployeeName(selectedAdminEmployee.id)}>Speichern</button>
+                        <button className="btn btn-secondary" onClick={() => toggleEmployee(selectedAdminEmployee)}>
+                          {selectedAdminEmployee.isActive ? 'Deaktivieren' : 'Aktivieren'}
+                        </button>
+                      </>
+                    )}
+                  </section>
                 )}
               </aside>
             </section>
