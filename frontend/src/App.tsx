@@ -34,6 +34,7 @@ type AdminRecurringBooking = {
 };
 type MeResponse = { employeeId: string; email: string; displayName: string; isAdmin: boolean; authProvider: 'breakglass' | 'entra' };
 type BookingMode = 'single' | 'range' | 'series';
+type BootstrapState = 'initializing' | 'backend_down' | 'unauthenticated' | 'authenticated';
 
 const today = new Date().toISOString().slice(0, 10);
 const weekdays = ['Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa', 'So'];
@@ -119,7 +120,8 @@ export function App() {
   const [bookingConflictDates, setBookingConflictDates] = useState<string[]>([]);
 
   const [breakglassToken, setBreakglassToken] = useState(localStorage.getItem('breakglassToken') ?? '');
-  const [isAuthenticating, setIsAuthenticating] = useState(true);
+  const [bootstrapState, setBootstrapState] = useState<BootstrapState>('initializing');
+  const [bootstrapError, setBootstrapError] = useState('');
   const [showAdminLogin, setShowAdminLogin] = useState(false);
   const [adminEmail, setAdminEmail] = useState('admin@example.com');
   const [adminPassword, setAdminPassword] = useState('');
@@ -240,23 +242,40 @@ export function App() {
   };
 
   const loadMe = async () => {
+    const current = await get<MeResponse>('/me', undefined, 10000);
+    setMe(current);
+    setManualBookingEmail((prev) => prev || current.email);
+  };
+
+  const readEntraToken = (): string => localStorage.getItem('entraAccessToken') ?? '';
+
+  const checkBackend = async (): Promise<boolean> => {
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), 5000);
+
     try {
-      const current = await get<MeResponse>('/me');
-      setMe(current);
-      setManualBookingEmail((prev) => prev || current.email);
-    } catch (error) {
-      if (error instanceof ApiError) {
-        const responseCode =
-          typeof error.details === 'object' &&
-          error.details !== null &&
-          'code' in error.details &&
-          typeof error.details.code === 'string'
-            ? error.details.code
-            : 'unknown';
-        console.warn('[auth] /me failed', { status: error.status, code: responseCode });
-      }
-      throw error;
+      const response = await fetch(`${API_BASE}/health`, {
+        method: 'GET',
+        signal: controller.signal
+      });
+      return response.ok;
+    } catch {
+      return false;
+    } finally {
+      window.clearTimeout(timeout);
     }
+  };
+
+  const toBootstrapError = (error: unknown): string => {
+    if (error instanceof ApiError) {
+      return error.status > 0 ? `${error.message} (HTTP ${error.status})` : error.message;
+    }
+
+    if (error instanceof Error) {
+      return error.message;
+    }
+
+    return 'Unbekannter Fehler während der Anmeldung.';
   };
 
   const loadEmployees = async () => {
@@ -301,14 +320,35 @@ export function App() {
       const breakglass = localStorage.getItem('breakglassToken');
       if (breakglass) return breakglass;
 
-      const account = getActiveAccount();
-      if (!account) return null;
-
-      const token = await msalInstance.acquireTokenSilent();
-      return token.accessToken;
+      return readEntraToken() || null;
     });
 
+    let cancelled = false;
+    let backendReachable = false;
+    const watchdog = window.setTimeout(() => {
+      if (cancelled) return;
+      if (!backendReachable) {
+        setBootstrapError(`Backend-Healthcheck fehlgeschlagen (${API_BASE}).`);
+        setBootstrapState('backend_down');
+      } else {
+        setBootstrapError('Anmeldung hat zu lange gedauert. Bitte erneut anmelden.');
+        setBootstrapState('unauthenticated');
+        setHasLoginAttempted(true);
+      }
+    }, 8000);
+
     const bootstrap = async () => {
+      const backendIsUp = await checkBackend();
+      if (!backendIsUp) {
+        if (!cancelled) {
+          setBootstrapError(`Backend nicht erreichbar: ${API_BASE}`);
+          setBootstrapState('backend_down');
+        }
+        return;
+      }
+
+      backendReachable = true;
+
       try {
         await msalInstance.initialize();
         const redirect = await msalInstance.handleRedirectPromise();
@@ -318,17 +358,77 @@ export function App() {
           const account = getActiveAccount();
           if (account) msalInstance.setActiveAccount(account);
         }
+      } catch (error) {
+        if (!cancelled) {
+          setBootstrapError(`Microsoft-Redirect fehlgeschlagen: ${toBootstrapError(error)}`);
+          setBootstrapState('unauthenticated');
+          setHasLoginAttempted(true);
+        }
+        return;
+      }
 
+      const breakglass = localStorage.getItem('breakglassToken');
+      let tokenSource: 'breakglass' | 'entra' | null = null;
+
+      if (breakglass) {
+        tokenSource = 'breakglass';
+      } else if (getActiveAccount()) {
+        try {
+          const token = await msalInstance.acquireTokenSilent();
+          localStorage.setItem('entraAccessToken', token.accessToken);
+          tokenSource = 'entra';
+        } catch (error) {
+          if (!cancelled) {
+            setBootstrapError(`Microsoft-Token konnte nicht geladen werden: ${toBootstrapError(error)}`);
+            setBootstrapState('unauthenticated');
+            setHasLoginAttempted(true);
+          }
+          return;
+        }
+      }
+
+      if (!tokenSource) {
+        if (!cancelled) {
+          setBootstrapError('');
+          setBootstrapState('unauthenticated');
+        }
+        return;
+      }
+
+      try {
         await loadMe();
+        if (!cancelled) {
+          setBootstrapError('');
+          setBootstrapState('authenticated');
+        }
         await Promise.all([loadFloorplans(), loadEmployees()]);
-      } catch {
-        setMe(null);
-      } finally {
-        setIsAuthenticating(false);
+      } catch (error) {
+        if (tokenSource === 'breakglass') {
+          localStorage.removeItem('breakglassToken');
+          setBreakglassToken('');
+        }
+        if (tokenSource === 'entra') {
+          localStorage.removeItem('entraAccessToken');
+          localStorage.removeItem('entraAccessTokenExp');
+        }
+
+        if (!cancelled) {
+          setMe(null);
+          setBootstrapError(`Anmeldung fehlgeschlagen: ${toBootstrapError(error)}`);
+          setBootstrapState('unauthenticated');
+          setHasLoginAttempted(true);
+        }
       }
     };
 
-    bootstrap();
+    bootstrap().finally(() => {
+      window.clearTimeout(watchdog);
+    });
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(watchdog);
+    };
   }, []);
 
   useEffect(() => {
@@ -478,6 +578,7 @@ export function App() {
       localStorage.setItem('breakglassToken', data.token);
       setBreakglassToken(data.token);
       await loadMe();
+      setBootstrapState('authenticated');
       setShowAdminLogin(false);
       setAdminPassword('');
       setInfoMessage('Admin Mode aktiviert.');
@@ -490,6 +591,7 @@ export function App() {
     localStorage.removeItem('breakglassToken');
     setBreakglassToken('');
     setMe(null);
+    setBootstrapState('unauthenticated');
     setInfoMessage('Zurück im Booking Mode.');
   };
 
@@ -748,11 +850,42 @@ export function App() {
     }
   };
 
-  if (isAuthenticating) {
+  const retryBackendCheck = async () => {
+    setBootstrapState('initializing');
+    setBootstrapError('');
+    const reachable = await checkBackend();
+    if (!reachable) {
+      setBootstrapError(`Backend nicht erreichbar: ${API_BASE}`);
+      setBootstrapState('backend_down');
+      return;
+    }
+
+    setBootstrapState(me ? 'authenticated' : 'unauthenticated');
+  };
+
+  if (bootstrapState === 'initializing') {
     return <div className="app-shell"><p>Lade Anmeldung…</p></div>;
   }
 
-  if (!me) {
+  if (bootstrapState === 'backend_down') {
+    return (
+      <div className="login-page app-shell">
+        <div className="card login-card">
+          <p className="eyebrow">AVENCY Booking</p>
+          <h1>Backend nicht erreichbar</h1>
+          <p className="muted">API-URL: {API_BASE}</p>
+          {bootstrapError && (
+            <div className="alert alert-error" role="alert" aria-live="polite">
+              <p className="alert-message">{bootstrapError}</p>
+            </div>
+          )}
+          <button type="button" className="btn btn-primary full" onClick={retryBackendCheck}>Erneut versuchen</button>
+        </div>
+      </div>
+    );
+  }
+
+  if (bootstrapState === 'unauthenticated' || !me) {
     return (
       <div className="login-page app-shell">
         <div className="card login-card">
@@ -808,10 +941,10 @@ export function App() {
             </form>
           </section>
 
-          {hasLoginAttempted && errorMessage && (
+          {hasLoginAttempted && (errorMessage || bootstrapError) && (
             <div className="alert alert-error" role="alert" aria-live="polite">
               <p className="alert-title">Anmeldung fehlgeschlagen</p>
-              <p className="alert-message">{errorMessage}</p>
+              <p className="alert-message">{errorMessage || bootstrapError}</p>
             </div>
           )}
         </div>
