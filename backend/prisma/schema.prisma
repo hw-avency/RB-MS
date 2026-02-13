@@ -16,3 +16,51 @@ model User {
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 }
+
+model Floorplan {
+  id        String   @id @default(cuid())
+  name      String
+  imageUrl  String
+  createdAt DateTime @default(now())
+  desks     Desk[]
+}
+
+model Desk {
+  id                String             @id @default(cuid())
+  floorplanId       String
+  name              String
+  x                 Float
+  y                 Float
+  createdAt         DateTime           @default(now())
+  floorplan         Floorplan          @relation(fields: [floorplanId], references: [id], onDelete: Cascade)
+  bookings          Booking[]
+  recurringBookings RecurringBooking[]
+
+  @@index([floorplanId])
+}
+
+model Booking {
+  id        String   @id @default(cuid())
+  deskId    String
+  userEmail String
+  date      DateTime @db.Date
+  createdAt DateTime @default(now())
+  desk      Desk     @relation(fields: [deskId], references: [id], onDelete: Cascade)
+
+  @@unique([deskId, date])
+  @@index([date])
+  @@index([deskId])
+}
+
+model RecurringBooking {
+  id        String    @id @default(cuid())
+  deskId    String
+  userEmail String
+  weekday   Int
+  validFrom DateTime  @db.Date
+  validTo   DateTime? @db.Date
+  createdAt DateTime  @default(now())
+  desk      Desk      @relation(fields: [deskId], references: [id], onDelete: Cascade)
+
+  @@index([deskId])
+}

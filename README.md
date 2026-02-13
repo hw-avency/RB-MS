@@ -28,7 +28,7 @@ Setze folgende **Environment Variables**:
 - `RUN_SEED` (optional)
 - `NODE_ENV=production`
 
-Hinweis: Beim Container-Start werden automatisch `prisma migrate deploy` und optional `prisma db seed` (bei `RUN_SEED=true`) ausgeführt.
+Hinweis: Beim Container-Start werden automatisch `prisma generate`, `prisma migrate deploy` und optional `prisma db seed` (bei `RUN_SEED=true`) ausgeführt.
 
 ### Frontend als Render Static Site
 
@@ -46,6 +46,15 @@ Setze folgende **Environment Variable**:
 
 - `GET /health`
 - `GET /me` (Demo-User Response für Dev-Auth in Task 1)
+- `POST /floorplans`
+- `GET /floorplans`
+- `GET /floorplans/:id`
+- `POST /floorplans/:id/desks`
+- `GET /floorplans/:id/desks`
+- `POST /bookings`
+- `GET /bookings?from=YYYY-MM-DD&to=YYYY-MM-DD&floorplanId=<optional>`
+- `POST /recurring-bookings`
+- `GET /recurring-bookings?floorplanId=<optional>`
 
 ## Breakglass Admin
 
