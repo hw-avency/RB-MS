@@ -19,7 +19,33 @@ if (!JWT_SECRET) {
   throw new Error('JWT_SECRET env var is required');
 }
 
-app.use(cors());
+const configuredOrigins = (process.env.CORS_ALLOWED_ORIGINS ?? '')
+  .split(',')
+  .map((origin) => origin.trim())
+  .filter(Boolean);
+
+const allowedOrigins = new Set([
+  'https://rb-ms-1.onrender.com',
+  'https://rb-ms.onrender.com',
+  ...configuredOrigins
+]);
+
+const corsOptions = {
+  origin: (origin: string | undefined, callback: (error: Error | null, allow?: boolean) => void) => {
+    if (!origin || allowedOrigins.has(origin)) {
+      callback(null, true);
+      return;
+    }
+
+    callback(new Error('Origin not allowed by CORS'));
+  },
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Authorization', 'Content-Type'],
+  optionsSuccessStatus: 204
+};
+
+app.use(cors(corsOptions));
+app.options('*', cors(corsOptions));
 app.use(express.json());
 
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
@@ -113,13 +139,12 @@ const getActiveEmployeesByEmail = async (emails: string[]): Promise<Map<string, 
   return new Map(employees.map((employee) => [employee.email, { displayName: employee.displayName }]));
 };
 
-app.get('/health', async (_req, res) => {
-  try {
-    await prisma.$queryRaw`SELECT 1`;
-    res.status(200).json({ status: 'ok' });
-  } catch {
-    res.status(500).json({ status: 'error' });
-  }
+app.get('/health', (_req, res) => {
+  res.status(200).json({
+    status: 'ok',
+    service: 'avency-booking-api',
+    time: new Date().toISOString()
+  });
 });
 
 app.post('/auth/breakglass/login', async (req, res) => {
