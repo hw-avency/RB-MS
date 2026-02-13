@@ -2,6 +2,7 @@ import { FormEvent, MouseEvent, useEffect, useLayoutEffect, useMemo, useRef, use
 import { createPortal } from 'react-dom';
 import { API_BASE, ApiError, del, get, patch, post, setAuthTokenProvider } from './api';
 import { entraScope, getActiveAccount, msalInstance } from './auth';
+import microsoftLogo from './assets/microsoft.svg';
 
 type Floorplan = { id: string; name: string; imageUrl: string; createdAt: string };
 type OccupancyDesk = {
@@ -122,6 +123,9 @@ export function App() {
   const [showAdminLogin, setShowAdminLogin] = useState(false);
   const [adminEmail, setAdminEmail] = useState('admin@example.com');
   const [adminPassword, setAdminPassword] = useState('');
+  const [adminEmailError, setAdminEmailError] = useState('');
+  const [adminPasswordError, setAdminPasswordError] = useState('');
+  const [hasLoginAttempted, setHasLoginAttempted] = useState(false);
   const isAdminMode = me?.isAdmin === true;
   const [adminTab, setAdminTab] = useState<'floorplans' | 'desks' | 'bookings' | 'employees'>('floorplans');
 
@@ -445,9 +449,18 @@ export function App() {
 
   const loginAdmin = async (event: FormEvent) => {
     event.preventDefault();
+    setHasLoginAttempted(true);
     setErrorMessage('');
+    const trimmedEmail = adminEmail.trim();
+    const nextEmailError = trimmedEmail ? '' : 'Bitte E-Mail eingeben.';
+    const nextPasswordError = adminPassword ? '' : 'Bitte Passwort eingeben.';
+    setAdminEmailError(nextEmailError);
+    setAdminPasswordError(nextPasswordError);
+
+    if (nextEmailError || nextPasswordError) return;
+
     try {
-      const data = await post<{ token: string }>('/auth/breakglass/login', { email: adminEmail, password: adminPassword });
+      const data = await post<{ token: string }>('/auth/breakglass/login', { email: trimmedEmail, password: adminPassword });
       localStorage.setItem('breakglassToken', data.token);
       setBreakglassToken(data.token);
       await loadMe();
@@ -712,7 +725,13 @@ export function App() {
   };
 
   const loginWithMicrosoft = async () => {
-    await msalInstance.loginRedirect();
+    setHasLoginAttempted(true);
+    setErrorMessage('');
+    try {
+      await msalInstance.loginRedirect();
+    } catch {
+      setErrorMessage('Microsoft-Anmeldung fehlgeschlagen. Bitte erneut versuchen.');
+    }
   };
 
   if (isAuthenticating) {
@@ -721,17 +740,67 @@ export function App() {
 
   if (!me) {
     return (
-      <div className="app-shell" style={{ maxWidth: 480, margin: '3rem auto' }}>
-        <h1>AVENCY Booking Login</h1>
-        <button type="button" onClick={loginWithMicrosoft}>Sign in with Microsoft</button>
-        <hr />
-        <h2>Breakglass admin login</h2>
-        <form onSubmit={loginAdmin}>
-          <label>Email<input value={adminEmail} onChange={(event) => setAdminEmail(event.target.value)} /></label>
-          <label>Passwort<input type="password" value={adminPassword} onChange={(event) => setAdminPassword(event.target.value)} /></label>
-          <button type="submit">Breakglass anmelden</button>
-        </form>
-        {errorMessage && <p>{errorMessage}</p>}
+      <div className="login-page app-shell">
+        <div className="card login-card">
+          <p className="eyebrow">AVENCY Booking</p>
+          <h1>Login</h1>
+
+          <button
+            type="button"
+            className="btn microsoft-btn full"
+            onClick={loginWithMicrosoft}
+            aria-label="Mit Microsoft anmelden"
+          >
+            <img src={microsoftLogo} alt="" aria-hidden="true" />
+            <span>Mit Microsoft anmelden</span>
+          </button>
+
+          <div className="login-divider" role="separator" aria-label="oder">
+            <span>oder</span>
+          </div>
+
+          <section className="form-grid gap-3">
+            <div>
+              <h2>Breakglass Admin</h2>
+              <p className="muted">Nur für Notfallzugang (Admin).</p>
+            </div>
+            <form className="form-grid" onSubmit={loginAdmin} noValidate>
+              <label className="field">
+                Email
+                <input
+                  value={adminEmail}
+                  onChange={(event) => {
+                    setAdminEmail(event.target.value);
+                    if (adminEmailError) setAdminEmailError('');
+                  }}
+                  aria-invalid={adminEmailError ? 'true' : 'false'}
+                />
+                {adminEmailError && <span className="field-error">{adminEmailError}</span>}
+              </label>
+              <label className="field">
+                Passwort
+                <input
+                  type="password"
+                  value={adminPassword}
+                  onChange={(event) => {
+                    setAdminPassword(event.target.value);
+                    if (adminPasswordError) setAdminPasswordError('');
+                  }}
+                  aria-invalid={adminPasswordError ? 'true' : 'false'}
+                />
+                {adminPasswordError && <span className="field-error">{adminPasswordError}</span>}
+              </label>
+              <button className="btn btn-primary full" type="submit">Breakglass anmelden</button>
+            </form>
+          </section>
+
+          {hasLoginAttempted && errorMessage && (
+            <div className="alert alert-error" role="alert" aria-live="polite">
+              <p className="alert-title">Anmeldung fehlgeschlagen</p>
+              <p className="alert-message">{errorMessage}</p>
+            </div>
+          )}
+        </div>
       </div>
     );
   }
