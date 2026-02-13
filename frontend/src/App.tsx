@@ -704,10 +704,10 @@ export function App() {
                 )}
               </section>
 
-              <aside className="card right-panel">
+              <aside className="right-panel">
                 {adminTab === 'floorplans' && (
-                  !selectedFloorplan ? <p className="muted">Floorplan auswählen.</p> : (
-                    <form onSubmit={saveFloorplan} className="form-grid">
+                  !selectedFloorplan ? <section className="card"><p className="muted">Floorplan auswählen.</p></section> : (
+                    <form onSubmit={saveFloorplan} className="card form-grid">
                       <h3>Properties</h3>
                       {!!floorplanActionMessage && <p className="muted">{floorplanActionMessage}</p>}
                       <input value={floorplanNameInput} onChange={(e) => setFloorplanNameInput(e.target.value)} placeholder="name" />
@@ -718,8 +718,8 @@ export function App() {
                   )
                 )}
                 {adminTab === 'desks' && (
-                  !activeDesk ? <p className="muted">Desk auswählen.</p> : (
-                    <div className="form-grid">
+                  !activeDesk ? <section className="card"><p className="muted">Desk auswählen.</p></section> : (
+                    <div className="card form-grid">
                       <h3>Desk Properties</h3>
                       <form onSubmit={renameDesk} className="form-grid">
                         <input value={deskNameInput} onChange={(e) => setDeskNameInput(e.target.value)} placeholder="Desk name" />
@@ -732,69 +732,80 @@ export function App() {
                   )
                 )}
                 {adminTab === 'bookings' && (
-                  <table>
-                    <thead><tr><th>Desk</th><th>Employee</th><th>Type</th><th>Edit</th><th>Delete</th></tr></thead>
-                    <tbody>
-                      {adminBookings.map((booking) => (
-                        <tr
-                          key={booking.id}
-                          className={selectedDeskId === booking.desk.id ? 'row-selected' : ''}
-                          onMouseEnter={() => setHoveredDeskId(booking.desk.id)}
-                          onMouseLeave={() => setHoveredDeskId('')}
-                          onClick={() => setSelectedDeskId(booking.desk.id)}
-                        >
-                          <td>{booking.desk.name}</td>
-                          <td>{booking.userEmail}</td>
-                          <td>Single</td>
-                          <td><button className="btn btn-secondary" onClick={() => { setEditingBookingId(booking.id); setEditBookingEmail(booking.userEmail); setEditBookingDate(booking.date.slice(0, 10)); saveAdminBooking(booking.id); }}>{editingBookingId === booking.id ? 'Save' : 'Edit'}</button></td>
-                          <td><button className="btn btn-danger" onClick={() => deleteAdminBooking(booking.id)}>Delete</button></td>
-                        </tr>
-                      ))}
-                      {adminRecurring.map((booking) => (
-                        <tr
-                          key={booking.id}
-                          className={selectedDeskId === booking.desk.id ? 'row-selected' : ''}
-                          onMouseEnter={() => setHoveredDeskId(booking.desk.id)}
-                          onMouseLeave={() => setHoveredDeskId('')}
-                          onClick={() => setSelectedDeskId(booking.desk.id)}
-                        >
-                          <td>{booking.desk.name}</td><td>{booking.userEmail}</td><td>Recurring</td><td>-</td>
-                          <td><button className="btn btn-danger" onClick={() => deleteAdminRecurring(booking.id)}>Delete</button></td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                )}
-                {adminTab === 'employees' && (
-                  <div className="form-grid">
-                    <form onSubmit={addEmployee} className="form-grid">
-                      <input required placeholder="Name" value={newEmployeeDisplayName} onChange={(e) => setNewEmployeeDisplayName(e.target.value)} />
-                      <input required placeholder="E-Mail" value={newEmployeeEmail} onChange={(e) => setNewEmployeeEmail(e.target.value)} />
-                      <button className="btn btn-primary" type="submit">Mitarbeiter hinzufügen</button>
-                    </form>
-                    {!!employeeErrorMessage && <p className="toast toast-error">{employeeErrorMessage}</p>}
-                    {!!employeeActionMessage && <p className="toast toast-success">{employeeActionMessage}</p>}
+                  <section className="card table-scroll-wrap">
                     <table>
-                      <thead><tr><th>Name</th><th>E-Mail</th><th>Status</th><th>Aktionen</th></tr></thead>
+                      <thead><tr><th>Desk</th><th>Employee</th><th>Type</th><th>Edit</th><th>Delete</th></tr></thead>
                       <tbody>
-                        {employees.map((employee) => (
-                          <tr key={employee.id}>
-                            <td>{editingEmployeeId === employee.id ? <input value={editingEmployeeName} onChange={(e) => setEditingEmployeeName(e.target.value)} /> : employee.displayName}</td>
-                            <td>{employee.email}</td>
-                            <td>{employee.isActive ? 'Aktiv' : 'Inaktiv'}</td>
-                            <td className="inline-actions">
-                              {editingEmployeeId === employee.id ? (
-                                <button className="btn btn-primary" onClick={() => saveEmployeeName(employee.id)}>Speichern</button>
-                              ) : (
-                                <button className="btn btn-secondary" onClick={() => { setEditingEmployeeId(employee.id); setEditingEmployeeName(employee.displayName); }}>Umbenennen</button>
-                              )}
-                              <button className="btn btn-secondary" onClick={() => toggleEmployee(employee)}>{employee.isActive ? 'Deaktivieren' : 'Aktivieren'}</button>
-                            </td>
+                        {adminBookings.map((booking) => (
+                          <tr
+                            key={booking.id}
+                            className={selectedDeskId === booking.desk.id ? 'row-selected' : ''}
+                            onMouseEnter={() => setHoveredDeskId(booking.desk.id)}
+                            onMouseLeave={() => setHoveredDeskId('')}
+                            onClick={() => setSelectedDeskId(booking.desk.id)}
+                          >
+                            <td>{booking.desk.name}</td>
+                            <td>{booking.userEmail}</td>
+                            <td>Single</td>
+                            <td><button className="btn btn-secondary" onClick={() => { setEditingBookingId(booking.id); setEditBookingEmail(booking.userEmail); setEditBookingDate(booking.date.slice(0, 10)); saveAdminBooking(booking.id); }}>{editingBookingId === booking.id ? 'Save' : 'Edit'}</button></td>
+                            <td><button className="btn btn-danger" onClick={() => deleteAdminBooking(booking.id)}>Delete</button></td>
+                          </tr>
+                        ))}
+                        {adminRecurring.map((booking) => (
+                          <tr
+                            key={booking.id}
+                            className={selectedDeskId === booking.desk.id ? 'row-selected' : ''}
+                            onMouseEnter={() => setHoveredDeskId(booking.desk.id)}
+                            onMouseLeave={() => setHoveredDeskId('')}
+                            onClick={() => setSelectedDeskId(booking.desk.id)}
+                          >
+                            <td>{booking.desk.name}</td><td>{booking.userEmail}</td><td>Recurring</td><td>-</td>
+                            <td><button className="btn btn-danger" onClick={() => deleteAdminRecurring(booking.id)}>Delete</button></td>
                           </tr>
                         ))}
                       </tbody>
                     </table>
-                  </div>
+                  </section>
+                )}
+                {adminTab === 'employees' && (
+                  <>
+                    <section className="card form-grid employee-form-card">
+                      <h3>Mitarbeiter hinzufügen</h3>
+                      {!!employeeActionMessage && <p className="toast toast-success toast-inline">{employeeActionMessage}</p>}
+                      {!!employeeErrorMessage && <p className="toast toast-error toast-inline">{employeeErrorMessage}</p>}
+                      <form onSubmit={addEmployee} className="form-grid gap-3">
+                        <input required placeholder="Name" value={newEmployeeDisplayName} onChange={(e) => setNewEmployeeDisplayName(e.target.value)} />
+                        <input required placeholder="E-Mail" value={newEmployeeEmail} onChange={(e) => setNewEmployeeEmail(e.target.value)} />
+                        <button className="btn btn-primary full" type="submit">Mitarbeiter hinzufügen</button>
+                      </form>
+                    </section>
+
+                    <section className="card form-grid">
+                      <h3>Mitarbeiter</h3>
+                      <div className="table-scroll-wrap">
+                        <table>
+                          <thead><tr><th>Name</th><th>E-Mail</th><th>Status</th><th className="actions-col">Aktionen</th></tr></thead>
+                          <tbody>
+                            {employees.map((employee) => (
+                              <tr key={employee.id}>
+                                <td>{editingEmployeeId === employee.id ? <input value={editingEmployeeName} onChange={(e) => setEditingEmployeeName(e.target.value)} /> : employee.displayName}</td>
+                                <td>{employee.email}</td>
+                                <td>{employee.isActive ? 'Aktiv' : 'Inaktiv'}</td>
+                                <td className="inline-actions align-right">
+                                  {editingEmployeeId === employee.id ? (
+                                    <button className="btn btn-primary action-btn" onClick={() => saveEmployeeName(employee.id)}>Speichern</button>
+                                  ) : (
+                                    <button className="btn btn-secondary action-btn" onClick={() => { setEditingEmployeeId(employee.id); setEditingEmployeeName(employee.displayName); }}>Umbenennen</button>
+                                  )}
+                                  <button className="btn btn-danger action-btn" onClick={() => toggleEmployee(employee)}>{employee.isActive ? 'Deaktivieren' : 'Aktivieren'}</button>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </section>
+                  </>
                 )}
               </aside>
             </section>
