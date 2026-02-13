@@ -416,6 +416,13 @@ export function App() {
   }, [popupAnchor, popupOpen, updatePopupPosition]);
 
   useEffect(() => {
+    if (!import.meta.env.DEV || !popupOpen || !popupDesk) {
+      return;
+    }
+    console.debug('[booking] popup render', { isOpen: popupOpen, deskId: popupDesk.id });
+  }, [popupDesk, popupOpen]);
+
+  useEffect(() => {
     const onEscape = (event: KeyboardEvent) => {
       if (event.key !== 'Escape') return;
       if (repositioningDeskId) {
@@ -1077,7 +1084,6 @@ export function App() {
             style={popupPosition}
             onClick={(event) => event.stopPropagation()}
           >
-            {import.meta.env.DEV && console.debug('[booking] popup render', { isOpen: popupOpen, deskId: popupDesk.id })}
             <h3>{popupDesk.name}</h3>
             <p className="muted">{selectedDate}</p>
             {popupDesk.status === 'free' ? (
