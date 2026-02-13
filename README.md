@@ -64,8 +64,10 @@ Setze folgende **Environment Variable**:
 ### Admin Endpoints
 
 - `POST /admin/floorplans`
+- `PATCH /admin/floorplans/:id`
 - `DELETE /admin/floorplans/:id`
 - `POST /admin/floorplans/:id/desks`
+- `PATCH /admin/desks/:id`
 - `DELETE /admin/desks/:id`
 - `GET /admin/bookings?date=YYYY-MM-DD&floorplanId=<optional>`
 - `PATCH /admin/bookings/:id`

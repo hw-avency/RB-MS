@@ -505,6 +505,42 @@ app.post('/admin/floorplans', requireAdmin, async (req, res) => {
   res.status(201).json(floorplan);
 });
 
+app.patch('/admin/floorplans/:id', requireAdmin, async (req, res) => {
+  const id = getRouteId(req.params.id);
+  if (!id) {
+    res.status(400).json({ error: 'validation', message: 'id is required' });
+    return;
+  }
+
+  const { name, imageUrl } = req.body as { name?: string; imageUrl?: string };
+  if (typeof name === 'undefined' && typeof imageUrl === 'undefined') {
+    res.status(400).json({ error: 'validation', message: 'name or imageUrl must be provided' });
+    return;
+  }
+
+  if (typeof name === 'string' && name.trim().length === 0) {
+    res.status(400).json({ error: 'validation', message: 'name must not be empty' });
+    return;
+  }
+
+  try {
+    const updatedFloorplan = await prisma.floorplan.update({
+      where: { id },
+      data: {
+        ...(typeof name === 'string' ? { name: name.trim() } : {}),
+        ...(typeof imageUrl === 'string' ? { imageUrl } : {})
+      }
+    });
+    res.status(200).json(updatedFloorplan);
+  } catch (error) {
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2025') {
+      res.status(404).json({ error: 'not_found', message: 'Floorplan not found' });
+      return;
+    }
+    throw error;
+  }
+});
+
 app.delete('/admin/floorplans/:id', requireAdmin, async (req, res) => {
   const id = getRouteId(req.params.id);
   if (!id) {
@@ -559,6 +595,36 @@ app.delete('/admin/desks/:id', requireAdmin, async (req, res) => {
   try {
     await prisma.desk.delete({ where: { id } });
     res.status(204).send();
+  } catch (error) {
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2025') {
+      res.status(404).json({ error: 'not_found', message: 'Desk not found' });
+      return;
+    }
+    throw error;
+  }
+});
+
+app.patch('/admin/desks/:id', requireAdmin, async (req, res) => {
+  const id = getRouteId(req.params.id);
+  if (!id) {
+    res.status(400).json({ error: 'validation', message: 'id is required' });
+    return;
+  }
+
+  const { name } = req.body as { name?: string };
+  if (typeof name === 'undefined') {
+    res.status(400).json({ error: 'validation', message: 'name must be provided' });
+    return;
+  }
+
+  if (name.trim().length === 0) {
+    res.status(400).json({ error: 'validation', message: 'name must not be empty' });
+    return;
+  }
+
+  try {
+    const updatedDesk = await prisma.desk.update({ where: { id }, data: { name: name.trim() } });
+    res.status(200).json(updatedDesk);
   } catch (error) {
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2025') {
       res.status(404).json({ error: 'not_found', message: 'Desk not found' });

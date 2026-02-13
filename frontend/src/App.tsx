@@ -80,6 +80,11 @@ export function App() {
   const [createName, setCreateName] = useState('');
   const [createImageUrl, setCreateImageUrl] = useState('');
   const [deleteCandidate, setDeleteCandidate] = useState<Floorplan | null>(null);
+  const [renameFloorplanCandidate, setRenameFloorplanCandidate] = useState<Floorplan | null>(null);
+  const [renameFloorplanName, setRenameFloorplanName] = useState('');
+  const [floorplanActionMessage, setFloorplanActionMessage] = useState('');
+  const [deskNameInput, setDeskNameInput] = useState('');
+  const [deskActionMessage, setDeskActionMessage] = useState('');
 
   const [adminBookings, setAdminBookings] = useState<AdminBooking[]>([]);
   const [adminRecurring, setAdminRecurring] = useState<AdminRecurringBooking[]>([]);
@@ -209,6 +214,11 @@ export function App() {
     }
   }, [isAdminMode, selectedDate, selectedFloorplanId]);
 
+  useEffect(() => {
+    setDeskNameInput(activeDesk?.name ?? '');
+    setDeskActionMessage('');
+  }, [activeDesk?.id]);
+
   const loginAdmin = async (event: FormEvent) => {
     event.preventDefault();
     setErrorMessage('');
@@ -260,6 +270,23 @@ export function App() {
     }
   };
 
+  const saveFloorplanRename = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!adminHeaders || !renameFloorplanCandidate) return;
+    try {
+      await patch(`/admin/floorplans/${renameFloorplanCandidate.id}`, { name: renameFloorplanName }, adminHeaders);
+      const selectedId = selectedFloorplanId;
+      await loadFloorplans();
+      if (selectedId) {
+        setSelectedFloorplanId(selectedId);
+      }
+      setFloorplanActionMessage('Floorplan umbenannt.');
+      setRenameFloorplanCandidate(null);
+    } catch (error) {
+      handleApiError(error);
+    }
+  };
+
   const createDeskAtPosition = async (event: MouseEvent<HTMLDivElement>) => {
     if (!adminHeaders || !addDeskMode || !selectedFloorplan) return;
     const target = event.target as HTMLElement;
@@ -284,6 +311,18 @@ export function App() {
       await del(`/admin/desks/${activeDesk.id}`, adminHeaders);
       await loadOccupancy(selectedFloorplanId, selectedDate);
       setActiveDeskId('');
+    } catch (error) {
+      handleApiError(error);
+    }
+  };
+
+  const renameDesk = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!adminHeaders || !activeDesk) return;
+    try {
+      await patch(`/admin/desks/${activeDesk.id}`, { name: deskNameInput }, adminHeaders);
+      await Promise.all([loadOccupancy(selectedFloorplanId, selectedDate), loadAdminLists()]);
+      setDeskActionMessage('Desk umbenannt.');
     } catch (error) {
       handleApiError(error);
     }
@@ -460,11 +499,15 @@ export function App() {
               <>
                 <section className="card">
                   <h3>Floorplans</h3>
+                  {!!floorplanActionMessage && <p className="muted">{floorplanActionMessage}</p>}
                   <ul className="floorplan-list">
                     {floorplans.map((floorplan) => (
                       <li key={floorplan.id} className={`floorplan-item ${selectedFloorplanId === floorplan.id ? 'active' : ''}`}>
                         <button className="linkish" onClick={() => setSelectedFloorplanId(floorplan.id)}>{floorplan.name}</button>
-                        <button className="btn btn-danger" onClick={() => setDeleteCandidate(floorplan)}>Löschen</button>
+                        <div className="inline-actions">
+                          <button className="btn btn-secondary" onClick={() => { setRenameFloorplanCandidate(floorplan); setRenameFloorplanName(floorplan.name); }}>Umbenennen</button>
+                          <button className="btn btn-danger" onClick={() => setDeleteCandidate(floorplan)}>Löschen</button>
+                        </div>
                       </li>
                     ))}
                   </ul>
@@ -484,6 +527,14 @@ export function App() {
                   {!activeDesk ? <p className="muted">Desk auf Plan auswählen.</p> : (
                     <div className="form-grid">
                       <p className="desk-title">{activeDesk.name}</p>
+                      {!!deskActionMessage && <p className="muted">{deskActionMessage}</p>}
+                      <form onSubmit={renameDesk} className="form-grid">
+                        <label className="field">
+                          <span>Desk Name</span>
+                          <input value={deskNameInput} onChange={(e) => setDeskNameInput(e.target.value)} />
+                        </label>
+                        <button className="btn btn-primary" type="submit">Speichern</button>
+                      </form>
                       <button className="btn btn-danger" onClick={deleteDesk}>Desk löschen</button>
                     </div>
                   )}
@@ -547,6 +598,21 @@ export function App() {
               <button className="btn btn-secondary" onClick={() => setDeleteCandidate(null)}>Abbrechen</button>
               <button className="btn btn-danger" onClick={() => deleteFloorplan(deleteCandidate.id)}>Löschen</button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {renameFloorplanCandidate && (
+        <div className="modal-backdrop">
+          <div className="modal card">
+            <h3>Floorplan umbenennen</h3>
+            <form onSubmit={saveFloorplanRename} className="form-grid">
+              <input value={renameFloorplanName} onChange={(e) => setRenameFloorplanName(e.target.value)} placeholder="Name" />
+              <div className="modal-actions">
+                <button type="button" className="btn btn-secondary" onClick={() => setRenameFloorplanCandidate(null)}>Abbrechen</button>
+                <button className="btn btn-primary" type="submit">Speichern</button>
+              </div>
+            </form>
           </div>
         </div>
       )}
