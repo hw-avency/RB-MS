@@ -1281,38 +1281,38 @@ export function App() {
               </aside>
 
               <section className="card canvas-card">
-                  !selectedFloorplan ? <p>Kein Floorplan ausgewählt.</p> : (
-                    <>
-                      <h2>{selectedFloorplan.name}</h2>
-                      {adminTab === 'desks' && <p className="muted">{repositioningDeskId ? 'Klicke auf neue Position im Floorplan' : 'Klick auf freie Fläche, um einen Desk anzulegen.'}</p>}
-                      {(adminTab === 'floorplans' || adminTab === 'desks' || adminTab === 'bookings') && (
-                        <FloorplanCanvas
-                          imageUrl={selectedFloorplan.imageUrl}
-                          imageAlt={selectedFloorplan.name}
-                          desks={adminTab === 'desks' || adminTab === 'bookings' ? desks : []}
-                          selectedDeskId={selectedDeskId}
-                          hoveredDeskId={hoveredDeskId}
-                          repositionMode={!!repositioningDeskId}
-                          interactive={adminTab === 'desks'}
-                          debug={floorplanDebug}
-                          onCanvasPoint={({ xPct, yPct }) => {
-                            if (repositioningDeskId) {
-                              repositionDesk(xPct, yPct);
-                              return;
-                            }
-                            createDeskAtPosition(xPct, yPct);
-                          }}
-                          onDeskMouseEnter={(deskId) => setHoveredDeskId(deskId)}
-                          onDeskMouseLeave={() => setHoveredDeskId('')}
-                          onDeskClick={(deskId, event) => {
-                            event.stopPropagation();
-                            if (repositioningDeskId) return;
-                            setSelectedDeskId(deskId);
-                          }}
-                        />
-                      )}
-                    </>
-                  )
+                {!selectedFloorplan ? <p>Kein Floorplan ausgewählt.</p> : (
+                  <>
+                    <h2>{selectedFloorplan.name}</h2>
+                    {adminTab === 'desks' && <p className="muted">{repositioningDeskId ? 'Klicke auf neue Position im Floorplan' : 'Klick auf freie Fläche, um einen Desk anzulegen.'}</p>}
+                    {(adminTab === 'floorplans' || adminTab === 'desks' || adminTab === 'bookings') && (
+                      <FloorplanCanvas
+                        imageUrl={selectedFloorplan.imageUrl}
+                        imageAlt={selectedFloorplan.name}
+                        desks={adminTab === 'desks' || adminTab === 'bookings' ? desks : []}
+                        selectedDeskId={selectedDeskId}
+                        hoveredDeskId={hoveredDeskId}
+                        repositionMode={!!repositioningDeskId}
+                        interactive={adminTab === 'desks'}
+                        debug={floorplanDebug}
+                        onCanvasPoint={({ xPct, yPct }) => {
+                          if (repositioningDeskId) {
+                            repositionDesk(xPct, yPct);
+                            return;
+                          }
+                          createDeskAtPosition(xPct, yPct);
+                        }}
+                        onDeskMouseEnter={(deskId) => setHoveredDeskId(deskId)}
+                        onDeskMouseLeave={() => setHoveredDeskId('')}
+                        onDeskClick={(deskId, event) => {
+                          event.stopPropagation();
+                          if (repositioningDeskId) return;
+                          setSelectedDeskId(deskId);
+                        }}
+                      />
+                    )}
+                  </>
+                )}
               </section>
 
               <aside className="right-panel">
@@ -1485,7 +1485,7 @@ export function App() {
       {!isAdminMode && activeDesk && popupPosition && createPortal(
         <>
           <div className="booking-portal-backdrop" onClick={() => { setSelectedDeskId(''); setPopupAnchor(null); }} />
-          <div ref={popupRef} className="booking-overlay card" style={{ left: popupPosition.left, top: popupPosition.top }} onClick={(event: MouseEvent<HTMLButtonElement>) => event.stopPropagation()}>
+          <div ref={popupRef} className="booking-overlay card" style={{ left: popupPosition.left, top: popupPosition.top }} onClick={(event: MouseEvent<HTMLElement>) => event.stopPropagation()}>
             <h3>{activeDesk.name}</h3>
             <p className="muted">{selectedDate}</p>
             {activeDesk.status === 'free' ? (
