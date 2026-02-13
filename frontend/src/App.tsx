@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { FormEvent, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { API_BASE, ApiError, del, get, patch, post } from './api';
 import { FloorplanCanvas } from './FloorplanCanvas';
@@ -72,6 +72,15 @@ const toDateKey = (value: Date): string => value.toISOString().slice(0, 10);
 const monthLabel = (monthStart: Date): string =>
   monthStart.toLocaleDateString('de-DE', { month: 'long', year: 'numeric' });
 
+const clamp = (value: number, min: number, max: number): number => Math.min(Math.max(value, min), max);
+
+const bookingDisplayName = (employee: Pick<Employee, 'displayName' | 'email'>): string => {
+  const trimmedName = employee.displayName?.trim();
+  if (trimmedName) return trimmedName;
+  const localPart = employee.email.split('@')[0]?.trim();
+  return localPart || employee.email;
+};
+
 const startOfMonth = (dateString: string): Date => {
   const date = new Date(`${dateString}T00:00:00.000Z`);
   return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), 1));
@@ -98,7 +107,7 @@ export function App() {
   const [selectedDeskId, setSelectedDeskId] = useState('');
   const [hoveredDeskId, setHoveredDeskId] = useState('');
   const [repositioningDeskId, setRepositioningDeskId] = useState('');
-  const [popupAnchor, setPopupAnchor] = useState<{ left: number; top: number } | null>(null);
+  const [popupAnchor, setPopupAnchor] = useState<{ left: number; top: number; right: number; bottom: number } | null>(null);
   const [popupPosition, setPopupPosition] = useState<{ left: number; top: number } | null>(null);
   const popupRef = useRef<HTMLDivElement | null>(null);
 
@@ -332,20 +341,52 @@ export function App() {
     }
   }, [employeePage, employeePageCount]);
 
-  useLayoutEffect(() => {
+  const updatePopupPosition = useCallback(() => {
     if (!popupAnchor || !popupRef.current) {
-      setPopupPosition(popupAnchor);
+      setPopupPosition(null);
       return;
     }
-    const margin = 10;
+
+    const viewportPadding = 12;
+    const gap = 10;
     const { width, height } = popupRef.current.getBoundingClientRect();
-    const maxLeft = window.innerWidth - width - margin;
-    const maxTop = window.innerHeight - height - margin;
+
+    let preferredLeft = popupAnchor.right + gap;
+    if (preferredLeft + width + viewportPadding > window.innerWidth) {
+      preferredLeft = popupAnchor.left - width - gap;
+    }
+
+    let preferredTop = popupAnchor.top;
+    if (preferredTop + height + viewportPadding > window.innerHeight) {
+      preferredTop = popupAnchor.bottom - height;
+      if (preferredTop < viewportPadding) {
+        preferredTop = popupAnchor.top - height - gap;
+      }
+    }
+
+    const maxLeft = Math.max(viewportPadding, window.innerWidth - width - viewportPadding);
+    const maxTop = Math.max(viewportPadding, window.innerHeight - height - viewportPadding);
+
     setPopupPosition({
-      left: Math.min(Math.max(popupAnchor.left, margin), Math.max(maxLeft, margin)),
-      top: Math.min(Math.max(popupAnchor.top, margin), Math.max(maxTop, margin))
+      left: clamp(preferredLeft, viewportPadding, maxLeft),
+      top: clamp(preferredTop, viewportPadding, maxTop)
     });
-  }, [popupAnchor, selectedDeskId]);
+  }, [popupAnchor]);
+
+  useLayoutEffect(() => {
+    updatePopupPosition();
+  }, [updatePopupPosition, selectedDeskId, bookingMode, bookingConflictDates.length]);
+
+  useEffect(() => {
+    if (!popupAnchor) return;
+    const handleViewportChange = () => updatePopupPosition();
+    window.addEventListener('resize', handleViewportChange);
+    window.addEventListener('scroll', handleViewportChange, true);
+    return () => {
+      window.removeEventListener('resize', handleViewportChange);
+      window.removeEventListener('scroll', handleViewportChange, true);
+    };
+  }, [popupAnchor, updatePopupPosition]);
 
   useEffect(() => {
     const onEscape = (event: KeyboardEvent) => {
@@ -896,7 +937,12 @@ export function App() {
                     onHoverDesk={setHoveredDeskId}
                     onSelectDesk={(deskId, anchorRect) => {
                       setSelectedDeskId(deskId);
-                      setPopupAnchor({ left: anchorRect.left + anchorRect.width + 10, top: anchorRect.top });
+                      setPopupAnchor({
+                        left: anchorRect.left,
+                        right: anchorRect.right,
+                        top: anchorRect.top,
+                        bottom: anchorRect.bottom
+                      });
                     }}
                   />
                 </>
@@ -1006,53 +1052,54 @@ export function App() {
             <h3>{activeDesk.name}</h3>
             <p className="muted">{selectedDate}</p>
             {activeDesk.status === 'free' ? (
-              <form onSubmit={createBooking} className="form-grid">
-                <label className="field">
-                  <span>Für wen buchen?</span>
-                  {activeEmployees.length ? (
-                    <select value={selectedEmployeeEmail} onChange={(e) => setSelectedEmployeeEmail(e.target.value)}>
-                      {activeEmployees.map((employee) => (
-                        <option key={employee.id} value={employee.email}>{employee.displayName} ({employee.email})</option>
-                      ))}
-                    </select>
-                  ) : (
-                    <input value={manualBookingEmail} onChange={(e) => setManualBookingEmail(e.target.value)} placeholder="E-Mail" />
-                  )}
-                </label>
+              <form onSubmit={createBooking} className="booking-form">
+                <div className="booking-form-body form-grid">
+                  <label className="field">
+                    <span>Für wen buchen?</span>
+                    {activeEmployees.length ? (
+                      <select className="booking-select" value={selectedEmployeeEmail} onChange={(e) => setSelectedEmployeeEmail(e.target.value)}>
+                        {activeEmployees.map((employee) => (
+                          <option key={employee.id} value={employee.email}>{bookingDisplayName(employee)}</option>
+                        ))}
+                      </select>
+                    ) : (
+                      <input value={manualBookingEmail} onChange={(e) => setManualBookingEmail(e.target.value)} placeholder="E-Mail" />
+                    )}
+                  </label>
 
-                <div className="field">
-                  <span>Buchungstyp</span>
-                  <div className="segmented-control">
-                    <button type="button" className={`segment-btn ${bookingMode === 'single' ? 'active' : ''}`} onClick={() => setBookingMode('single')}>Einzeltag</button>
-                    <button type="button" className={`segment-btn ${bookingMode === 'range' ? 'active' : ''}`} onClick={() => setBookingMode('range')}>Zeitraum</button>
-                    <button type="button" className={`segment-btn ${bookingMode === 'series' ? 'active' : ''}`} onClick={() => setBookingMode('series')}>Serie</button>
+                  <div className="field">
+                    <span>Buchungstyp</span>
+                    <div className="segmented-control">
+                      <button type="button" className={`segment-btn ${bookingMode === 'single' ? 'active' : ''}`} onClick={() => setBookingMode('single')}>Einzeltag</button>
+                      <button type="button" className={`segment-btn ${bookingMode === 'range' ? 'active' : ''}`} onClick={() => setBookingMode('range')}>Zeitraum</button>
+                      <button type="button" className={`segment-btn ${bookingMode === 'series' ? 'active' : ''}`} onClick={() => setBookingMode('series')}>Serie</button>
+                    </div>
                   </div>
-                </div>
 
-                {bookingMode === 'single' && <p className="muted">Datum: {selectedDate}</p>}
+                  {bookingMode === 'single' && <p className="muted">Datum: {selectedDate}</p>}
 
-                {bookingMode === 'range' && (
-                  <>
-                    <label className="field">
-                      <span>Von</span>
-                      <input type="date" value={rangeFrom} onChange={(e) => setRangeFrom(e.target.value)} />
-                    </label>
-                    <label className="field">
-                      <span>Bis</span>
-                      <input type="date" value={rangeTo} onChange={(e) => setRangeTo(e.target.value)} />
-                    </label>
-                    <label className="toggle-row">
-                      <input type="checkbox" checked={rangeWeekdaysOnly} onChange={(e) => setRangeWeekdaysOnly(e.target.checked)} />
-                      <span>Nur Werktage</span>
-                    </label>
-                    <p className="muted">
-                      {countRangeDays(rangeFrom, rangeTo)} Tage ({countRangeBookings(rangeFrom, rangeTo, rangeWeekdaysOnly)} Buchungen)
-                    </p>
-                  </>
-                )}
+                  {bookingMode === 'range' && (
+                    <>
+                      <label className="field">
+                        <span>Von</span>
+                        <input type="date" value={rangeFrom} onChange={(e) => setRangeFrom(e.target.value)} />
+                      </label>
+                      <label className="field">
+                        <span>Bis</span>
+                        <input type="date" value={rangeTo} onChange={(e) => setRangeTo(e.target.value)} />
+                      </label>
+                      <label className="toggle-row">
+                        <input type="checkbox" checked={rangeWeekdaysOnly} onChange={(e) => setRangeWeekdaysOnly(e.target.checked)} />
+                        <span>Nur Werktage</span>
+                      </label>
+                      <p className="muted">
+                        {countRangeDays(rangeFrom, rangeTo)} Tage ({countRangeBookings(rangeFrom, rangeTo, rangeWeekdaysOnly)} Buchungen)
+                      </p>
+                    </>
+                  )}
 
-                {bookingMode === 'series' && (
-                  <>
+                  {bookingMode === 'series' && (
+                    <>
                     <div className="field">
                       <span>Wochentage</span>
                       <div className="weekday-chips">
@@ -1084,25 +1131,35 @@ export function App() {
                       <span>Gültig bis</span>
                       <input type="date" value={seriesValidTo} onChange={(e) => setSeriesValidTo(e.target.value)} />
                     </label>
-                    <button type="button" className="btn btn-secondary" onClick={() => setSeriesValidTo(endOfYear())}>bis Jahresende</button>
-                  </>
-                )}
+                      <button type="button" className="btn btn-secondary" onClick={() => setSeriesValidTo(endOfYear())}>bis Jahresende</button>
+                    </>
+                  )}
 
-                {!!bookingConflictDates.length && (
-                  <div className="conflict-box">
-                    <p>Konflikt mit bestehenden Buchungen:</p>
-                    <ul>
-                      {bookingConflictDates.map((date) => <li key={date}>{date}</li>)}
-                    </ul>
-                  </div>
-                )}
+                  {!!bookingConflictDates.length && (
+                    <div className="conflict-box">
+                      <p>Konflikt mit bestehenden Buchungen:</p>
+                      <ul>
+                        {bookingConflictDates.map((date) => <li key={date}>{date}</li>)}
+                      </ul>
+                    </div>
+                  )}
+                </div>
 
-                <button className="btn btn-primary" type="submit" disabled={bookingMode === 'series' && !isSeriesValid}>Buchen</button>
+                <div className="booking-form-footer">
+                  <button className="btn btn-primary" type="submit" disabled={bookingMode === 'series' && !isSeriesValid}>Buchen</button>
+                  <button type="button" className="btn btn-secondary" onClick={() => { setSelectedDeskId(''); setPopupAnchor(null); }}>Schließen</button>
+                </div>
               </form>
             ) : (
-              <p className="muted">Gebucht von {activeDesk.booking?.userDisplayName ?? activeDesk.booking?.userEmail}</p>
+              <div className="booking-form-body form-grid">
+                <p className="muted">Gebucht von {activeDesk.booking?.userDisplayName ?? activeDesk.booking?.userEmail}</p>
+              </div>
             )}
-            <button className="btn btn-secondary" onClick={() => { setSelectedDeskId(''); setPopupAnchor(null); }}>Schließen</button>
+            {activeDesk.status !== 'free' && (
+              <div className="booking-form-footer">
+                <button className="btn btn-secondary" onClick={() => { setSelectedDeskId(''); setPopupAnchor(null); }}>Schließen</button>
+              </div>
+            )}
           </div>
         </>,
         document.body
