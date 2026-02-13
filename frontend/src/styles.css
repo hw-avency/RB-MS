@@ -101,3 +101,6 @@ th, td { text-align: left; padding: 8px 2px; border-bottom: 1px solid #eef2f7; }
   .layout-grid { grid-template-columns: 1fr; }
   .canvas-card { min-height: auto; }
 }
+
+.linkish { background:none; border:0; font:inherit; cursor:pointer; color:#1c2d41; font-weight:600; text-align:left; }
+.admin-row { display:flex; gap:8px; align-items:center; justify-content:space-between; flex-wrap:wrap; padding:8px 0; border-bottom:1px solid #eef2f7; }

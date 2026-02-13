@@ -1,4 +1,4 @@
-# RB-MS (Render Deploy ohne Blueprint)
+# AVENCY Booking (Render Deploy ohne Blueprint)
 
 Dieses Repository kann auf dem **Render Free Tier ohne Blueprint** deployed werden.
 
@@ -46,10 +46,8 @@ Setze folgende **Environment Variable**:
 
 - `GET /health`
 - `GET /me` (Demo-User Response für Dev-Auth in Task 1)
-- `POST /floorplans`
 - `GET /floorplans`
 - `GET /floorplans/:id`
-- `POST /floorplans/:id/desks`
 - `GET /floorplans/:id/desks`
 - `POST /bookings`
 - `GET /bookings?from=YYYY-MM-DD&to=YYYY-MM-DD&floorplanId=<optional>`
@@ -59,8 +57,19 @@ Setze folgende **Environment Variable**:
 
 ## Breakglass Admin
 
-Beim Seed wird ein Admin-User angelegt bzw. aktualisiert:
+- `POST /admin/login` mit `ADMIN_EMAIL` (Default `admin@example.com`) und `ADMIN_PASSWORD` liefert ein Bearer-Token.
+- Alle `/admin/*` Endpoints benötigen `Authorization: Bearer <token>`.
+- `JWT_SECRET` und `ADMIN_PASSWORD` sind Pflicht-Variablen.
 
-- Username: `admin@example.com`
-- Passwort: kommt aus `ADMIN_PASSWORD` (ENV)
-- Kein Passwort liegt im Repository.
+### Admin Endpoints
+
+- `POST /admin/floorplans`
+- `DELETE /admin/floorplans/:id`
+- `POST /admin/floorplans/:id/desks`
+- `DELETE /admin/desks/:id`
+- `GET /admin/bookings?date=YYYY-MM-DD&floorplanId=<optional>`
+- `PATCH /admin/bookings/:id`
+- `DELETE /admin/bookings/:id`
+- `GET /admin/recurring-bookings?floorplanId=<optional>`
+- `PATCH /admin/recurring-bookings/:id`
+- `DELETE /admin/recurring-bookings/:id`

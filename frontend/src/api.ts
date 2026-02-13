@@ -12,13 +12,16 @@ export class ApiError extends Error {
   }
 }
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
+type HttpMethod = 'GET' | 'POST' | 'PATCH' | 'DELETE';
+
+async function request<T>(path: string, method: HttpMethod, payload?: unknown, headers?: Record<string, string>): Promise<T> {
   const response = await fetch(`${API_BASE}${path}`, {
-    ...init,
+    method,
     headers: {
       'Content-Type': 'application/json',
-      ...(init?.headers ?? {})
-    }
+      ...(headers ?? {})
+    },
+    ...(typeof payload === 'undefined' ? {} : { body: JSON.stringify(payload) })
   });
 
   const contentType = response.headers.get('content-type') ?? '';
@@ -36,19 +39,20 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return body as T;
 }
 
-export function get<T>(path: string): Promise<T> {
-  return request<T>(path, { method: 'GET' });
+export function get<T>(path: string, headers?: Record<string, string>): Promise<T> {
+  return request<T>(path, 'GET', undefined, headers);
 }
 
-export function post<T>(path: string, payload: unknown): Promise<T> {
-  return request<T>(path, {
-    method: 'POST',
-    body: JSON.stringify(payload)
-  });
+export function post<T>(path: string, payload: unknown, headers?: Record<string, string>): Promise<T> {
+  return request<T>(path, 'POST', payload, headers);
 }
 
-export function del<T>(path: string): Promise<T> {
-  return request<T>(path, { method: 'DELETE' });
+export function patch<T>(path: string, payload: unknown, headers?: Record<string, string>): Promise<T> {
+  return request<T>(path, 'PATCH', payload, headers);
+}
+
+export function del<T>(path: string, headers?: Record<string, string>): Promise<T> {
+  return request<T>(path, 'DELETE', undefined, headers);
 }
 
 export { API_BASE };
