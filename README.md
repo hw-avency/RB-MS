@@ -24,7 +24,11 @@ Setze folgende **Environment Variables**:
 
 - `DATABASE_URL`
 - `JWT_SECRET`
+- `ADMIN_EMAIL` (optional, Default: `admin@example.com`)
 - `ADMIN_PASSWORD`
+- `ENTRA_TENANT_ID`
+- `ENTRA_API_AUDIENCE`
+- `ENTRA_JWKS_CACHE_TTL_SECONDS` (optional, Default: `3600`)
 - `RUN_SEED` (optional)
 - `NODE_ENV=production`
 
@@ -41,6 +45,10 @@ Erstelle in Render eine **Static Site** mit diesen Einstellungen:
 Setze folgende **Environment Variable**:
 
 - `VITE_API_BASE_URL` (auf die URL des Backend-Services, z. B. `https://rbms-backend.onrender.com`)
+- `VITE_ENTRA_TENANT_ID`
+- `VITE_ENTRA_CLIENT_ID`
+- `VITE_ENTRA_REDIRECT_URI`
+- `VITE_ENTRA_SCOPE`
 
 ## API Endpoints
 
