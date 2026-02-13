@@ -65,7 +65,7 @@ input, select {
   background: #fafcff;
   min-height: 70vh;
 }
-.floorplan-canvas img { width: 100%; min-height: 70vh; display: block; object-fit: contain; }
+.floorplan-canvas img { width: 100%; height: auto; display: block; }
 .floorplan-canvas.reposition-mode { cursor: crosshair; }
 
 .desk-pin {
