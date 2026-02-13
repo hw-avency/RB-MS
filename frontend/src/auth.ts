@@ -97,5 +97,11 @@ export const msalInstance = {
     });
 
     window.location.assign(`${authorizeEndpoint}?${query.toString()}`);
+  },
+  logoutRedirect: async ({ postLogoutRedirectUri }: { postLogoutRedirectUri: string }) => {
+    sessionStorage.removeItem(CODE_VERIFIER_KEY);
+    localStorage.removeItem(ENTRA_TOKEN_KEY);
+    localStorage.removeItem(ENTRA_TOKEN_EXP_KEY);
+    window.location.assign(postLogoutRedirectUri);
   }
 };
