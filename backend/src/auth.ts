@@ -35,6 +35,27 @@ type BreakglassJwtPayload = {
   exp: number;
 };
 
+type AuthFailReason = 'bad_signature' | 'bad_issuer' | 'bad_audience' | 'expired' | 'jwks_fetch_failed' | 'missing_claims';
+
+type JwtDiagnosticSnapshot = {
+  alg: string | null;
+  claims: {
+    aud: unknown;
+    iss: unknown;
+    scp: unknown;
+    tid: unknown;
+    exp: unknown;
+  };
+};
+
+type BreakglassVerificationResult =
+  | { ok: true; payload: BreakglassJwtPayload }
+  | { ok: false; reason: AuthFailReason };
+
+type EntraVerificationResult =
+  | { ok: true; identity: { email: string; displayName: string } }
+  | { ok: false; reason: AuthFailReason };
+
 let discoveryCache: { expiresAt: number; document: DiscoveryDocument } | null = null;
 let jwksCache: { expiresAt: number; document: Jwks } | null = null;
 
@@ -62,68 +83,128 @@ const getJwksDocument = async (jwksUri: string): Promise<Jwks> => {
   return doc;
 };
 
-const verifyBreakglassToken = (token: string): BreakglassJwtPayload | null => {
+const decodeJwtSnapshot = (token: string): JwtDiagnosticSnapshot => {
+  const [headerBase64, payloadBase64] = token.split('.');
+  let alg: string | null = null;
+  const claims: JwtDiagnosticSnapshot['claims'] = { aud: null, iss: null, scp: null, tid: null, exp: null };
+
+  try {
+    if (headerBase64) {
+      const header = JSON.parse(fromBase64Url(headerBase64)) as { alg?: string };
+      alg = typeof header.alg === 'string' ? header.alg : null;
+    }
+  } catch {
+    alg = null;
+  }
+
+  try {
+    if (payloadBase64) {
+      const payload = JSON.parse(fromBase64Url(payloadBase64)) as Record<string, unknown>;
+      claims.aud = payload.aud ?? null;
+      claims.iss = payload.iss ?? null;
+      claims.scp = payload.scp ?? null;
+      claims.tid = payload.tid ?? null;
+      claims.exp = payload.exp ?? null;
+    }
+  } catch {
+    // noop: diagnostics snapshot remains null-filled on decode failure
+  }
+
+  return { alg, claims };
+};
+
+const logAuthValidation = (req: Parameters<RequestHandler>[0], payload: {
+  branch: 'breakglass' | 'entra';
+  result: 'ok' | 'fail';
+  reason?: AuthFailReason;
+  snapshot: JwtDiagnosticSnapshot;
+}) => {
+  console.info(
+    JSON.stringify({
+      event: 'auth_validation',
+      path: req.path,
+      method: req.method,
+      branch: payload.branch,
+      result: payload.result,
+      ...(payload.reason ? { reason: payload.reason } : {}),
+      alg: payload.snapshot.alg,
+      claims: payload.snapshot.claims
+    })
+  );
+};
+
+const verifyBreakglassToken = (token: string): BreakglassVerificationResult => {
   const [header, payload, signature] = token.split('.');
-  if (!header || !payload || !signature) return null;
+  if (!header || !payload || !signature) return { ok: false, reason: 'missing_claims' };
   const expected = crypto.createHmac('sha256', JWT_SECRET).update(`${header}.${payload}`).digest('base64url');
-  if (expected !== signature) return null;
+  if (expected !== signature) return { ok: false, reason: 'bad_signature' };
 
   try {
     const parsed = JSON.parse(fromBase64Url(payload)) as BreakglassJwtPayload;
-    if (parsed.authProvider !== 'breakglass' || parsed.isAdmin !== true || parsed.exp <= Math.floor(Date.now() / 1000)) {
-      return null;
+    if (parsed.authProvider !== 'breakglass' || parsed.isAdmin !== true) {
+      return { ok: false, reason: 'missing_claims' };
     }
-    return parsed;
+    if (parsed.exp <= Math.floor(Date.now() / 1000)) {
+      return { ok: false, reason: 'expired' };
+    }
+    return { ok: true, payload: parsed };
   } catch {
-    return null;
+    return { ok: false, reason: 'missing_claims' };
   }
 };
 
-const verifyEntraJwt = async (token: string): Promise<{ email: string; displayName: string } | null> => {
+const verifyEntraJwt = async (token: string): Promise<EntraVerificationResult> => {
   const [headerBase64, payloadBase64, signatureBase64] = token.split('.');
-  if (!headerBase64 || !payloadBase64 || !signatureBase64) return null;
+  if (!headerBase64 || !payloadBase64 || !signatureBase64) return { ok: false, reason: 'missing_claims' };
 
   try {
     const header = JSON.parse(fromBase64Url(headerBase64)) as { kid?: string; alg?: string };
     const claims = JSON.parse(fromBase64Url(payloadBase64)) as Record<string, unknown>;
 
-    if (header.alg !== 'RS256' || !header.kid) return null;
+    if (header.alg !== 'RS256' || !header.kid) return { ok: false, reason: 'missing_claims' };
 
-    const discovery = await getDiscoveryDocument();
-    const jwks = await getJwksDocument(discovery.jwks_uri);
+    let discovery: DiscoveryDocument;
+    let jwks: Jwks;
+    try {
+      discovery = await getDiscoveryDocument();
+      jwks = await getJwksDocument(discovery.jwks_uri);
+    } catch {
+      return { ok: false, reason: 'jwks_fetch_failed' };
+    }
+
     const key = jwks.keys.find((candidate) => candidate.kid === header.kid && candidate.kty === 'RSA');
-    if (!key) return null;
+    if (!key) return { ok: false, reason: 'bad_signature' };
 
     const publicKey = crypto.createPublicKey({ key: { kty: 'RSA', n: key.n, e: key.e }, format: 'jwk' });
     const verifier = crypto.createVerify('RSA-SHA256');
     verifier.update(`${headerBase64}.${payloadBase64}`);
     verifier.end();
     const isValidSignature = verifier.verify(publicKey, Buffer.from(signatureBase64, 'base64url'));
-    if (!isValidSignature) return null;
+    if (!isValidSignature) return { ok: false, reason: 'bad_signature' };
 
     const now = Math.floor(Date.now() / 1000);
     const exp = typeof claims.exp === 'number' ? claims.exp : 0;
     const nbf = typeof claims.nbf === 'number' ? claims.nbf : 0;
-    if (exp <= now || nbf > now) return null;
-    if (claims.iss !== discovery.issuer) return null;
+    if (exp <= now || nbf > now) return { ok: false, reason: 'expired' };
+    if (claims.iss !== discovery.issuer) return { ok: false, reason: 'bad_issuer' };
 
     const aud = claims.aud;
     const audienceValid = Array.isArray(aud) ? aud.includes(ENTRA_API_AUDIENCE) : aud === ENTRA_API_AUDIENCE;
-    if (!audienceValid) return null;
+    if (!audienceValid) return { ok: false, reason: 'bad_audience' };
 
     const emailClaim =
       (typeof claims.preferred_username === 'string' && claims.preferred_username) ||
       (typeof claims.upn === 'string' && claims.upn) ||
       (typeof claims.email === 'string' && claims.email) ||
       null;
-    if (!emailClaim) return null;
+    if (!emailClaim) return { ok: false, reason: 'missing_claims' };
 
     const email = normalizeEmail(emailClaim);
     const name = typeof claims.name === 'string' && claims.name.trim() ? claims.name.trim() : email.split('@')[0] || email;
 
-    return { email, displayName: name };
+    return { ok: true, identity: { email, displayName: name } };
   } catch {
-    return null;
+    return { ok: false, reason: 'missing_claims' };
   }
 };
 
@@ -158,17 +239,19 @@ export const ensureBreakglassEmployee = async (email: string): Promise<{ id: str
 export const requireAuth: RequestHandler = async (req, res, next) => {
   const authorization = req.header('authorization');
   if (!authorization?.startsWith('Bearer ')) {
-    res.status(401).json({ error: 'unauthorized', message: 'Missing bearer token' });
+    res.status(401).json({ error: 'unauthorized', code: 'missing_claims', message: 'Missing bearer token' });
     return;
   }
 
   const token = authorization.slice(7).trim();
-  const breakglassUser = verifyBreakglassToken(token);
-  if (breakglassUser) {
+  const snapshot = decodeJwtSnapshot(token);
+  const breakglassResult = verifyBreakglassToken(token);
+  if (breakglassResult.ok) {
+    logAuthValidation(req, { branch: 'breakglass', result: 'ok', snapshot });
     req.user = {
-      employeeId: breakglassUser.sub,
-      email: normalizeEmail(breakglassUser.email),
-      displayName: breakglassUser.displayName,
+      employeeId: breakglassResult.payload.sub,
+      email: normalizeEmail(breakglassResult.payload.email),
+      displayName: breakglassResult.payload.displayName,
       isAdmin: true,
       authProvider: 'breakglass'
     };
@@ -176,23 +259,26 @@ export const requireAuth: RequestHandler = async (req, res, next) => {
     return;
   }
 
-  const entraIdentity = await verifyEntraJwt(token);
-  if (!entraIdentity) {
-    res.status(401).json({ error: 'unauthorized', message: 'Invalid token' });
+  const entraResult = await verifyEntraJwt(token);
+  if (!entraResult.ok) {
+    logAuthValidation(req, { branch: 'entra', result: 'fail', reason: entraResult.reason, snapshot });
+    res.status(401).json({ error: 'unauthorized', code: entraResult.reason, message: 'Invalid token' });
     return;
   }
 
-  const isBootstrapAdmin = entraIdentity.email === ADMIN_EMAIL;
+  logAuthValidation(req, { branch: 'entra', result: 'ok', snapshot });
+
+  const isBootstrapAdmin = entraResult.identity.email === ADMIN_EMAIL;
   const employee = await prisma.employee.upsert({
-    where: { email: entraIdentity.email },
+    where: { email: entraResult.identity.email },
     create: {
-      email: entraIdentity.email,
-      displayName: entraIdentity.displayName,
+      email: entraResult.identity.email,
+      displayName: entraResult.identity.displayName,
       isActive: true,
       isAdmin: isBootstrapAdmin
     },
     update: {
-      displayName: entraIdentity.displayName,
+      displayName: entraResult.identity.displayName,
       isActive: true,
       ...(isBootstrapAdmin ? { isAdmin: true } : {})
     },
