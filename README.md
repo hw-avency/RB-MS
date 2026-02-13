@@ -53,6 +53,7 @@ Setze folgende **Environment Variable**:
 - `GET /floorplans/:id/desks`
 - `POST /bookings`
 - `GET /bookings?from=YYYY-MM-DD&to=YYYY-MM-DD&floorplanId=<optional>`
+- `GET /occupancy?floorplanId=<id>&date=YYYY-MM-DD`
 - `POST /recurring-bookings`
 - `GET /recurring-bookings?floorplanId=<optional>`
 

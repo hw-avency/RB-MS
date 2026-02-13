@@ -24,6 +24,8 @@ const toDateOnly = (value: string): Date | null => {
   return parsed;
 };
 
+const toISODateOnly = (value: Date): string => value.toISOString().slice(0, 10);
+
 const isDateWithinRange = (date: Date, start: Date, end?: Date | null): boolean => {
   if (date < start) {
     return false;
@@ -255,6 +257,112 @@ app.get('/bookings', async (req, res) => {
   });
 
   res.status(200).json(bookings);
+});
+
+app.get('/occupancy', async (req, res) => {
+  const floorplanId = typeof req.query.floorplanId === 'string' ? req.query.floorplanId : undefined;
+  const date = typeof req.query.date === 'string' ? req.query.date : undefined;
+
+  if (!floorplanId || !date) {
+    res.status(400).json({ error: 'validation', message: 'floorplanId and date are required' });
+    return;
+  }
+
+  const parsedDate = toDateOnly(date);
+  if (!parsedDate) {
+    res.status(400).json({ error: 'validation', message: 'date must be in YYYY-MM-DD format' });
+    return;
+  }
+
+  const floorplan = await prisma.floorplan.findUnique({ where: { id: floorplanId } });
+  if (!floorplan) {
+    res.status(404).json({ error: 'not_found', message: 'Floorplan not found' });
+    return;
+  }
+
+  const desks = await prisma.desk.findMany({
+    where: { floorplanId },
+    orderBy: { createdAt: 'asc' }
+  });
+
+  const deskIds = desks.map((desk) => desk.id);
+  const weekday = parsedDate.getUTCDay();
+
+  const [singleBookings, recurringBookings] = await Promise.all([
+    prisma.booking.findMany({
+      where: {
+        date: parsedDate,
+        deskId: { in: deskIds }
+      }
+    }),
+    prisma.recurringBooking.findMany({
+      where: {
+        deskId: { in: deskIds },
+        weekday,
+        validFrom: { lte: parsedDate },
+        OR: [{ validTo: null }, { validTo: { gte: parsedDate } }]
+      },
+      orderBy: { createdAt: 'asc' }
+    })
+  ]);
+
+  const singleByDeskId = new Map(singleBookings.map((booking) => [booking.deskId, booking]));
+  const recurringByDeskId = new Map(recurringBookings.map((booking) => [booking.deskId, booking]));
+
+  const occupancyDesks = desks.map((desk) => {
+    const single = singleByDeskId.get(desk.id);
+    if (single) {
+      return {
+        id: desk.id,
+        name: desk.name,
+        x: desk.x,
+        y: desk.y,
+        status: 'booked' as const,
+        booking: {
+          userEmail: single.userEmail,
+          type: 'single' as const
+        }
+      };
+    }
+
+    const recurring = recurringByDeskId.get(desk.id);
+    if (recurring) {
+      return {
+        id: desk.id,
+        name: desk.name,
+        x: desk.x,
+        y: desk.y,
+        status: 'booked' as const,
+        booking: {
+          userEmail: recurring.userEmail,
+          type: 'recurring' as const
+        }
+      };
+    }
+
+    return {
+      id: desk.id,
+      name: desk.name,
+      x: desk.x,
+      y: desk.y,
+      status: 'free' as const,
+      booking: null
+    };
+  });
+
+  const people = Array.from(
+    new Set(occupancyDesks.filter((desk) => desk.booking).map((desk) => desk.booking?.userEmail ?? ''))
+  )
+    .filter((userEmail) => userEmail.length > 0)
+    .sort((a, b) => a.localeCompare(b))
+    .map((userEmail) => ({ userEmail }));
+
+  res.status(200).json({
+    date: toISODateOnly(parsedDate),
+    floorplanId,
+    desks: occupancyDesks,
+    people
+  });
 });
 
 app.post('/recurring-bookings', async (req, res) => {
