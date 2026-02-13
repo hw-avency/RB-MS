@@ -56,10 +56,12 @@ type EntraVerificationResult =
   | { ok: true; identity: { email: string; displayName: string } }
   | { ok: false; reason: AuthFailReason; receivedAud?: unknown; expectedAudiences?: string[] };
 
-let discoveryCache: { expiresAt: number; document: DiscoveryDocument } | null = null;
-let jwksCache: { expiresAt: number; document: Jwks } | null = null;
+const discoveryCache = new Map<string, { expiresAt: number; document: DiscoveryDocument }>();
+const jwksCache = new Map<string, { expiresAt: number; document: Jwks }>();
 
-const discoveryUrl = `https://login.microsoftonline.com/${ENTRA_TENANT_ID}/v2.0/.well-known/openid-configuration`;
+const ENTRA_V1_ISSUER_PREFIX = 'https://sts.windows.net/';
+const v1DiscoveryUrl = `https://login.microsoftonline.com/${ENTRA_TENANT_ID}/.well-known/openid-configuration`;
+const v2DiscoveryUrl = `https://login.microsoftonline.com/${ENTRA_TENANT_ID}/v2.0/.well-known/openid-configuration`;
 
 const GUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -82,23 +84,30 @@ const ACCEPTED_ENTRA_AUDIENCES = buildAcceptedAudiences(ENTRA_API_AUDIENCE);
 const toBase64Url = (value: string) => Buffer.from(value).toString('base64url');
 const fromBase64Url = (value: string) => Buffer.from(value, 'base64url').toString('utf8');
 
-const getDiscoveryDocument = async (): Promise<DiscoveryDocument> => {
-  if (discoveryCache && discoveryCache.expiresAt > Date.now()) return discoveryCache.document;
-  const response = await fetch(discoveryUrl);
+const getDiscoveryDocument = async (url: string): Promise<DiscoveryDocument> => {
+  const cached = discoveryCache.get(url);
+  if (cached && cached.expiresAt > Date.now()) return cached.document;
+  const response = await fetch(url);
   if (!response.ok) throw new Error('Failed to fetch Entra discovery document');
   const doc = (await response.json()) as DiscoveryDocument;
   if (!doc.issuer || !doc.jwks_uri) throw new Error('Invalid Entra discovery document');
-  discoveryCache = { document: doc, expiresAt: Date.now() + ENTRA_JWKS_CACHE_TTL_SECONDS * 1000 };
+  discoveryCache.set(url, { document: doc, expiresAt: Date.now() + ENTRA_JWKS_CACHE_TTL_SECONDS * 1000 });
   return doc;
 };
 
 const getJwksDocument = async (jwksUri: string): Promise<Jwks> => {
-  if (jwksCache && jwksCache.expiresAt > Date.now()) return jwksCache.document;
+  const cached = jwksCache.get(jwksUri);
+  if (cached && cached.expiresAt > Date.now()) return cached.document;
   const response = await fetch(jwksUri);
   if (!response.ok) throw new Error('Failed to fetch Entra JWKS');
   const doc = (await response.json()) as Jwks;
-  jwksCache = { document: doc, expiresAt: Date.now() + ENTRA_JWKS_CACHE_TTL_SECONDS * 1000 };
+  jwksCache.set(jwksUri, { document: doc, expiresAt: Date.now() + ENTRA_JWKS_CACHE_TTL_SECONDS * 1000 });
   return doc;
+};
+
+const getDiscoveryUrlForIssuer = (issuer: unknown): string => {
+  if (typeof issuer === 'string' && issuer.startsWith(ENTRA_V1_ISSUER_PREFIX)) return v1DiscoveryUrl;
+  return v2DiscoveryUrl;
 };
 
 const decodeJwtSnapshot = (token: string): JwtDiagnosticSnapshot => {
@@ -181,10 +190,12 @@ const verifyEntraJwt = async (token: string): Promise<EntraVerificationResult> =
 
     if (header.alg !== 'RS256' || !header.kid) return { ok: false, reason: 'missing_claims' };
 
+    const discoveryUrl = getDiscoveryUrlForIssuer(claims.iss);
+
     let discovery: DiscoveryDocument;
     let jwks: Jwks;
     try {
-      discovery = await getDiscoveryDocument();
+      discovery = await getDiscoveryDocument(discoveryUrl);
       jwks = await getJwksDocument(discovery.jwks_uri);
     } catch {
       return { ok: false, reason: 'jwks_fetch_failed' };
@@ -205,6 +216,7 @@ const verifyEntraJwt = async (token: string): Promise<EntraVerificationResult> =
     const nbf = typeof claims.nbf === 'number' ? claims.nbf : 0;
     if (exp <= now || nbf > now) return { ok: false, reason: 'expired' };
     if (claims.iss !== discovery.issuer) return { ok: false, reason: 'bad_issuer' };
+    if (claims.tid !== ENTRA_TENANT_ID) return { ok: false, reason: 'bad_issuer' };
 
     const aud = claims.aud;
     const tokenAudiences = Array.isArray(aud) ? aud : [aud];
@@ -301,7 +313,15 @@ export const requireAuth: RequestHandler = async (req, res, next) => {
       );
     }
     logAuthValidation(req, { branch: 'entra', result: 'fail', reason: entraResult.reason, snapshot });
-    res.status(401).json({ error: 'unauthorized', code: entraResult.reason, message: 'Invalid token' });
+
+    const diagnostics = {
+      aud: snapshot.claims.aud,
+      iss: snapshot.claims.iss,
+      tid: snapshot.claims.tid,
+      scp: snapshot.claims.scp
+    };
+
+    res.status(401).json({ error: 'unauthorized', code: entraResult.reason, message: 'Invalid token', diagnostics });
     return;
   }
 
