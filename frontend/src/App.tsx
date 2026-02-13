@@ -140,6 +140,12 @@ export function App() {
   const [employeeErrorMessage, setEmployeeErrorMessage] = useState('');
   const [editingEmployeeId, setEditingEmployeeId] = useState('');
   const [editingEmployeeName, setEditingEmployeeName] = useState('');
+  const [showAddEmployeeModal, setShowAddEmployeeModal] = useState(false);
+  const [confirmToggleEmployee, setConfirmToggleEmployee] = useState<Employee | null>(null);
+  const [employeeSearch, setEmployeeSearch] = useState('');
+  const [employeeStatusFilter, setEmployeeStatusFilter] = useState<'all' | 'active' | 'inactive'>('all');
+  const [employeeSortBy, setEmployeeSortBy] = useState<'name' | 'email' | 'status'>('name');
+  const [employeePage, setEmployeePage] = useState(1);
   const [editingBookingId, setEditingBookingId] = useState('');
   const [editBookingEmail, setEditBookingEmail] = useState('');
   const [editBookingDate, setEditBookingDate] = useState('');
@@ -158,6 +164,28 @@ export function App() {
   }, [occupancy]);
   const calendarDays = useMemo(() => buildCalendarDays(visibleMonth), [visibleMonth]);
   const isSeriesValid = seriesWeekdays.length > 0 && !!seriesValidFrom && !!seriesValidTo;
+  const employeePageSize = 10;
+  const filteredEmployees = useMemo(() => {
+    const term = employeeSearch.trim().toLowerCase();
+    return employees
+      .filter((employee) => {
+        if (employeeStatusFilter === 'active' && !employee.isActive) return false;
+        if (employeeStatusFilter === 'inactive' && employee.isActive) return false;
+        if (!term) return true;
+
+        return employee.displayName.toLowerCase().includes(term) || employee.email.toLowerCase().includes(term);
+      })
+      .sort((a, b) => {
+        if (employeeSortBy === 'email') return a.email.localeCompare(b.email, 'de');
+        if (employeeSortBy === 'status') return Number(b.isActive) - Number(a.isActive) || a.displayName.localeCompare(b.displayName, 'de');
+        return a.displayName.localeCompare(b.displayName, 'de');
+      });
+  }, [employees, employeeSearch, employeeStatusFilter, employeeSortBy]);
+  const employeePageCount = Math.max(1, Math.ceil(filteredEmployees.length / employeePageSize));
+  const paginatedEmployees = useMemo(() => {
+    const startIndex = (employeePage - 1) * employeePageSize;
+    return filteredEmployees.slice(startIndex, startIndex + employeePageSize);
+  }, [employeePage, filteredEmployees]);
 
   const handleApiError = (error: unknown) => {
     if (error instanceof ApiError) {
@@ -292,6 +320,17 @@ export function App() {
   useEffect(() => {
     setBookingConflictDates([]);
   }, [selectedDeskId, bookingMode]);
+
+
+  useEffect(() => {
+    setEmployeePage(1);
+  }, [employeeSearch, employeeStatusFilter, employeeSortBy]);
+
+  useEffect(() => {
+    if (employeePage > employeePageCount) {
+      setEmployeePage(employeePageCount);
+    }
+  }, [employeePage, employeePageCount]);
 
   useLayoutEffect(() => {
     if (!popupAnchor || !popupRef.current) {
@@ -551,6 +590,7 @@ export function App() {
       await post('/admin/employees', { email: newEmployeeEmail, displayName: newEmployeeDisplayName }, adminHeaders);
       setNewEmployeeEmail('');
       setNewEmployeeDisplayName('');
+      setShowAddEmployeeModal(false);
       setEmployeeActionMessage('Mitarbeiter hinzugefügt.');
       await loadEmployees();
     } catch (error) {
@@ -579,6 +619,7 @@ export function App() {
 
     try {
       await patch(`/admin/employees/${employee.id}`, { isActive: !employee.isActive }, adminHeaders);
+      setConfirmToggleEmployee(null);
       setEmployeeActionMessage(employee.isActive ? 'Mitarbeiter deaktiviert.' : 'Mitarbeiter aktiviert.');
       await loadEmployees();
     } catch (error) {
@@ -623,7 +664,70 @@ export function App() {
               <button className={`tab-btn ${adminTab === 'bookings' ? 'active' : ''}`} onClick={() => setAdminTab('bookings')}>Buchungen</button>
               <button className={`tab-btn ${adminTab === 'employees' ? 'active' : ''}`} onClick={() => setAdminTab('employees')}>Mitarbeiter</button>
             </nav>
-            <section className="layout-grid admin-editor-layout">
+            {adminTab === 'employees' ? (
+              <section className="card employees-page">
+                <div className="employees-page-header">
+                  <h2>Mitarbeiter</h2>
+                  <button className="btn btn-primary" onClick={() => { setEmployeeErrorMessage(''); setShowAddEmployeeModal(true); }}>
+                    Mitarbeiter hinzufügen
+                  </button>
+                </div>
+
+                {!!employeeActionMessage && <p className="toast toast-success toast-inline">{employeeActionMessage}</p>}
+                {!!employeeErrorMessage && <p className="toast toast-error toast-inline">{employeeErrorMessage}</p>}
+
+                <div className="employees-toolbar">
+                  <input
+                    placeholder="Suche nach Name oder E-Mail"
+                    value={employeeSearch}
+                    onChange={(e) => setEmployeeSearch(e.target.value)}
+                  />
+                  <select value={employeeStatusFilter} onChange={(e) => setEmployeeStatusFilter(e.target.value as 'all' | 'active' | 'inactive')}>
+                    <option value="all">Alle</option>
+                    <option value="active">Aktiv</option>
+                    <option value="inactive">Inaktiv</option>
+                  </select>
+                  <select value={employeeSortBy} onChange={(e) => setEmployeeSortBy(e.target.value as 'name' | 'email' | 'status')}>
+                    <option value="name">Name</option>
+                    <option value="email">E-Mail</option>
+                    <option value="status">Status</option>
+                  </select>
+                </div>
+
+                <table>
+                  <thead>
+                    <tr><th>Name</th><th>E-Mail</th><th>Status</th><th>Admin</th><th className="actions-col">Aktionen</th></tr>
+                  </thead>
+                  <tbody>
+                    {paginatedEmployees.map((employee) => (
+                      <tr key={employee.id}>
+                        <td>{employee.displayName}</td>
+                        <td>{employee.email}</td>
+                        <td><span className={`status-badge ${employee.isActive ? 'active' : 'inactive'}`}>{employee.isActive ? 'Aktiv' : 'Inaktiv'}</span></td>
+                        <td>—</td>
+                        <td className="inline-actions align-right">
+                          <button className="btn btn-secondary action-btn" onClick={() => { setEmployeeErrorMessage(''); setEditingEmployeeId(employee.id); setEditingEmployeeName(employee.displayName); }}>Umbenennen</button>
+                          <button className="btn btn-danger action-btn" onClick={() => setConfirmToggleEmployee(employee)}>{employee.isActive ? 'Deaktivieren' : 'Aktivieren'}</button>
+                        </td>
+                      </tr>
+                    ))}
+                    {!paginatedEmployees.length && (
+                      <tr><td colSpan={5} className="muted">Keine Mitarbeiter gefunden.</td></tr>
+                    )}
+                  </tbody>
+                </table>
+
+                <div className="employees-pagination">
+                  <p className="muted">{filteredEmployees.length} Mitarbeiter</p>
+                  <div className="inline-actions">
+                    <button className="btn btn-secondary" disabled={employeePage <= 1} onClick={() => setEmployeePage((prev) => Math.max(1, prev - 1))}>Zurück</button>
+                    <span>Seite {employeePage} / {employeePageCount}</span>
+                    <button className="btn btn-secondary" disabled={employeePage >= employeePageCount} onClick={() => setEmployeePage((prev) => Math.min(employeePageCount, prev + 1))}>Weiter</button>
+                  </div>
+                </div>
+              </section>
+            ) : (
+              <section className="layout-grid admin-editor-layout">
               <aside className="card sidebar">
                 {adminTab === 'floorplans' && (
                   <div className="form-grid">
@@ -749,48 +853,9 @@ export function App() {
                     </table>
                   </section>
                 )}
-                {adminTab === 'employees' && (
-                  <>
-                    <section className="card form-grid employee-form-card">
-                      <h3>Mitarbeiter hinzufügen</h3>
-                      {!!employeeActionMessage && <p className="toast toast-success toast-inline">{employeeActionMessage}</p>}
-                      {!!employeeErrorMessage && <p className="toast toast-error toast-inline">{employeeErrorMessage}</p>}
-                      <form onSubmit={addEmployee} className="form-grid gap-3">
-                        <input required placeholder="Name" value={newEmployeeDisplayName} onChange={(e) => setNewEmployeeDisplayName(e.target.value)} />
-                        <input required placeholder="E-Mail" value={newEmployeeEmail} onChange={(e) => setNewEmployeeEmail(e.target.value)} />
-                        <button className="btn btn-primary full" type="submit">Mitarbeiter hinzufügen</button>
-                      </form>
-                    </section>
-
-                    <section className="card form-grid">
-                      <h3>Mitarbeiter</h3>
-                      <div className="table-scroll-wrap">
-                        <table>
-                          <thead><tr><th>Name</th><th>E-Mail</th><th>Status</th><th className="actions-col">Aktionen</th></tr></thead>
-                          <tbody>
-                            {employees.map((employee) => (
-                              <tr key={employee.id}>
-                                <td>{editingEmployeeId === employee.id ? <input value={editingEmployeeName} onChange={(e) => setEditingEmployeeName(e.target.value)} /> : employee.displayName}</td>
-                                <td>{employee.email}</td>
-                                <td>{employee.isActive ? 'Aktiv' : 'Inaktiv'}</td>
-                                <td className="inline-actions align-right">
-                                  {editingEmployeeId === employee.id ? (
-                                    <button className="btn btn-primary action-btn" onClick={() => saveEmployeeName(employee.id)}>Speichern</button>
-                                  ) : (
-                                    <button className="btn btn-secondary action-btn" onClick={() => { setEditingEmployeeId(employee.id); setEditingEmployeeName(employee.displayName); }}>Umbenennen</button>
-                                  )}
-                                  <button className="btn btn-danger action-btn" onClick={() => toggleEmployee(employee)}>{employee.isActive ? 'Deaktivieren' : 'Aktivieren'}</button>
-                                </td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
-                    </section>
-                  </>
-                )}
               </aside>
             </section>
+            )}
           </>
         ) : (
           <section className="layout-grid">
@@ -872,6 +937,51 @@ export function App() {
 
         <p className="api-base">API: {API_BASE}</p>
       </div>
+
+
+      {showAddEmployeeModal && (
+        <div className="modal-backdrop">
+          <div className="modal card">
+            <h3>Mitarbeiter hinzufügen</h3>
+            <form onSubmit={addEmployee} className="form-grid">
+              <input required placeholder="Name" value={newEmployeeDisplayName} onChange={(e) => setNewEmployeeDisplayName(e.target.value)} />
+              <input required placeholder="E-Mail" value={newEmployeeEmail} onChange={(e) => setNewEmployeeEmail(e.target.value)} />
+              <div className="modal-actions">
+                <button type="button" className="btn btn-secondary" onClick={() => setShowAddEmployeeModal(false)}>Abbrechen</button>
+                <button className="btn btn-primary" type="submit">Mitarbeiter hinzufügen</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {!!editingEmployeeId && (
+        <div className="modal-backdrop">
+          <div className="modal card">
+            <h3>Mitarbeiter umbenennen</h3>
+            <form onSubmit={(event) => { event.preventDefault(); saveEmployeeName(editingEmployeeId); }} className="form-grid">
+              <input required placeholder="Name" value={editingEmployeeName} onChange={(e) => setEditingEmployeeName(e.target.value)} />
+              <div className="modal-actions">
+                <button type="button" className="btn btn-secondary" onClick={() => { setEditingEmployeeId(''); setEditingEmployeeName(''); }}>Abbrechen</button>
+                <button className="btn btn-primary" type="submit">Speichern</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {!!confirmToggleEmployee && (
+        <div className="modal-backdrop">
+          <div className="modal card">
+            <h3>{confirmToggleEmployee.isActive ? 'Mitarbeiter deaktivieren?' : 'Mitarbeiter aktivieren?'}</h3>
+            <p className="muted">{confirmToggleEmployee.displayName} ({confirmToggleEmployee.email})</p>
+            <div className="modal-actions">
+              <button type="button" className="btn btn-secondary" onClick={() => setConfirmToggleEmployee(null)}>Abbrechen</button>
+              <button type="button" className="btn btn-danger" onClick={() => toggleEmployee(confirmToggleEmployee)}>{confirmToggleEmployee.isActive ? 'Deaktivieren' : 'Aktivieren'}</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {showAdminLogin && (
         <div className="modal-backdrop">
