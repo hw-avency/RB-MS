@@ -781,7 +781,8 @@ app.get('/user/me/photo', requireAuthenticated, async (req, res) => {
 
   const contentType = graphResponse.headers.get('content-type') ?? 'image/jpeg';
   const photoBuffer = Buffer.from(await graphResponse.arrayBuffer());
-  res.setHeader('Cache-Control', 'private, max-age=3600');
+  res.setHeader('Cache-Control', 'private, no-store');
+  res.setHeader('Vary', 'Cookie');
   res.setHeader('Content-Type', contentType);
   res.status(200).send(photoBuffer);
 });

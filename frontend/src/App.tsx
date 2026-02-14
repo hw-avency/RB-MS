@@ -94,6 +94,11 @@ export function App() {
   const [path, setPath] = useState<Route>(currentPath());
   const { user, loadingAuth, isAuthenticated, isAdmin, logout, refreshMe } = useAuth();
 
+  const logoutAndRedirect = async () => {
+    await logout();
+    navigate('/login');
+  };
+
   useEffect(() => {
     const handler = () => setPath(currentPath());
     window.addEventListener('hashchange', handler);
@@ -128,9 +133,9 @@ export function App() {
       return <LoadingGate />;
     }
 
-    return <AdminRouter path={path} navigate={navigate} onRoleStateChanged={async () => {
+    return <AdminRouter key={user?.id ?? 'admin-guest'} path={path} navigate={navigate} onRoleStateChanged={async () => {
       await refreshMe();
-    }} onLogout={logout} />;
+    }} onLogout={logoutAndRedirect} currentUser={user} />;
   }
 
   if (path === '/' || path.startsWith('/?')) {
@@ -139,8 +144,9 @@ export function App() {
         canOpenAdmin={isAdmin}
         onOpenAdmin={() => navigate('/admin')}
         currentUserEmail={user?.email}
-        onLogout={logout}
+        onLogout={logoutAndRedirect}
         currentUser={user as NonNullable<typeof user>}
+        key={user?.id ?? 'user-session'}
       />
     );
   }

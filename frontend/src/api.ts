@@ -1,7 +1,7 @@
 const API_BASE = import.meta.env.VITE_API_BASE_URL || window.location.origin;
 const REQUEST_TIMEOUT_MS = 6000;
 
-export type ApiErrorCode = 'BACKEND_UNREACHABLE' | 'UNAUTHORIZED' | 'SERVER_ERROR' | 'UNKNOWN';
+export type ApiErrorCode = 'BACKEND_UNREACHABLE' | 'UNAUTHORIZED' | 'SERVER_ERROR' | 'CSRF_FAILED' | 'UNKNOWN';
 export type ApiErrorKind = 'BACKEND_UNREACHABLE' | 'HTTP_ERROR';
 
 type ErrorPayload = {
@@ -43,7 +43,7 @@ export class ApiError extends Error {
   }
 }
 
-type HttpMethod = 'GET' | 'POST' | 'PATCH' | 'DELETE';
+type HttpMethod = 'GET' | 'HEAD' | 'POST' | 'PATCH' | 'DELETE' | 'PUT';
 const CSRF_COOKIE_NAME = 'rbms_csrf';
 
 let backendAvailable = true;
@@ -64,7 +64,7 @@ const readCookie = (name: string): string | null => {
   return match ? decodeURIComponent(match.slice(name.length + 1)) : null;
 };
 
-const isMutationMethod = (method: HttpMethod): boolean => method !== 'GET';
+const isMutationMethod = (method: HttpMethod): boolean => method !== 'GET' && method !== 'HEAD';
 
 const isCsrfFailure = (status: number, backendCode?: string): boolean => {
   return status === 403 && (backendCode === 'CSRF_MISSING' || backendCode === 'CSRF_INVALID');
@@ -88,6 +88,11 @@ const mapStatusToCode = (status: number): ApiErrorCode => {
 };
 
 const normalizeErrorMessage = (body: unknown, status: number): string => {
+  const backendCode = toBackendCode(body);
+  if (status === 403 && (backendCode === 'CSRF_MISSING' || backendCode === 'CSRF_INVALID')) {
+    return 'Aktion fehlgeschlagen (CSRF). Bitte Seite neu laden.';
+  }
+
   if (typeof body === 'object' && body !== null && 'message' in body && typeof body.message === 'string') {
     return body.message;
   }
@@ -112,6 +117,10 @@ const toBackendCode = (body: unknown): string | undefined => {
 };
 
 async function sendRequest(path: string, method: HttpMethod, payload?: unknown, signal?: AbortSignal): Promise<Response> {
+  if (isMutationMethod(method) && !readCookie(CSRF_COOKIE_NAME)) {
+    await initCsrfCookie();
+  }
+
   const csrfToken = isMutationMethod(method) ? readCookie(CSRF_COOKIE_NAME) : null;
   return fetch(`${API_BASE}${path}`, {
     method,
@@ -119,7 +128,7 @@ async function sendRequest(path: string, method: HttpMethod, payload?: unknown, 
     credentials: 'include',
     headers: {
       'Content-Type': 'application/json',
-      ...(csrfToken ? { 'x-csrf-token': csrfToken } : {})
+      ...(csrfToken ? { 'X-CSRF-Token': csrfToken } : {})
     },
     ...(typeof payload === 'undefined' ? {} : { body: JSON.stringify(payload) })
   });
@@ -176,6 +185,7 @@ async function request<T>(path: string, method: HttpMethod, payload?: unknown): 
 
   if (!response.ok) {
     const backendCode = toBackendCode(body);
+    const code = isCsrfFailure(response.status, backendCode) ? 'CSRF_FAILED' : mapStatusToCode(response.status);
 
     if (import.meta.env.DEV) {
       console.warn('API_HTTP_ERROR', {
@@ -199,7 +209,7 @@ async function request<T>(path: string, method: HttpMethod, payload?: unknown): 
     const error = new ApiError({
       message: normalizeErrorMessage(body, response.status),
       status: response.status,
-      code: mapStatusToCode(response.status),
+      code,
       kind: 'HTTP_ERROR',
       details: body,
       backendCode,
@@ -246,6 +256,11 @@ export function consumeLastAuthMeFailure(): AuthFailureContext | null {
   const failure = lastAuthMeFailure;
   lastAuthMeFailure = null;
   return failure;
+}
+
+export function resetClientCaches(): void {
+  backendAvailable = true;
+  lastAuthMeFailure = null;
 }
 
 export function get<T>(path: string): Promise<T> {

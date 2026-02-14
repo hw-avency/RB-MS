@@ -1,5 +1,5 @@
 import { createContext, ReactNode, useCallback, useContext, useEffect, useMemo, useState } from 'react';
-import { ApiError, ensureCsrfCookie, get, post } from '../api';
+import { ApiError, ensureCsrfCookie, get, post, resetClientCaches } from '../api';
 
 export type AuthUser = { id: string; name: string; email: string; displayName?: string; role: 'admin' | 'user' };
 type AuthMeResponse = { user: AuthUser };
@@ -90,6 +90,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       await post('/auth/logout', {});
     } finally {
       setUser(null);
+      resetClientCaches();
     }
   }, []);
 
