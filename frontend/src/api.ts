@@ -20,6 +20,15 @@ export class ApiError extends Error {
 type HttpMethod = 'GET' | 'POST' | 'PATCH' | 'DELETE';
 
 let backendAvailable = true;
+let unauthorizedHandler: (() => void) | null = null;
+
+const readCookie = (name: string): string | null => {
+  const match = document.cookie
+    .split(';')
+    .map((part) => part.trim())
+    .find((part) => part.startsWith(`${name}=`));
+  return match ? decodeURIComponent(match.slice(name.length + 1)) : null;
+};
 
 const mapStatusToCode = (status: number): ApiErrorCode => {
   if (status === 401 || status === 403) return 'UNAUTHORIZED';
@@ -43,7 +52,7 @@ const normalizeErrorMessage = (body: unknown, status: number): string => {
   return `Request failed with status ${status}`;
 };
 
-async function request<T>(path: string, method: HttpMethod, payload?: unknown, headers?: Record<string, string>): Promise<T> {
+async function request<T>(path: string, method: HttpMethod, payload?: unknown): Promise<T> {
   if (!backendAvailable && !path.endsWith('/health') && !path.endsWith('/api/health')) {
     throw new ApiError('Backend nicht erreichbar. Bitte prüfen, ob der Server läuft.', 0, 'BACKEND_UNREACHABLE');
   }
@@ -53,12 +62,14 @@ async function request<T>(path: string, method: HttpMethod, payload?: unknown, h
 
   let response: Response;
   try {
+    const csrfToken = method === 'GET' ? null : readCookie('rbms_csrf');
     response = await fetch(`${API_BASE}${path}`, {
       method,
       signal: controller.signal,
+      credentials: 'include',
       headers: {
         'Content-Type': 'application/json',
-        ...(headers ?? {})
+        ...(csrfToken ? { 'x-csrf-token': csrfToken } : {})
       },
       ...(typeof payload === 'undefined' ? {} : { body: JSON.stringify(payload) })
     });
@@ -74,7 +85,11 @@ async function request<T>(path: string, method: HttpMethod, payload?: unknown, h
   const body = isJson ? await response.json() : await response.text();
 
   if (!response.ok) {
-    throw new ApiError(normalizeErrorMessage(body, response.status), response.status, mapStatusToCode(response.status), body);
+    const error = new ApiError(normalizeErrorMessage(body, response.status), response.status, mapStatusToCode(response.status), body);
+    if (error.code === 'UNAUTHORIZED') {
+      unauthorizedHandler?.();
+    }
+    throw error;
   }
 
   backendAvailable = true;
@@ -102,20 +117,24 @@ export function markBackendAvailable(value: boolean): void {
   backendAvailable = value;
 }
 
-export function get<T>(path: string, headers?: Record<string, string>): Promise<T> {
-  return request<T>(path, 'GET', undefined, headers);
+export function setUnauthorizedHandler(handler: (() => void) | null): void {
+  unauthorizedHandler = handler;
 }
 
-export function post<T>(path: string, payload: unknown, headers?: Record<string, string>): Promise<T> {
-  return request<T>(path, 'POST', payload, headers);
+export function get<T>(path: string): Promise<T> {
+  return request<T>(path, 'GET');
 }
 
-export function patch<T>(path: string, payload: unknown, headers?: Record<string, string>): Promise<T> {
-  return request<T>(path, 'PATCH', payload, headers);
+export function post<T>(path: string, payload: unknown): Promise<T> {
+  return request<T>(path, 'POST', payload);
 }
 
-export function del<T>(path: string, headers?: Record<string, string>): Promise<T> {
-  return request<T>(path, 'DELETE', undefined, headers);
+export function patch<T>(path: string, payload: unknown): Promise<T> {
+  return request<T>(path, 'PATCH', payload);
+}
+
+export function del<T>(path: string): Promise<T> {
+  return request<T>(path, 'DELETE');
 }
 
 export { API_BASE };

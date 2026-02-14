@@ -4,30 +4,33 @@ import { PrismaClient } from '@prisma/client';
 const prisma = new PrismaClient();
 
 async function main() {
-  const adminPassword = process.env.ADMIN_PASSWORD;
+  const breakglassEmail = (process.env.BREAKGLASS_EMAIL ?? process.env.ADMIN_EMAIL ?? 'admin@example.com').trim().toLowerCase();
+  const breakglassPassword = process.env.BREAKGLASS_PASSWORD ?? process.env.ADMIN_PASSWORD;
 
-  if (!adminPassword) {
-    throw new Error('ADMIN_PASSWORD is required to run seed.');
+  if (!breakglassPassword) {
+    throw new Error('BREAKGLASS_PASSWORD (or ADMIN_PASSWORD fallback) is required to run seed.');
   }
 
-  const passwordHash = await bcrypt.hash(adminPassword, 12);
+  const passwordHash = await bcrypt.hash(breakglassPassword, 12);
 
   await prisma.user.upsert({
-    where: { email: 'admin@example.com' },
+    where: { email: breakglassEmail },
     update: {
       displayName: 'Breakglass Admin',
       passwordHash,
-      role: 'admin'
+      role: 'admin',
+      isActive: true
     },
     create: {
-      email: 'admin@example.com',
+      email: breakglassEmail,
       displayName: 'Breakglass Admin',
       passwordHash,
-      role: 'admin'
+      role: 'admin',
+      isActive: true
     }
   });
 
-  console.log('Seed complete. Breakglass admin ensured: admin@example.com');
+  console.log(`Seed complete. Breakglass admin ensured: ${breakglassEmail}`);
 }
 
 main()

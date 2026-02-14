@@ -1,102 +1,187 @@
 import cors from 'cors';
 import express from 'express';
 import crypto from 'crypto';
+import bcrypt from 'bcryptjs';
 import { Prisma } from '@prisma/client';
 import { prisma } from './prisma';
 
 const app = express();
 const port = Number(process.env.PORT ?? 3000);
 
-const ADMIN_EMAIL = process.env.ADMIN_EMAIL ?? 'admin@example.com';
-const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD;
-const JWT_SECRET = process.env.JWT_SECRET;
+const BREAKGLASS_EMAIL = (process.env.BREAKGLASS_EMAIL ?? process.env.ADMIN_EMAIL ?? 'admin@example.com').trim().toLowerCase();
+const BREAKGLASS_PASSWORD = process.env.BREAKGLASS_PASSWORD ?? process.env.ADMIN_PASSWORD;
+const FRONTEND_ORIGIN = process.env.FRONTEND_ORIGIN;
+const DEFAULT_USER_PASSWORD = process.env.DEFAULT_USER_PASSWORD ?? 'ChangeMe123!';
 
-if (!ADMIN_PASSWORD) {
-  throw new Error('ADMIN_PASSWORD env var is required');
+if (!BREAKGLASS_PASSWORD) {
+  throw new Error('BREAKGLASS_PASSWORD (or ADMIN_PASSWORD fallback) env var is required');
 }
 
-if (!JWT_SECRET) {
-  throw new Error('JWT_SECRET env var is required');
-}
+const secureCookie = process.env.NODE_ENV === 'production';
 
-app.use(cors());
+app.use(
+  cors({
+    origin: FRONTEND_ORIGIN ? [FRONTEND_ORIGIN] : true,
+    credentials: true
+  })
+);
 app.use(express.json());
 
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
-type AdminJwtPayload = { email: string; role: 'admin'; exp: number };
 type EmployeeRole = 'admin' | 'user';
+type SessionRecord = { id: string; userId: string; csrfToken: string; expiresAt: number };
+type AuthUser = { id: string; email: string; displayName: string; role: EmployeeRole; isActive: boolean };
 
-const toBase64Url = (value: string) => Buffer.from(value).toString('base64url');
-const fromBase64Url = (value: string) => Buffer.from(value, 'base64url').toString('utf8');
-
-const createAdminToken = (email: string): string => {
-  const header = toBase64Url(JSON.stringify({ alg: 'HS256', typ: 'JWT' }));
-  const payload = toBase64Url(
-    JSON.stringify({
-      email,
-      role: 'admin',
-      exp: Math.floor(Date.now() / 1000) + 60 * 60 * 8
-    })
-  );
-  const signature = crypto.createHmac('sha256', JWT_SECRET).update(`${header}.${payload}`).digest('base64url');
-  return `${header}.${payload}.${signature}`;
-};
-
-const verifyAdminToken = (token: string): AdminJwtPayload | null => {
-  const [header, payload, signature] = token.split('.');
-  if (!header || !payload || !signature) {
-    return null;
-  }
-
-  const expected = crypto.createHmac('sha256', JWT_SECRET).update(`${header}.${payload}`).digest('base64url');
-  if (expected !== signature) {
-    return null;
-  }
-
-  try {
-    const parsed = JSON.parse(fromBase64Url(payload)) as AdminJwtPayload;
-    if (parsed.role !== 'admin' || typeof parsed.exp !== 'number' || parsed.exp <= Math.floor(Date.now() / 1000)) {
-      return null;
+declare global {
+  namespace Express {
+    interface Request {
+      authUser?: AuthUser;
+      authSession?: SessionRecord;
     }
-    return parsed;
-  } catch {
-    return null;
   }
+}
+
+const SESSION_COOKIE_NAME = 'rbms_session';
+const CSRF_COOKIE_NAME = 'rbms_csrf';
+const SESSION_TTL_MS = 1000 * 60 * 60 * 12;
+const sessions = new Map<string, SessionRecord>();
+
+const parseCookies = (cookieHeader?: string): Record<string, string> => {
+  if (!cookieHeader) return {};
+  return cookieHeader.split(';').reduce<Record<string, string>>((acc, part) => {
+    const [rawKey, ...rawValue] = part.split('=');
+    if (!rawKey || rawValue.length === 0) return acc;
+    acc[rawKey.trim()] = decodeURIComponent(rawValue.join('=').trim());
+    return acc;
+  }, {});
 };
 
-const requireAdmin: express.RequestHandler = async (req, res, next) => {
-  const authorization = req.header('authorization');
-  if (!authorization?.startsWith('Bearer ')) {
-    res.status(401).json({ error: 'unauthorized', message: 'Missing bearer token' });
-    return;
-  }
+const applySessionCookies = (res: express.Response, session: SessionRecord) => {
+  res.cookie(SESSION_COOKIE_NAME, session.id, {
+    httpOnly: true,
+    secure: secureCookie,
+    sameSite: 'lax',
+    maxAge: SESSION_TTL_MS,
+    path: '/'
+  });
 
-  const token = authorization.slice(7);
+  res.cookie(CSRF_COOKIE_NAME, session.csrfToken, {
+    httpOnly: false,
+    secure: secureCookie,
+    sameSite: 'lax',
+    maxAge: SESSION_TTL_MS,
+    path: '/'
+  });
+};
 
-  const payload = verifyAdminToken(token);
-  if (!payload) {
-    res.status(401).json({ error: 'unauthorized', message: 'Invalid token' });
-    return;
-  }
+const clearSessionCookies = (res: express.Response) => {
+  const options = { httpOnly: true, secure: secureCookie, sameSite: 'lax' as const, path: '/' };
+  res.clearCookie(SESSION_COOKIE_NAME, options);
+  res.clearCookie(CSRF_COOKIE_NAME, { ...options, httpOnly: false });
+};
 
-  if (payload.email === ADMIN_EMAIL) {
-    (req as express.Request & { adminEmail?: string }).adminEmail = payload.email;
+const createSession = (userId: string): SessionRecord => {
+  const now = Date.now();
+  const session: SessionRecord = {
+    id: crypto.randomUUID(),
+    userId,
+    csrfToken: crypto.randomUUID(),
+    expiresAt: now + SESSION_TTL_MS
+  };
+  sessions.set(session.id, session);
+  return session;
+};
+
+const destroySession = (sessionId?: string) => {
+  if (!sessionId) return;
+  sessions.delete(sessionId);
+};
+
+const requireCsrf: express.RequestHandler = (req, res, next) => {
+  const isSafeMethod = req.method === 'GET' || req.method === 'HEAD' || req.method === 'OPTIONS';
+  if (isSafeMethod || req.path === '/auth/login') {
     next();
     return;
   }
 
-  const employee = await prisma.employee.findUnique({
-    where: { email: normalizeEmail(payload.email) },
-    select: { role: true, isActive: true }
+  const csrfHeader = req.header('x-csrf-token');
+  const csrfCookie = parseCookies(req.headers.cookie)[CSRF_COOKIE_NAME];
+  const expected = req.authSession?.csrfToken;
+  if (!expected || !csrfHeader || !csrfCookie || expected !== csrfHeader || csrfHeader !== csrfCookie) {
+    res.status(403).json({ error: 'forbidden', message: 'Invalid CSRF token' });
+    return;
+  }
+
+  next();
+};
+
+const attachAuthUser: express.RequestHandler = async (req, _res, next) => {
+  const cookies = parseCookies(req.headers.cookie);
+  const sessionId = cookies[SESSION_COOKIE_NAME];
+  if (!sessionId) {
+    next();
+    return;
+  }
+
+  const session = sessions.get(sessionId);
+  if (!session || session.expiresAt <= Date.now()) {
+    destroySession(sessionId);
+    next();
+    return;
+  }
+
+  const user = await prisma.user.findUnique({
+    where: { id: session.userId },
+    select: {
+      id: true,
+      email: true,
+      displayName: true,
+      role: true,
+      isActive: true
+    }
   });
 
-  if (!employee?.isActive || employee.role !== 'admin') {
+  if (!user || !user.isActive) {
+    destroySession(sessionId);
+    next();
+    return;
+  }
+
+  session.expiresAt = Date.now() + SESSION_TTL_MS;
+  sessions.set(session.id, session);
+  req.authSession = session;
+  req.authUser = {
+    id: user.id,
+    email: user.email,
+    displayName: user.displayName,
+    role: user.role === 'admin' ? 'admin' : 'user',
+    isActive: user.isActive
+  };
+
+  next();
+};
+
+const requireAuthenticated: express.RequestHandler = (req, res, next) => {
+  if (!req.authUser) {
+    res.status(401).json({ error: 'unauthorized', message: 'Authentication required' });
+    return;
+  }
+
+  next();
+};
+
+const requireAdmin: express.RequestHandler = (req, res, next) => {
+  if (!req.authUser) {
+    res.status(401).json({ error: 'unauthorized', message: 'Authentication required' });
+    return;
+  }
+
+  if (!req.authUser.isActive || req.authUser.role !== 'admin') {
     res.status(403).json({ error: 'forbidden', message: 'Admin role required' });
     return;
   }
 
-  (req as express.Request & { adminEmail?: string }).adminEmail = normalizeEmail(payload.email);
   next();
 };
 
@@ -163,12 +248,6 @@ const isValidEmailInput = (value: string): boolean => value.includes('@');
 
 const isValidEmployeeRole = (value: string): value is EmployeeRole => value === 'admin' || value === 'user';
 
-const getRequestUserEmail = (req: express.Request): string | null => {
-  const headerEmail = req.header('x-user-email');
-  if (!headerEmail) return null;
-  return normalizeEmail(headerEmail);
-};
-
 const employeeSelect = {
   id: true,
   email: true,
@@ -215,64 +294,108 @@ app.get('/api/health', async (_req, res) => {
   }
 });
 
-app.post('/admin/login', async (req, res) => {
+app.use(attachAuthUser);
+
+const ensureBreakglassAdmin = async () => {
+  const breakglassHash = await bcrypt.hash(BREAKGLASS_PASSWORD, 12);
+  const defaultHash = await bcrypt.hash(DEFAULT_USER_PASSWORD, 12);
+
+  await prisma.user.upsert({
+    where: { email: BREAKGLASS_EMAIL },
+    update: {
+      displayName: 'Breakglass Admin',
+      role: 'admin',
+      isActive: true,
+      passwordHash: breakglassHash
+    },
+    create: {
+      email: BREAKGLASS_EMAIL,
+      displayName: 'Breakglass Admin',
+      role: 'admin',
+      isActive: true,
+      passwordHash: breakglassHash
+    }
+  });
+
+  const employees = await prisma.employee.findMany({
+    select: { email: true, displayName: true, role: true, isActive: true }
+  });
+
+  for (const employee of employees) {
+    await prisma.user.upsert({
+      where: { email: employee.email },
+      update: {
+        displayName: employee.displayName,
+        role: employee.role,
+        isActive: employee.isActive
+      },
+      create: {
+        email: employee.email,
+        displayName: employee.displayName,
+        role: employee.role,
+        isActive: employee.isActive,
+        passwordHash: defaultHash
+      }
+    });
+  }
+};
+
+app.post('/auth/login', async (req, res) => {
   const { email, password } = req.body as { email?: string; password?: string };
   if (!email || !password) {
     res.status(400).json({ error: 'validation', message: 'email and password are required' });
     return;
   }
 
-  if (password !== ADMIN_PASSWORD) {
+  const user = await prisma.user.findUnique({
+    where: { email: normalizeEmail(email) },
+    select: { id: true, email: true, displayName: true, passwordHash: true, role: true, isActive: true }
+  });
+
+  if (!user || !user.isActive || !(await bcrypt.compare(password, user.passwordHash))) {
     res.status(401).json({ error: 'unauthorized', message: 'Invalid credentials' });
     return;
   }
 
-  const normalizedEmail = normalizeEmail(email);
-  if (normalizedEmail !== ADMIN_EMAIL) {
-    const employee = await prisma.employee.findUnique({
-      where: { email: normalizedEmail },
-      select: { role: true, isActive: true }
-    });
+  const session = createSession(user.id);
+  applySessionCookies(res, session);
 
-    if (!employee?.isActive || employee.role !== 'admin') {
-      res.status(401).json({ error: 'unauthorized', message: 'Invalid credentials' });
-      return;
-    }
-  }
-
-  const token = createAdminToken(normalizedEmail);
-  res.status(200).json({ token });
-});
-
-app.get('/admin/me', requireAdmin, async (req, res) => {
-  const adminEmail = (req as express.Request & { adminEmail?: string }).adminEmail ?? ADMIN_EMAIL;
-  if (adminEmail === ADMIN_EMAIL) {
-    res.status(200).json({
-      email: ADMIN_EMAIL,
-      displayName: 'Breakglass Admin',
-      role: 'admin'
-    });
-    return;
-  }
-
-  const employee = await prisma.employee.findUnique({
-    where: { email: adminEmail },
-    select: {
-      id: true,
-      email: true,
-      displayName: true,
-      role: true,
-      isActive: true
+  res.status(200).json({
+    user: {
+      id: user.id,
+      email: user.email,
+      displayName: user.displayName,
+      role: user.role === 'admin' ? 'admin' : 'user'
     }
   });
+});
 
-  if (!employee || !employee.isActive || employee.role !== 'admin') {
-    res.status(403).json({ error: 'forbidden', message: 'Admin role required' });
+app.post('/auth/logout', (req, res) => {
+  const sessionId = parseCookies(req.headers.cookie)[SESSION_COOKIE_NAME];
+  destroySession(sessionId);
+  clearSessionCookies(res);
+  res.status(204).send();
+});
+
+app.get('/auth/me', (req, res) => {
+  if (!req.authUser) {
+    res.status(401).json({ error: 'unauthorized', message: 'Authentication required' });
     return;
   }
 
-  res.status(200).json(employee);
+  applySessionCookies(res, req.authSession as SessionRecord);
+  res.status(200).json({
+    user: {
+      id: req.authUser.id,
+      email: req.authUser.email,
+      displayName: req.authUser.displayName,
+      role: req.authUser.role
+    }
+  });
 });
+
+app.use(requireAuthenticated);
+app.use(requireCsrf);
 
 app.get('/admin/employees', requireAdmin, async (_req, res) => {
   const employees = await prisma.employee.findMany({
@@ -324,13 +447,34 @@ app.post('/admin/employees', requireAdmin, async (req, res) => {
   }
 
   try {
-    const employee = await prisma.employee.create({
-      data: {
-        email: normalizedEmail,
-        displayName: normalizedDisplayName,
-        role: role ?? 'user'
-      },
-      select: employeeSelect
+    const passwordHash = await bcrypt.hash(DEFAULT_USER_PASSWORD, 12);
+    const employee = await prisma.$transaction(async (tx) => {
+      const createdEmployee = await tx.employee.create({
+        data: {
+          email: normalizedEmail,
+          displayName: normalizedDisplayName,
+          role: role ?? 'user'
+        },
+        select: employeeSelect
+      });
+
+      await tx.user.upsert({
+        where: { email: normalizedEmail },
+        update: {
+          displayName: normalizedDisplayName,
+          role: role ?? 'user',
+          isActive: true
+        },
+        create: {
+          email: normalizedEmail,
+          displayName: normalizedDisplayName,
+          role: role ?? 'user',
+          isActive: true,
+          passwordHash
+        }
+      });
+
+      return createdEmployee;
     });
 
     res.status(201).json(employee);
@@ -382,7 +526,7 @@ app.patch('/admin/employees/:id', requireAdmin, async (req, res) => {
   const nextIsActive = typeof isActive === 'boolean' ? isActive : existing.isActive;
 
   if (existing.role === 'admin' && (nextRole !== 'admin' || !nextIsActive)) {
-    const adminCount = await prisma.employee.count({ where: { role: 'admin', isActive: true } });
+    const adminCount = await prisma.user.count({ where: { role: 'admin', isActive: true } });
     if (adminCount <= 1) {
       res.status(409).json({ error: 'conflict', message: 'Mindestens ein Admin muss erhalten bleiben.' });
       return;
@@ -390,15 +534,33 @@ app.patch('/admin/employees/:id', requireAdmin, async (req, res) => {
   }
 
   try {
-    const updated = await prisma.employee.update({
-      where: { id },
-      data: {
-        ...(typeof trimmedDisplayName === 'string' ? { displayName: trimmedDisplayName } : {}),
-        ...(typeof isActive === 'boolean' ? { isActive } : {}),
-        ...(typeof role === 'string' ? { role } : {})
-      },
-      select: employeeSelect
+    const updated = await prisma.$transaction(async (tx) => {
+      const employeeRow = await tx.employee.update({
+        where: { id },
+        data: {
+          ...(typeof trimmedDisplayName === 'string' ? { displayName: trimmedDisplayName } : {}),
+          ...(typeof isActive === 'boolean' ? { isActive } : {}),
+          ...(typeof role === 'string' ? { role } : {})
+        },
+        select: employeeSelect
+      });
+
+      await tx.user.updateMany({
+        where: { email: existing.email },
+        data: {
+          ...(typeof trimmedDisplayName === 'string' ? { displayName: trimmedDisplayName } : {}),
+          ...(typeof isActive === 'boolean' ? { isActive } : {}),
+          ...(typeof role === 'string' ? { role } : {})
+        }
+      });
+
+      return employeeRow;
     });
+
+    if (req.authUser && req.authUser.email === existing.email) {
+      req.authUser.role = updated.role as EmployeeRole;
+      req.authUser.isActive = updated.isActive;
+    }
 
     res.status(200).json(updated);
   } catch (error) {
@@ -418,11 +580,32 @@ app.delete('/admin/employees/:id', requireAdmin, async (req, res) => {
     return;
   }
 
+  const employee = await prisma.employee.findUnique({ where: { id }, select: { role: true, isActive: true } });
+  if (!employee) {
+    res.status(404).json({ error: 'not_found', message: 'Employee not found' });
+    return;
+  }
+
+  if (employee.role === 'admin' && employee.isActive) {
+    const adminCount = await prisma.user.count({ where: { role: 'admin', isActive: true } });
+    if (adminCount <= 1) {
+      res.status(409).json({ error: 'conflict', message: 'Mindestens ein Admin muss erhalten bleiben.' });
+      return;
+    }
+  }
+
   try {
-    const updated = await prisma.employee.update({
-      where: { id },
-      data: { isActive: false },
-      select: employeeSelect
+    const updated = await prisma.$transaction(async (tx) => {
+      const employeeRow = await tx.employee.update({
+        where: { id },
+        data: { isActive: false },
+        select: employeeSelect
+      });
+      await tx.user.updateMany({
+        where: { email: employeeRow.email },
+        data: { isActive: false }
+      });
+      return employeeRow;
     });
 
     res.status(200).json(updated);
@@ -436,37 +619,12 @@ app.delete('/admin/employees/:id', requireAdmin, async (req, res) => {
   }
 });
 
-app.get('/me', async (req, res) => {
-  const userEmail = getRequestUserEmail(req);
-
-  if (userEmail) {
-    const employee = await prisma.employee.findUnique({
-      where: { email: userEmail },
-      select: {
-        id: true,
-        email: true,
-        displayName: true,
-        role: true,
-        isActive: true
-      }
-    });
-
-    if (employee?.isActive) {
-      res.status(200).json({
-        id: employee.id,
-        email: employee.email,
-        displayName: employee.displayName,
-        role: employee.role
-      });
-      return;
-    }
-  }
-
+app.get('/me', (req, res) => {
   res.status(200).json({
-    id: 'demo-user',
-    email: 'demo@example.com',
-    displayName: 'Demo User',
-    role: 'user'
+    id: req.authUser?.id,
+    email: req.authUser?.email,
+    displayName: req.authUser?.displayName,
+    role: req.authUser?.role
   });
 });
 
@@ -1437,6 +1595,11 @@ app.patch('/admin/recurring-bookings/:id', requireAdmin, async (req, res) => {
   res.status(200).json(updated);
 });
 
-app.listen(port, '0.0.0.0', () => {
-  console.log(`API listening on ${port}`);
-});
+const start = async () => {
+  await ensureBreakglassAdmin();
+  app.listen(port, '0.0.0.0', () => {
+    console.log(`API listening on ${port}`);
+  });
+};
+
+void start();

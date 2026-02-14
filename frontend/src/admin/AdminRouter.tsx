@@ -7,7 +7,7 @@ type Desk = { id: string; floorplanId: string; name: string; x: number; y: numbe
 type Employee = { id: string; email: string; displayName: string; role: 'admin' | 'user'; isActive: boolean; createdAt?: string; updatedAt?: string };
 type Booking = { id: string; deskId: string; userEmail: string; userDisplayName?: string; date: string; createdAt?: string; updatedAt?: string };
 type Toast = { id: number; tone: 'success' | 'error'; message: string };
-type RouteProps = { path: string; navigate: (to: string) => void; onRoleStateChanged: () => Promise<void> };
+type RouteProps = { path: string; navigate: (to: string) => void; onRoleStateChanged: () => Promise<void>; onLogout: () => Promise<void> };
 type AdminSession = { id?: string; email: string; displayName: string; role: 'admin' | 'user'; isActive?: boolean };
 type DataState = { loading: boolean; error: string; ready: boolean };
 
@@ -30,7 +30,6 @@ const today = new Date().toISOString().slice(0, 10);
 const in14Days = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
 const in7Days = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
 
-const authHeaders = () => ({ Authorization: `Bearer ${localStorage.getItem('rbms-admin-token') ?? ''}` });
 const formatDate = (value?: string) => (value ? new Date(value).toLocaleString('de-DE') : '—');
 const formatDateOnly = (value?: string) => (value ? new Date(value).toLocaleDateString('de-DE') : '—');
 const basePath = (path: string) => path.split('?')[0];
@@ -85,7 +84,7 @@ function RowMenu({ onEdit, onDelete, onExtra, extraLabel }: { onEdit: () => void
   );
 }
 
-function AdminLayout({ path, navigate, title, actions, children }: { path: string; navigate: (to: string) => void; title: string; actions?: ReactNode; children: ReactNode }) {
+function AdminLayout({ path, navigate, title, actions, children, onLogout }: { path: string; navigate: (to: string) => void; title: string; actions?: ReactNode; children: ReactNode; onLogout: () => Promise<void> }) {
   const current = basePath(path);
   return (
     <main className="app-shell">
@@ -93,7 +92,7 @@ function AdminLayout({ path, navigate, title, actions, children }: { path: strin
         <aside className="card admin-sidebar-v2 stack-sm">
           <h3>RB-MS Admin</h3>
           {navItems.map((item) => <button key={item.to} className={`btn btn-ghost admin-nav-link ${current === item.to ? 'active' : ''}`} onClick={() => navigate(item.to)}>{item.label}</button>)}
-          <button className="btn btn-outline" onClick={() => { localStorage.removeItem('rbms-admin-token'); navigate('/admin/login'); }}>Logout</button>
+          <button className="btn btn-outline" onClick={async () => { await onLogout(); navigate('/login'); }}>Logout</button>
         </aside>
         <section className="admin-content-v2 stack-sm">
           <header className="card admin-topbar-v2"><div><p className="muted">Admin / {title}</p><strong>{title}</strong></div><div className="inline-end"><button className="btn btn-outline" onClick={() => navigate('/')}>Zurück zur App</button>{actions}</div></header>
@@ -104,24 +103,7 @@ function AdminLayout({ path, navigate, title, actions, children }: { path: strin
   );
 }
 
-function AdminLogin({ navigate }: { navigate: (to: string) => void }) {
-  const [email, setEmail] = useState('admin@example.com');
-  const [password, setPassword] = useState('');
-  const [error, setError] = useState('');
-  const submit = async (event: FormEvent) => {
-    event.preventDefault();
-    try {
-      const response = await post<{ token: string }>('/admin/login', { email, password });
-      localStorage.setItem('rbms-admin-token', response.token);
-      navigate('/admin');
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Login fehlgeschlagen');
-    }
-  };
-  return <main className="app-shell"><section className="card stack-sm down-card"><h2>Admin Login</h2><form className="stack-sm" onSubmit={submit}><input value={email} onChange={(event) => setEmail(event.target.value)} placeholder="E-Mail" /><input type="password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="Passwort" />{error && <p className="error-banner">{error}</p>}<button className="btn">Einloggen</button></form></section></main>;
-}
-
-function DashboardPage({ path, navigate }: RouteProps) {
+function DashboardPage({ path, navigate, onLogout }: RouteProps) {
   const [state, setState] = useState<DataState>({ loading: true, error: '', ready: false });
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [floorplans, setFloorplans] = useState<Floorplan[]>([]);
@@ -132,7 +114,7 @@ function DashboardPage({ path, navigate }: RouteProps) {
     setState((current) => ({ ...current, loading: true, error: '' }));
     try {
       const [employeeRows, floorplanRows, bookingRows] = await Promise.all([
-        get<Employee[]>('/admin/employees', authHeaders()),
+        get<Employee[]>('/admin/employees'),
         get<Floorplan[]>('/floorplans'),
         get<Booking[]>(`/bookings?from=${today}&to=${in14Days}`)
       ]);
@@ -153,7 +135,7 @@ function DashboardPage({ path, navigate }: RouteProps) {
   const recent = [...bookings].sort((a, b) => new Date(b.createdAt ?? b.date).getTime() - new Date(a.createdAt ?? a.date).getTime()).slice(0, 12);
 
   return (
-    <AdminLayout path={path} navigate={navigate} title="Dashboard">
+    <AdminLayout path={path} navigate={navigate} onLogout={onLogout} title="Dashboard">
       {state.error && <ErrorState text={state.error} onRetry={load} />}
       <section className="dashboard-grid">
         {[{ label: 'Aktive Mitarbeiter', value: employees.filter((e) => e.isActive).length, icon: '👥', to: '/admin/employees' }, { label: 'Desks', value: desks.length, icon: '🖱️', to: '/admin/desks' }, { label: 'Floorpläne', value: floorplans.length, icon: '🗺️', to: '/admin/floorplans' }, { label: 'Buchungen (7 Tage)', value: bookingsNextWeek, icon: '📅', to: '/admin/bookings' }].map((card) => (
@@ -187,7 +169,7 @@ function DashboardPage({ path, navigate }: RouteProps) {
   );
 }
 
-function FloorplansPage({ path, navigate }: RouteProps) {
+function FloorplansPage({ path, navigate, onLogout }: RouteProps) {
   const toasts = useToasts();
   const [state, setState] = useState<DataState>({ loading: true, error: '', ready: false });
   const [floorplans, setFloorplans] = useState<Floorplan[]>([]);
@@ -213,7 +195,7 @@ function FloorplansPage({ path, navigate }: RouteProps) {
   const filtered = useMemo(() => floorplans.filter((plan) => plan.name.toLowerCase().includes(query.toLowerCase())), [floorplans, query]);
 
   return (
-    <AdminLayout path={path} navigate={navigate} title="Floorpläne" actions={<button className="btn" onClick={() => setShowCreate(true)}>Neu</button>}>
+    <AdminLayout path={path} navigate={navigate} onLogout={onLogout} title="Floorpläne" actions={<button className="btn" onClick={() => setShowCreate(true)}>Neu</button>}>
       <section className="card stack-sm">
         <div className="crud-toolbar"><div className="inline-between"><h3>Floorpläne</h3><Badge>{filtered.length}</Badge></div><div className="admin-search">🔎<input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Floorplan suchen" /></div></div>
         {state.error && <ErrorState text={state.error} onRetry={load} />}
@@ -221,7 +203,7 @@ function FloorplansPage({ path, navigate }: RouteProps) {
         {!state.loading && filtered.length === 0 && <EmptyState text="Keine Floorpläne vorhanden." action={<button className="btn" onClick={() => setShowCreate(true)}>Neu anlegen</button>} />}
       </section>
       {(showCreate || editing) && <FloorplanEditor floorplan={editing} onClose={() => { setShowCreate(false); setEditing(null); navigate('/admin/floorplans'); }} onSaved={async () => { setShowCreate(false); setEditing(null); toasts.success('Floorplan gespeichert'); await load(); }} onError={toasts.error} />}
-      {pendingDelete && <ConfirmDialog title="Floorplan löschen?" description={`"${pendingDelete.name}" wird dauerhaft entfernt.`} onCancel={() => setPendingDelete(null)} onConfirm={async () => { await del(`/admin/floorplans/${pendingDelete.id}`, authHeaders()); setPendingDelete(null); toasts.success('Floorplan gelöscht'); await load(); }} />}
+      {pendingDelete && <ConfirmDialog title="Floorplan löschen?" description={`"${pendingDelete.name}" wird dauerhaft entfernt.`} onCancel={() => setPendingDelete(null)} onConfirm={async () => { await del(`/admin/floorplans/${pendingDelete.id}`); setPendingDelete(null); toasts.success('Floorplan gelöscht'); await load(); }} />}
       <ToastViewport toasts={toasts.toasts} />
     </AdminLayout>
   );
@@ -233,8 +215,8 @@ function FloorplanEditor({ floorplan, onClose, onSaved, onError }: { floorplan: 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
     try {
-      if (floorplan) await patch(`/admin/floorplans/${floorplan.id}`, { name, imageUrl }, authHeaders());
-      else await post('/admin/floorplans', { name, imageUrl }, authHeaders());
+      if (floorplan) await patch(`/admin/floorplans/${floorplan.id}`, { name, imageUrl });
+      else await post('/admin/floorplans', { name, imageUrl });
       await onSaved();
     } catch (err) {
       onError(err instanceof Error ? err.message : 'Speichern fehlgeschlagen');
@@ -279,9 +261,9 @@ function DeskEditor({ desk, floorplans, defaultFloorplanId, initialPosition, loc
     }
     try {
       if (desk) {
-        await patch(`/admin/desks/${desk.id}`, { name: form.name, x: form.x, y: form.y }, authHeaders());
+        await patch(`/admin/desks/${desk.id}`, { name: form.name, x: form.x, y: form.y });
       } else {
-        await post(`/admin/floorplans/${form.floorplanId}/desks`, { name: form.name, x: form.x, y: form.y }, authHeaders());
+        await post(`/admin/floorplans/${form.floorplanId}/desks`, { name: form.name, x: form.x, y: form.y });
       }
       await onSaved();
     } catch (err) {
@@ -297,7 +279,7 @@ function DeskEditor({ desk, floorplans, defaultFloorplanId, initialPosition, loc
   );
 }
 
-function DesksPage({ path, navigate }: RouteProps) {
+function DesksPage({ path, navigate, onLogout }: RouteProps) {
   const toasts = useToasts();
   const [state, setState] = useState<DataState>({ loading: true, error: '', ready: false });
   const [floorplans, setFloorplans] = useState<Floorplan[]>([]);
@@ -385,7 +367,7 @@ function DesksPage({ path, navigate }: RouteProps) {
     if (canvasMode === 'reposition' && pendingRepositionDesk) {
       if (!window.confirm('Position speichern?')) return;
       try {
-        await patch(`/admin/desks/${pendingRepositionDesk.id}`, { x, y }, authHeaders());
+        await patch(`/admin/desks/${pendingRepositionDesk.id}`, { x, y });
         toasts.success('Position aktualisiert');
         cancelModes();
         await loadDesks(floorplanId);
@@ -396,7 +378,7 @@ function DesksPage({ path, navigate }: RouteProps) {
   };
 
   return (
-    <AdminLayout path={path} navigate={navigate} title="Desks">
+    <AdminLayout path={path} navigate={navigate} onLogout={onLogout} title="Desks">
       <section className="card stack-sm">
         <div className="crud-toolbar"><div className="inline-between"><h3>Desks</h3><Badge>{filtered.length}</Badge></div><div className="admin-toolbar admin-toolbar-wrap"><select value={floorplanId} onChange={(e) => { setFloorplanId(e.target.value); setSelectedDeskId(''); cancelModes(); }}><option value="">Floorplan wählen</option>{floorplans.map((plan) => <option key={plan.id} value={plan.id}>{plan.name}</option>)}</select><div className="admin-search">🔎<input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Desk suchen" /></div><button className="btn" disabled={!floorplanId} onClick={startCreateMode}>Neuer Desk</button>{canvasMode !== 'idle' && <button className="btn btn-outline" onClick={cancelModes}>Abbrechen</button>}</div></div>
         {state.error && <ErrorState text={state.error} onRetry={() => void loadDesks(floorplanId)} />}
@@ -415,13 +397,13 @@ function DesksPage({ path, navigate }: RouteProps) {
         </div>
       </section>
       {(createRequest || editingDesk) && <DeskEditor desk={editingDesk} floorplans={floorplans} defaultFloorplanId={floorplanId} initialPosition={createRequest} lockFloorplan={Boolean(createRequest)} onRequestPositionMode={editingDesk ? () => { setPendingRepositionDesk(editingDesk); setCanvasMode('reposition'); } : undefined} onClose={() => { setCreateRequest(null); setEditingDesk(null); navigate('/admin/desks'); }} onSaved={async () => { setCreateRequest(null); setEditingDesk(null); toasts.success('Desk gespeichert'); await loadDesks(floorplanId); }} onError={toasts.error} />}
-      {deleteDesk && <ConfirmDialog title="Desk löschen?" description={`Desk "${deleteDesk.name}" wird entfernt.`} onCancel={() => setDeleteDesk(null)} onConfirm={async () => { await del(`/admin/desks/${deleteDesk.id}`, authHeaders()); setDeleteDesk(null); toasts.success('Desk gelöscht'); await loadDesks(floorplanId); }} />}
+      {deleteDesk && <ConfirmDialog title="Desk löschen?" description={`Desk "${deleteDesk.name}" wird entfernt.`} onCancel={() => setDeleteDesk(null)} onConfirm={async () => { await del(`/admin/desks/${deleteDesk.id}`); setDeleteDesk(null); toasts.success('Desk gelöscht'); await loadDesks(floorplanId); }} />}
       <ToastViewport toasts={toasts.toasts} />
     </AdminLayout>
   );
 }
 
-function BookingsPage({ path, navigate }: RouteProps) {
+function BookingsPage({ path, navigate, onLogout }: RouteProps) {
   const toasts = useToasts();
   const [state, setState] = useState<DataState>({ loading: true, error: '', ready: false });
   const [bookings, setBookings] = useState<Booking[]>([]);
@@ -442,7 +424,7 @@ function BookingsPage({ path, navigate }: RouteProps) {
     try {
       const floorplanRows = await get<Floorplan[]>('/floorplans');
       const deskRows = (await Promise.all(floorplanRows.map((plan) => get<Desk[]>(`/floorplans/${plan.id}/desks`)))).flat();
-      const [employeeRows, bookingRows] = await Promise.all([get<Employee[]>('/admin/employees', authHeaders()), get<Booking[]>(`/bookings?from=${from}&to=${to}`)]);
+      const [employeeRows, bookingRows] = await Promise.all([get<Employee[]>('/admin/employees'), get<Booking[]>(`/bookings?from=${from}&to=${to}`)]);
       setFloorplans(floorplanRows);
       setDesks(deskRows);
       setEmployees(employeeRows);
@@ -463,7 +445,7 @@ function BookingsPage({ path, navigate }: RouteProps) {
   }), [bookings, desks, deskId, floorplanId, personQuery]);
 
   return (
-    <AdminLayout path={path} navigate={navigate} title="Buchungen" actions={<button className="btn" onClick={() => setCreating(true)}>Neu</button>}>
+    <AdminLayout path={path} navigate={navigate} onLogout={onLogout} title="Buchungen" actions={<button className="btn" onClick={() => setCreating(true)}>Neu</button>}>
       <section className="card stack-sm">
         <div className="crud-toolbar"><div className="inline-between"><h3>Buchungen</h3><Badge>{filtered.length}</Badge></div><div className="admin-toolbar admin-toolbar-wrap"><input type="date" value={from} onChange={(e) => setFrom(e.target.value)} /><input type="date" value={to} onChange={(e) => setTo(e.target.value)} /><select value={floorplanId} onChange={(e) => setFloorplanId(e.target.value)}><option value="">Alle Floorpläne</option>{floorplans.map((plan) => <option key={plan.id} value={plan.id}>{plan.name}</option>)}</select><select value={deskId} onChange={(e) => setDeskId(e.target.value)}><option value="">Alle Desks</option>{desks.filter((desk) => (floorplanId ? desk.floorplanId === floorplanId : true)).map((desk) => <option key={desk.id} value={desk.id}>{desk.name}</option>)}</select><div className="admin-search">🔎<input value={personQuery} onChange={(e) => setPersonQuery(e.target.value)} placeholder="Person suchen" /></div></div></div>
         {state.error && <ErrorState text={state.error} onRetry={load} />}
@@ -471,7 +453,7 @@ function BookingsPage({ path, navigate }: RouteProps) {
         {!state.loading && filtered.length === 0 && <EmptyState text="Keine Buchungen im Zeitraum gefunden." action={<button className="btn" onClick={() => setCreating(true)}>Neu anlegen</button>} />}
       </section>
       {(creating || editing) && <BookingEditor booking={editing} desks={desks} employees={employees} onClose={() => { setCreating(false); setEditing(null); navigate('/admin/bookings'); }} onSaved={async (m) => { toasts.success(m); setCreating(false); setEditing(null); await load(); }} onError={toasts.error} />}
-      {deleteBooking && <ConfirmDialog title="Buchung löschen?" description="Die ausgewählte Buchung wird entfernt." onCancel={() => setDeleteBooking(null)} onConfirm={async () => { await del(`/admin/bookings/${deleteBooking.id}`, authHeaders()); setDeleteBooking(null); toasts.success('Buchung gelöscht'); await load(); }} />}
+      {deleteBooking && <ConfirmDialog title="Buchung löschen?" description="Die ausgewählte Buchung wird entfernt." onCancel={() => setDeleteBooking(null)} onConfirm={async () => { await del(`/admin/bookings/${deleteBooking.id}`); setDeleteBooking(null); toasts.success('Buchung gelöscht'); await load(); }} />}
       <ToastViewport toasts={toasts.toasts} />
     </AdminLayout>
   );
@@ -485,10 +467,10 @@ function BookingEditor({ booking, desks, employees, onClose, onSaved, onError }:
     event.preventDefault();
     try {
       if (booking) {
-        await patch(`/admin/bookings/${booking.id}`, { deskId, date, userEmail }, authHeaders());
+        await patch(`/admin/bookings/${booking.id}`, { deskId, date, userEmail });
         await onSaved('Buchung aktualisiert');
       } else {
-        await post('/bookings', { deskId, date, userEmail }, authHeaders());
+        await post('/bookings', { deskId, date, userEmail });
         await onSaved('Buchung angelegt');
       }
     } catch (err) {
@@ -498,7 +480,7 @@ function BookingEditor({ booking, desks, employees, onClose, onSaved, onError }:
   return <div className="overlay"><section className="card dialog stack-sm"><h3>{booking ? 'Buchung bearbeiten' : 'Buchung anlegen'}</h3><form className="stack-sm" onSubmit={submit}><select required value={deskId} onChange={(e) => setDeskId(e.target.value)}>{desks.map((desk) => <option key={desk.id} value={desk.id}>{desk.name}</option>)}</select><input required type="date" value={date} onChange={(e) => setDate(e.target.value)} /><select required value={userEmail} onChange={(e) => setUserEmail(e.target.value)}>{employees.map((employee) => <option key={employee.id} value={employee.email}>{employee.displayName} ({employee.email})</option>)}</select><div className="inline-end"><button className="btn btn-outline" type="button" onClick={onClose}>Abbrechen</button><button className="btn">Speichern</button></div></form></section></div>;
 }
 
-function EmployeesPage({ path, navigate, onRoleStateChanged, currentAdminEmail }: RouteProps & { currentAdminEmail: string }) {
+function EmployeesPage({ path, navigate, onRoleStateChanged, onLogout, currentAdminEmail }: RouteProps & { currentAdminEmail: string }) {
   const toasts = useToasts();
   const [state, setState] = useState<DataState>({ loading: true, error: '', ready: false });
   const [employees, setEmployees] = useState<Employee[]>([]);
@@ -511,7 +493,7 @@ function EmployeesPage({ path, navigate, onRoleStateChanged, currentAdminEmail }
   const load = async () => {
     setState((current) => ({ ...current, loading: true, error: '' }));
     try {
-      const rows = await get<Employee[]>('/admin/employees', authHeaders());
+      const rows = await get<Employee[]>('/admin/employees');
       setEmployees(rows);
       setState({ loading: false, error: '', ready: true });
     } catch (err) {
@@ -527,12 +509,11 @@ function EmployeesPage({ path, navigate, onRoleStateChanged, currentAdminEmail }
   const updateRole = async (employee: Employee, role: 'admin' | 'user') => {
     setUpdatingRoleId(employee.id);
     try {
-      const updated = await patch<Employee>(`/admin/employees/${employee.id}`, { role }, authHeaders());
+      const updated = await patch<Employee>(`/admin/employees/${employee.id}`, { role });
       setEmployees((current) => current.map((row) => (row.id === employee.id ? updated : row)));
       toasts.success('Rolle aktualisiert');
 
       if (employee.email === currentAdminEmail && updated.role !== 'admin') {
-        localStorage.removeItem('rbms-admin-token');
         await onRoleStateChanged();
         navigate('/');
         return;
@@ -548,7 +529,7 @@ function EmployeesPage({ path, navigate, onRoleStateChanged, currentAdminEmail }
 
 
   return (
-    <AdminLayout path={path} navigate={navigate} title="Mitarbeiter" actions={<button className="btn" onClick={() => setCreating(true)}>Neu</button>}>
+    <AdminLayout path={path} navigate={navigate} onLogout={onLogout} title="Mitarbeiter" actions={<button className="btn" onClick={() => setCreating(true)}>Neu</button>}>
       <section className="card stack-sm">
         <div className="crud-toolbar"><div className="inline-between"><h3>Mitarbeiter</h3><Badge>{filtered.length}</Badge></div><div className="admin-search">🔎<input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Name oder E-Mail" /></div></div>
         {state.error && <ErrorState text={state.error} onRetry={load} />}
@@ -556,7 +537,7 @@ function EmployeesPage({ path, navigate, onRoleStateChanged, currentAdminEmail }
         {!state.loading && filtered.length === 0 && <EmptyState text="Keine Mitarbeitenden vorhanden." action={<button className="btn" onClick={() => setCreating(true)}>Neu anlegen</button>} />}
       </section>
       {(creating || editing) && <EmployeeEditor employee={editing} onClose={() => { setCreating(false); setEditing(null); navigate('/admin/employees'); }} onSaved={async () => { setCreating(false); setEditing(null); toasts.success('Mitarbeiter gespeichert'); await load(); await onRoleStateChanged(); }} onError={toasts.error} />}
-      {pendingDeactivate && <ConfirmDialog title="Mitarbeiter deaktivieren?" description={`${pendingDeactivate.displayName} wird auf inaktiv gesetzt.`} onCancel={() => setPendingDeactivate(null)} onConfirm={async () => { await patch(`/admin/employees/${pendingDeactivate.id}`, { isActive: false }, authHeaders()); setPendingDeactivate(null); toasts.success('Mitarbeiter deaktiviert'); await load(); }} />}
+      {pendingDeactivate && <ConfirmDialog title="Mitarbeiter deaktivieren?" description={`${pendingDeactivate.displayName} wird auf inaktiv gesetzt.`} onCancel={() => setPendingDeactivate(null)} onConfirm={async () => { await patch(`/admin/employees/${pendingDeactivate.id}`, { isActive: false }); setPendingDeactivate(null); toasts.success('Mitarbeiter deaktiviert'); await load(); }} />}
       <ToastViewport toasts={toasts.toasts} />
     </AdminLayout>
   );
@@ -570,8 +551,8 @@ function EmployeeEditor({ employee, onClose, onSaved, onError }: { employee: Emp
   const submit = async (event: FormEvent) => {
     event.preventDefault();
     try {
-      if (employee) await patch(`/admin/employees/${employee.id}`, { displayName, isActive, role }, authHeaders());
-      else await post('/admin/employees', { displayName, email, role }, authHeaders());
+      if (employee) await patch(`/admin/employees/${employee.id}`, { displayName, isActive, role });
+      else await post('/admin/employees', { displayName, email, role });
       await onSaved();
     } catch (err) {
       onError(err instanceof Error ? err.message : 'Speichern fehlgeschlagen');
@@ -580,42 +561,26 @@ function EmployeeEditor({ employee, onClose, onSaved, onError }: { employee: Emp
   return <div className="overlay"><section className="card dialog stack-sm"><h3>{employee ? 'Mitarbeiter bearbeiten' : 'Mitarbeiter anlegen'}</h3><form className="stack-sm" onSubmit={submit}><input required value={displayName} placeholder="Name" onChange={(e) => setDisplayName(e.target.value)} />{!employee && <input required type="email" value={email} placeholder="E-Mail" onChange={(e) => setEmail(e.target.value)} />}<label className="field"><span>Rolle</span><select value={role} onChange={(e) => setRole(e.target.value as 'admin' | 'user')}><option value="user">User</option><option value="admin">Admin</option></select></label>{employee && <label className="toggle"><input type="checkbox" checked={isActive} onChange={(e) => setIsActive(e.target.checked)} />Aktiv</label>}<div className="inline-end"><button className="btn btn-outline" type="button" onClick={onClose}>Abbrechen</button><button className="btn">Speichern</button></div></form></section></div>;
 }
 
-export function AdminRouter({ path, navigate, onRoleStateChanged }: RouteProps) {
-  const [allowed, setAllowed] = useState<boolean | null>(null);
+export function AdminRouter({ path, navigate, onRoleStateChanged, onLogout }: RouteProps) {
   const [adminSession, setAdminSession] = useState<AdminSession | null>(null);
   const route = basePath(path);
 
   useEffect(() => {
-    (async () => {
-      if (route === '/admin/login') { setAllowed(false); return; }
-      const token = localStorage.getItem('rbms-admin-token');
-      if (!token) { setAllowed(false); return; }
+    void (async () => {
       try {
-        const session = await get<AdminSession>('/admin/me', authHeaders());
-        if (session.role !== 'admin') {
-          localStorage.removeItem('rbms-admin-token');
-          setAllowed(false);
-          return;
-        }
-
-        setAdminSession(session);
-        setAllowed(true);
+        const session = await get<{ user: AdminSession }>('/auth/me');
+        setAdminSession(session.user);
       } catch {
-        localStorage.removeItem('rbms-admin-token');
-        setAllowed(false);
+        setAdminSession(null);
       }
     })();
-  }, [route]);
+  }, []);
 
-  if (route === '/admin/login') return <AdminLogin navigate={navigate} />;
-  if (allowed === null) return <main className="app-shell"><section className="card">Prüfe Berechtigung…</section></main>;
-  if (!allowed) return <main className="app-shell"><section className="card stack-sm down-card"><h2>Keine Berechtigung</h2><button className="btn" onClick={() => navigate('/')}>Zurück zur App</button></section></main>;
-
-  if (route === '/admin') return <DashboardPage path={path} navigate={navigate} onRoleStateChanged={onRoleStateChanged} />;
-  if (route === '/admin/floorplans') return <FloorplansPage path={path} navigate={navigate} onRoleStateChanged={onRoleStateChanged} />;
-  if (route === '/admin/desks') return <DesksPage path={path} navigate={navigate} onRoleStateChanged={onRoleStateChanged} />;
-  if (route === '/admin/bookings') return <BookingsPage path={path} navigate={navigate} onRoleStateChanged={onRoleStateChanged} />;
-  if (route === '/admin/employees') return <EmployeesPage path={path} navigate={navigate} onRoleStateChanged={onRoleStateChanged} currentAdminEmail={adminSession?.email ?? ''} />;
+  if (route === '/admin') return <DashboardPage path={path} navigate={navigate} onRoleStateChanged={onRoleStateChanged} onLogout={onLogout} />;
+  if (route === '/admin/floorplans') return <FloorplansPage path={path} navigate={navigate} onRoleStateChanged={onRoleStateChanged} onLogout={onLogout} />;
+  if (route === '/admin/desks') return <DesksPage path={path} navigate={navigate} onRoleStateChanged={onRoleStateChanged} onLogout={onLogout} />;
+  if (route === '/admin/bookings') return <BookingsPage path={path} navigate={navigate} onRoleStateChanged={onRoleStateChanged} onLogout={onLogout} />;
+  if (route === '/admin/employees') return <EmployeesPage path={path} navigate={navigate} onRoleStateChanged={onRoleStateChanged} onLogout={onLogout} currentAdminEmail={adminSession?.email ?? ''} />;
 
   return <main className="app-shell"><section className="card stack-sm down-card"><h2>Admin-Seite nicht gefunden</h2><button className="btn" onClick={() => navigate('/admin')}>Zum Dashboard</button></section></main>;
 }
