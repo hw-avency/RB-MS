@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useMemo, useState } from 'react';
+import { FormEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { API_BASE, ApiError, checkBackendHealth, get, markBackendAvailable, post } from './api';
 import { UserMenu } from './components/UserMenu';
@@ -12,12 +12,12 @@ type OccupancyDesk = {
   x: number;
   y: number;
   status: 'free' | 'booked';
-  booking: { id?: string; userEmail: string; userDisplayName?: string } | null;
+  booking: { id?: string; employeeId?: string; userEmail: string; userDisplayName?: string; userPhotoUrl?: string } | null;
 };
 type OccupancyPerson = { email: string; displayName?: string; deskName?: string; deskId?: string };
 type OccupancyResponse = { date: string; floorplanId: string; desks: OccupancyDesk[]; people: OccupancyPerson[] };
-type BookingEmployee = { id: string; email: string; displayName: string };
-type OccupantForDay = { deskId: string; deskLabel: string; userId: string; name: string; email: string };
+type BookingEmployee = { id: string; email: string; displayName: string; photoUrl?: string };
+type OccupantForDay = { deskId: string; deskLabel: string; userId: string; name: string; email: string; employeeId?: string; photoUrl?: string };
 type BookingMode = 'single' | 'range' | 'series';
 
 const today = new Date().toISOString().slice(0, 10);
@@ -70,8 +70,6 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
   const [backendDown, setBackendDown] = useState(false);
 
   const [bookingDialogOpen, setBookingDialogOpen] = useState(false);
-  const [sidebarSheetOpen, setSidebarSheetOpen] = useState(false);
-  const [detailsSheetOpen, setDetailsSheetOpen] = useState(false);
 
   const [bookingMode, setBookingMode] = useState<BookingMode>('single');
   const [rangeStartDate, setRangeStartDate] = useState(selectedDate);
@@ -80,9 +78,27 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
   const [seriesEndDate, setSeriesEndDate] = useState('');
   const [seriesWeekdays, setSeriesWeekdays] = useState<number[]>([]);
 
+  const [highlightedDeskId, setHighlightedDeskId] = useState('');
+  const occupantRowRefs = useRef<Record<string, HTMLTableRowElement | null>>({});
+  const highlightTimerRef = useRef<number | null>(null);
+
   const selectedFloorplan = useMemo(() => floorplans.find((f) => f.id === selectedFloorplanId) ?? null, [floorplans, selectedFloorplanId]);
-  const desks = useMemo(() => occupancy?.desks ?? [], [occupancy]);
-  const filteredDesks = useMemo(() => (onlyFree ? desks.filter((desk) => desk.status === 'free') : desks), [desks, onlyFree]);
+  const employeesByEmail = useMemo(() => new Map(employees.map((employee) => [employee.email.toLowerCase(), employee])), [employees]);
+  const desks = useMemo(() => (occupancy?.desks ?? []).map((desk) => {
+    if (!desk.booking) return desk;
+    const employee = employeesByEmail.get(desk.booking.userEmail.toLowerCase());
+    return {
+      ...desk,
+      booking: {
+        ...desk.booking,
+        employeeId: desk.booking.employeeId ?? employee?.id,
+        userDisplayName: desk.booking.userDisplayName ?? employee?.displayName,
+        userPhotoUrl: desk.booking.userPhotoUrl ?? employee?.photoUrl
+      },
+      isCurrentUsersDesk: Boolean(currentUserEmail && desk.booking.userEmail.toLowerCase() === currentUserEmail.toLowerCase())
+    };
+  }), [occupancy?.desks, employeesByEmail, currentUserEmail]);
+  const filteredDesks = useMemo(() => (onlyFree ? desks.filter((desk) => desk.status === 'free') : desks).map((desk) => ({ ...desk, isHighlighted: desk.id === highlightedDeskId })), [desks, onlyFree, highlightedDeskId]);
   const selectedDesk = useMemo(() => desks.find((desk) => desk.id === selectedDeskId) ?? null, [desks, selectedDeskId]);
   const occupantsForDay = useMemo<OccupantForDay[]>(
     () => desks
@@ -90,9 +106,11 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
       .map((desk) => ({
         deskId: desk.id,
         deskLabel: desk.name,
-        userId: desk.booking?.id ?? desk.booking?.userEmail ?? `${desk.id}-occupant`,
+        userId: desk.booking?.id ?? desk.booking?.employeeId ?? desk.booking?.userEmail ?? `${desk.id}-occupant`,
         name: desk.booking?.userDisplayName ?? desk.booking?.userEmail ?? 'Unbekannt',
-        email: desk.booking?.userEmail ?? ''
+        email: desk.booking?.userEmail ?? '',
+        employeeId: desk.booking?.employeeId,
+        photoUrl: desk.booking?.userPhotoUrl
       }))
       .sort((a, b) => a.name.localeCompare(b.name, 'de')),
     [desks]
@@ -174,6 +192,34 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
     setRangeEndDate(selectedDate);
     setSeriesStartDate(selectedDate);
   }, [bookingDialogOpen, selectedDate]);
+
+  useEffect(() => {
+    return () => {
+      if (highlightTimerRef.current) {
+        window.clearTimeout(highlightTimerRef.current);
+      }
+    };
+  }, []);
+
+  const triggerDeskHighlight = (deskId: string, hold = 1300) => {
+    setHighlightedDeskId(deskId);
+    if (highlightTimerRef.current) {
+      window.clearTimeout(highlightTimerRef.current);
+    }
+    highlightTimerRef.current = window.setTimeout(() => {
+      setHighlightedDeskId('');
+      highlightTimerRef.current = null;
+    }, hold);
+  };
+
+  const selectDeskFromCanvas = (deskId: string) => {
+    setSelectedDeskId(deskId);
+    triggerDeskHighlight(deskId);
+    const row = occupantRowRefs.current[deskId];
+    if (row) {
+      row.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    }
+  };
 
   const refreshData = async () => {
     await loadOccupancy(selectedFloorplanId, selectedDate);
@@ -390,9 +436,20 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
               {occupantsForDay.map((occupant) => (
                 <tr
                   key={`${occupant.userId}-${occupant.deskId}`}
-                  onMouseEnter={() => setHoveredDeskId(occupant.deskId)}
+                  ref={(node) => { occupantRowRefs.current[occupant.deskId] = node; }}
+                  className={`${hoveredDeskId === occupant.deskId || selectedDeskId === occupant.deskId ? 'row-active' : ''} ${highlightedDeskId === occupant.deskId ? 'row-highlighted' : ''}`}
+                  tabIndex={0}
+                  onMouseEnter={() => {
+                    setHoveredDeskId(occupant.deskId);
+                    triggerDeskHighlight(occupant.deskId, 900);
+                  }}
                   onMouseLeave={() => setHoveredDeskId('')}
-                  onClick={() => setSelectedDeskId(occupant.deskId)}
+                  onFocus={() => setHoveredDeskId(occupant.deskId)}
+                  onBlur={() => setHoveredDeskId('')}
+                  onClick={() => {
+                    setSelectedDeskId(occupant.deskId);
+                    triggerDeskHighlight(occupant.deskId);
+                  }}
                 >
                   <td>
                     <strong>{occupant.name}</strong>
@@ -425,20 +482,14 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
 
   return (
     <main className="app-shell">
-      <header className="app-header">
+      <header className="app-header simplified-header">
         <div className="header-left">
-          <button className="btn btn-ghost mobile-only" onClick={() => setSidebarSheetOpen(true)}>☰</button>
           <h1>AVENCY Booking</h1>
           <select value={selectedFloorplanId} onChange={(event) => setSelectedFloorplanId(event.target.value)}>
             {floorplans.map((floorplan) => <option key={floorplan.id} value={floorplan.id}>{floorplan.name}</option>)}
           </select>
         </div>
-        <div className="header-center">
-          ⌕
-          <input placeholder="Suche Person oder Desk" />
-        </div>
         <div className="header-right">
-          <button className="btn btn-ghost" onClick={() => setDetailsSheetOpen(true)}>≡ Details</button>
           <UserMenu user={currentUser} onLogout={onLogout} onOpenAdmin={onOpenAdmin} showAdminAction={canOpenAdmin} />
         </div>
       </header>
@@ -469,9 +520,10 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
                   desks={filteredDesks}
                   selectedDeskId={selectedDeskId}
                   hoveredDeskId={hoveredDeskId}
-                  onHoverDesk={setHoveredDeskId}
-                  onSelectDesk={setSelectedDeskId}
-                  onCanvasClick={() => setSelectedDeskId('')}
+                  onHoverDesk={(deskId) => { setHoveredDeskId(deskId); if (deskId) triggerDeskHighlight(deskId, 900); }}
+                  selectedDate={selectedDate}
+                  onSelectDesk={selectDeskFromCanvas}
+                  onCanvasClick={() => { setSelectedDeskId(''); setHighlightedDeskId(''); }}
                 />
               ) : (
                 <div className="empty-state"><p>Kein Floorplan ausgewählt.</p></div>
@@ -557,8 +609,6 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
         document.body
       )}
 
-      {sidebarSheetOpen && createPortal(<div className="overlay" onClick={() => setSidebarSheetOpen(false)}><aside className="sheet card" onClick={(e) => e.stopPropagation()}>{sidebar}</aside></div>, document.body)}
-      {detailsSheetOpen && createPortal(<div className="overlay" onClick={() => setDetailsSheetOpen(false)}><aside className="sheet sheet-right card" onClick={(e) => e.stopPropagation()}>{detailPanel}</aside></div>, document.body)}
 
       <p className="api-base">API: {API_BASE}</p>
     </main>
