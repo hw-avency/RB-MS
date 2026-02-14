@@ -7,6 +7,7 @@ import { prisma } from './prisma';
 
 const app = express();
 const port = Number(process.env.PORT ?? 3000);
+app.set('trust proxy', 1);
 
 const ADMIN_EMAIL = process.env.ADMIN_EMAIL?.trim().toLowerCase();
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD;
@@ -16,8 +17,9 @@ const FRONTEND_ORIGINS = (process.env.FRONTEND_ORIGIN ?? process.env.FRONTEND_UR
   .filter(Boolean);
 const DEFAULT_USER_PASSWORD = process.env.DEFAULT_USER_PASSWORD ?? 'ChangeMe123!';
 const PASSWORD_SALT_ROUNDS = Number(process.env.PASSWORD_SALT_ROUNDS ?? 12);
-const cookieSameSite: 'lax' | 'none' = (process.env.COOKIE_SAME_SITE ?? 'lax').toLowerCase() === 'none' ? 'none' : 'lax';
-const secureCookie = process.env.NODE_ENV === 'production' || cookieSameSite === 'none';
+const isProd = process.env.NODE_ENV === 'production';
+const cookieSameSite: 'lax' | 'none' = isProd ? 'none' : 'lax';
+const cookieSecure = isProd ? true : false;
 
 app.use(
   cors({
@@ -90,7 +92,7 @@ const parseCookies = (cookieHeader?: string): Record<string, string> => {
 const applySessionCookies = (res: express.Response, session: SessionRecord) => {
   res.cookie(SESSION_COOKIE_NAME, session.id, {
     httpOnly: true,
-    secure: secureCookie,
+    secure: cookieSecure,
     sameSite: cookieSameSite,
     maxAge: SESSION_TTL_MS,
     path: '/'
@@ -98,7 +100,7 @@ const applySessionCookies = (res: express.Response, session: SessionRecord) => {
 
   res.cookie(CSRF_COOKIE_NAME, session.csrfToken, {
     httpOnly: false,
-    secure: secureCookie,
+    secure: cookieSecure,
     sameSite: cookieSameSite,
     maxAge: SESSION_TTL_MS,
     path: '/'
@@ -106,7 +108,7 @@ const applySessionCookies = (res: express.Response, session: SessionRecord) => {
 };
 
 const clearSessionCookies = (res: express.Response) => {
-  const options = { httpOnly: true, secure: secureCookie, sameSite: cookieSameSite, path: '/' };
+  const options = { httpOnly: true, secure: cookieSecure, sameSite: cookieSameSite, path: '/' };
   res.clearCookie(SESSION_COOKIE_NAME, options);
   res.clearCookie(CSRF_COOKIE_NAME, { ...options, httpOnly: false });
 };
