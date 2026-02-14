@@ -339,8 +339,25 @@ const toDateOnly = (value: string): Date | null => {
     return null;
   }
 
-  const parsed = new Date(`${value}T00:00:00.000Z`);
+  const [yearPart, monthPart, dayPart] = value.split('-').map((part) => Number.parseInt(part, 10));
+  if (
+    Number.isNaN(yearPart)
+    || Number.isNaN(monthPart)
+    || Number.isNaN(dayPart)
+  ) {
+    return null;
+  }
+
+  const parsed = new Date(Date.UTC(yearPart, monthPart - 1, dayPart));
   if (Number.isNaN(parsed.getTime())) {
+    return null;
+  }
+
+  if (
+    parsed.getUTCFullYear() !== yearPart
+    || parsed.getUTCMonth() + 1 !== monthPart
+    || parsed.getUTCDate() !== dayPart
+  ) {
     return null;
   }
 
@@ -348,6 +365,12 @@ const toDateOnly = (value: string): Date | null => {
 };
 
 const toISODateOnly = (value: Date): string => value.toISOString().slice(0, 10);
+
+const addUtcDays = (value: Date, days: number): Date => {
+  const next = new Date(value);
+  next.setUTCDate(next.getUTCDate() + days);
+  return next;
+};
 
 const endOfCurrentYear = (): Date => {
   const now = new Date();
@@ -1946,6 +1969,17 @@ app.get('/admin/bookings', requireAdmin, async (req, res) => {
     }
 
     where.date = rangeFilter;
+  } else if (!date) {
+    const today = toDateOnly(toISODateOnly(new Date()));
+    if (!today) {
+      res.status(500).json({ error: 'internal', message: 'Unable to create default date filter' });
+      return;
+    }
+
+    where.date = {
+      gte: addUtcDays(today, -30),
+      lte: addUtcDays(today, 30)
+    };
   }
 
   if (floorplanId) {
