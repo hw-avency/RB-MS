@@ -8,19 +8,16 @@ import { prisma } from './prisma';
 const app = express();
 const port = Number(process.env.PORT ?? 3000);
 
-const BREAKGLASS_EMAIL = (process.env.BREAKGLASS_EMAIL ?? process.env.ADMIN_EMAIL ?? 'admin@example.com').trim().toLowerCase();
-const BREAKGLASS_PASSWORD = process.env.BREAKGLASS_PASSWORD ?? process.env.ADMIN_PASSWORD;
+const ADMIN_EMAIL = process.env.ADMIN_EMAIL?.trim().toLowerCase();
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD;
 const FRONTEND_ORIGINS = (process.env.FRONTEND_ORIGIN ?? process.env.FRONTEND_URL ?? '')
   .split(',')
   .map((origin) => origin.trim())
   .filter(Boolean);
 const DEFAULT_USER_PASSWORD = process.env.DEFAULT_USER_PASSWORD ?? 'ChangeMe123!';
+const PASSWORD_SALT_ROUNDS = Number(process.env.PASSWORD_SALT_ROUNDS ?? 12);
 const cookieSameSite: 'lax' | 'none' = (process.env.COOKIE_SAME_SITE ?? 'lax').toLowerCase() === 'none' ? 'none' : 'lax';
 const secureCookie = process.env.NODE_ENV === 'production' || cookieSameSite === 'none';
-
-if (!BREAKGLASS_PASSWORD) {
-  throw new Error('BREAKGLASS_PASSWORD (or ADMIN_PASSWORD fallback) env var is required');
-}
 
 app.use(
   cors({
@@ -258,6 +255,7 @@ const sendConflict = (res: express.Response, message: string, details: Record<st
 };
 
 const normalizeEmail = (value: string): string => value.trim().toLowerCase();
+const hashPassword = async (value: string): Promise<string> => bcrypt.hash(value, PASSWORD_SALT_ROUNDS);
 
 const isValidEmailInput = (value: string): boolean => value.includes('@');
 
@@ -312,25 +310,30 @@ app.get('/api/health', async (_req, res) => {
 app.use(attachAuthUser);
 
 const ensureBreakglassAdmin = async () => {
-  const breakglassHash = await bcrypt.hash(BREAKGLASS_PASSWORD, 12);
-  const defaultHash = await bcrypt.hash(DEFAULT_USER_PASSWORD, 12);
+  const defaultHash = await hashPassword(DEFAULT_USER_PASSWORD);
 
-  await prisma.user.upsert({
-    where: { email: BREAKGLASS_EMAIL },
-    update: {
-      displayName: 'Breakglass Admin',
-      role: 'admin',
-      isActive: true,
-      passwordHash: breakglassHash
-    },
-    create: {
-      email: BREAKGLASS_EMAIL,
-      displayName: 'Breakglass Admin',
-      role: 'admin',
-      isActive: true,
-      passwordHash: breakglassHash
-    }
-  });
+  if (ADMIN_EMAIL && ADMIN_PASSWORD) {
+    const breakglassHash = await hashPassword(ADMIN_PASSWORD);
+    await prisma.user.upsert({
+      where: { email: ADMIN_EMAIL },
+      update: {
+        displayName: 'Breakglass Admin',
+        role: 'admin',
+        isActive: true,
+        passwordHash: breakglassHash
+      },
+      create: {
+        email: ADMIN_EMAIL,
+        displayName: 'Breakglass Admin',
+        role: 'admin',
+        isActive: true,
+        passwordHash: breakglassHash
+      }
+    });
+    console.log(`Breakglass upserted: ${ADMIN_EMAIL}`);
+  } else {
+    console.warn('Breakglass skipped: ADMIN_EMAIL or ADMIN_PASSWORD missing');
+  }
 
   const employees = await prisma.employee.findMany({
     select: { email: true, displayName: true, role: true, isActive: true }
@@ -362,12 +365,17 @@ app.post('/auth/login', async (req, res) => {
     return;
   }
 
+  console.log(`Login attempt for ${normalizeEmail(email)}`);
   const user = await prisma.user.findUnique({
     where: { email: normalizeEmail(email) },
     select: { id: true, email: true, displayName: true, passwordHash: true, role: true, isActive: true }
   });
 
-  if (!user || !user.isActive || !(await bcrypt.compare(password, user.passwordHash))) {
+  console.log(`User found: ${user ? 'yes' : 'no'}`);
+  const passwordMatches = user ? await bcrypt.compare(password, user.passwordHash) : false;
+  console.log(`Password compare result: ${passwordMatches}`);
+
+  if (!user || !user.isActive || !passwordMatches) {
     res.status(401).json({ error: 'unauthorized', message: 'Invalid credentials' });
     return;
   }
@@ -462,7 +470,7 @@ app.post('/admin/employees', requireAdmin, async (req, res) => {
   }
 
   try {
-    const passwordHash = await bcrypt.hash(DEFAULT_USER_PASSWORD, 12);
+    const passwordHash = await hashPassword(DEFAULT_USER_PASSWORD);
     const employee = await prisma.$transaction(async (tx) => {
       const createdEmployee = await tx.employee.create({
         data: {
