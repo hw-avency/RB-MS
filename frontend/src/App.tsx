@@ -3,6 +3,7 @@ import { API_BASE, ApiError, consumeLastAuthMeFailure } from './api';
 import { BookingApp } from './BookingApp';
 import { AdminRouter } from './admin/AdminRouter';
 import { useAuth } from './auth/AuthProvider';
+import microsoftLogo from './assets/microsoft.svg';
 
 type Route = '/' | '/admin' | '/login' | '/breakglass' | string;
 
@@ -32,7 +33,21 @@ function MicrosoftLoginPage() {
     window.location.href = `${API_BASE}/auth/entra/start`;
   };
 
-  return <main className="app-shell"><section className="card stack-sm down-card"><h2>Anmelden</h2><p className="muted">Bitte mit Ihrem Microsoft-Konto anmelden.</p><button className="btn" onClick={startMicrosoftLogin}>Mit Microsoft anmelden</button></section></main>;
+  return (
+    <main className="ms-login-layout">
+      <section className="ms-login-card" aria-label="Login panel">
+        <button
+          className="ms-login-button"
+          type="button"
+          onClick={startMicrosoftLogin}
+          aria-label="Sign in with Microsoft"
+        >
+          <img src={microsoftLogo} alt="" className="ms-login-button-logo" aria-hidden="true" />
+          <span className="ms-login-button-text">Sign in with Microsoft</span>
+        </button>
+      </section>
+    </main>
+  );
 }
 
 function BreakglassLoginPage() {
