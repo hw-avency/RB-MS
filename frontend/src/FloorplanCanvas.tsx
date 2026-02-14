@@ -16,7 +16,16 @@ type FloorplanDesk = {
 type OverlayRect = { left: number; top: number; width: number; height: number };
 type PixelPoint = { x: number; y: number };
 
-const DESK_PIN_HIT_SIZE = 30;
+const PIN_GEOMETRY = {
+  AVATAR_DIAMETER: 30,
+  INNER_GAP: 2,
+  RING_THICKNESS: 3,
+  OUTER_PADDING: 2,
+} as const;
+
+const RING_INNER_DIAMETER = PIN_GEOMETRY.AVATAR_DIAMETER + 2 * PIN_GEOMETRY.INNER_GAP;
+const RING_OUTER_DIAMETER = RING_INNER_DIAMETER + 2 * PIN_GEOMETRY.RING_THICKNESS;
+const PIN_CONTAINER_SIZE = RING_OUTER_DIAMETER + 2 * PIN_GEOMETRY.OUTER_PADDING;
 
 const clamp01 = (value: number): number => Math.min(1, Math.max(0, value));
 
@@ -95,11 +104,17 @@ const DeskOverlay = memo(function DeskOverlay({ desks, selectedDeskId, hoveredDe
 
           return (
             <Fragment key={desk.id}>
-              {showDebugCross && <span className="desk-pin-debug-cross" style={{ left: `${point.x}px`, top: `${point.y}px` }} aria-hidden="true" />}
               <button
                 type="button"
                 className={`desk-pin ${desk.status} ${selectedDeskId === desk.id ? 'selected' : ''} ${hoveredDeskId === desk.id ? 'hovered' : ''} ${desk.isCurrentUsersDesk ? 'is-own-desk' : ''} ${desk.isHighlighted ? 'is-highlighted' : ''} ${desk.isSelected ? 'is-selected' : ''} ${showDebugCross ? 'debug-outline' : ''}`}
-                style={{ left: `${point.x - DESK_PIN_HIT_SIZE / 2}px`, top: `${point.y - DESK_PIN_HIT_SIZE / 2}px` }}
+                style={{
+                  left: `${point.x - PIN_CONTAINER_SIZE / 2}px`,
+                  top: `${point.y - PIN_CONTAINER_SIZE / 2}px`,
+                  ['--pin-avatar-diameter' as string]: `${PIN_GEOMETRY.AVATAR_DIAMETER}px`,
+                  ['--pin-ring-inner-diameter' as string]: `${RING_INNER_DIAMETER}px`,
+                  ['--pin-ring-outer-diameter' as string]: `${RING_OUTER_DIAMETER}px`,
+                  ['--pin-container-size' as string]: `${PIN_CONTAINER_SIZE}px`,
+                }}
                 onMouseEnter={(event) => {
                   const rect = event.currentTarget.getBoundingClientRect();
                   setTooltip({ deskId: desk.id, left: rect.left + rect.width / 2, top: rect.top - 10 });
@@ -113,7 +128,8 @@ const DeskOverlay = memo(function DeskOverlay({ desks, selectedDeskId, hoveredDe
                 onDoubleClick={(event) => { event.stopPropagation(); onDeskDoubleClick?.(desk.id); }}
                 aria-label={`${desk.name} · ${desk.status === 'free' ? 'Frei' : desk.booking?.userDisplayName ?? desk.booking?.userEmail ?? 'Belegt'}`}
               >
-                <span className={`desk-pin-inner ${showDebugCross ? 'debug-outline' : ''}`}>
+                <span className={`pin-ring ${showDebugCross ? 'debug-outline' : ''}`} aria-hidden="true" />
+                <span className={`pin-avatar-clip ${showDebugCross ? 'debug-outline' : ''}`}>
                   {desk.status === 'booked' ? (
                     <>
                       {hasPhoto && (
@@ -132,6 +148,7 @@ const DeskOverlay = memo(function DeskOverlay({ desks, selectedDeskId, hoveredDe
                     <span className="desk-pin-free-dot" aria-hidden="true" />
                   )}
                 </span>
+                {showDebugCross && <span className="desk-pin-debug-center" aria-hidden="true" />}
               </button>
             </Fragment>
           );
