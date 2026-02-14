@@ -1,4 +1,4 @@
-import { MouseEvent, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { MouseEvent, RefObject, memo, useEffect, useLayoutEffect, useRef, useState } from 'react';
 
 type FloorplanDesk = {
   id: string;
@@ -24,6 +24,46 @@ type FloorplanCanvasProps = {
   onSelectDesk: (deskId: string) => void;
   onCanvasClick?: (coords: { xPct: number; yPct: number }) => void;
 };
+
+const FloorplanImage = memo(function FloorplanImage({ imageUrl, imageAlt, imgRef, onLoad }: { imageUrl: string; imageAlt: string; imgRef: RefObject<HTMLImageElement>; onLoad: () => void }) {
+  return <img ref={imgRef} src={imageUrl} alt={imageAlt} className="floorplan-image" onLoad={onLoad} />;
+});
+
+const DeskOverlay = memo(function DeskOverlay({
+  desks,
+  selectedDeskId,
+  hoveredDeskId,
+  overlayRect,
+  onHoverDesk,
+  onSelectDesk
+}: {
+  desks: FloorplanDesk[];
+  selectedDeskId: string;
+  hoveredDeskId: string;
+  overlayRect: OverlayRect;
+  onHoverDesk: (deskId: string) => void;
+  onSelectDesk: (deskId: string) => void;
+}) {
+  return (
+    <div className="desk-overlay" style={{ left: overlayRect.left, top: overlayRect.top, width: overlayRect.width, height: overlayRect.height }}>
+      {desks.map((desk) => (
+        <button
+          key={desk.id}
+          type="button"
+          className={`desk-pin ${desk.status} ${selectedDeskId === desk.id ? 'selected' : ''} ${hoveredDeskId === desk.id ? 'hovered' : ''}`}
+          style={{ left: `${normalized(desk.x, overlayRect.width) * overlayRect.width}px`, top: `${normalized(desk.y, overlayRect.height) * overlayRect.height}px` }}
+          title={`${desk.name} · ${desk.status === 'free' ? 'Frei' : desk.booking?.userDisplayName ?? desk.booking?.userEmail}`}
+          onMouseEnter={() => onHoverDesk(desk.id)}
+          onMouseLeave={() => onHoverDesk('')}
+          onClick={(event) => {
+            event.stopPropagation();
+            onSelectDesk(desk.id);
+          }}
+        />
+      ))}
+    </div>
+  );
+});
 
 export function FloorplanCanvas({ imageUrl, imageAlt, desks, selectedDeskId, hoveredDeskId, onHoverDesk, onSelectDesk, onCanvasClick }: FloorplanCanvasProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -51,24 +91,15 @@ export function FloorplanCanvas({ imageUrl, imageAlt, desks, selectedDeskId, hov
 
   return (
     <div ref={containerRef} className="floorplan-canvas" role="presentation" onClick={handleCanvasClick}>
-      <img ref={imgRef} src={imageUrl} alt={imageAlt} className="floorplan-image" onLoad={sync} />
-      <div className="desk-overlay" style={{ left: overlayRect.left, top: overlayRect.top, width: overlayRect.width, height: overlayRect.height }}>
-        {desks.map((desk) => (
-          <button
-            key={desk.id}
-            type="button"
-            className={`desk-pin ${desk.status} ${selectedDeskId === desk.id ? 'selected' : ''} ${hoveredDeskId === desk.id ? 'hovered' : ''}`}
-            style={{ left: `${normalized(desk.x, overlayRect.width) * overlayRect.width}px`, top: `${normalized(desk.y, overlayRect.height) * overlayRect.height}px` }}
-            title={`${desk.name} · ${desk.status === 'free' ? 'Frei' : desk.booking?.userDisplayName ?? desk.booking?.userEmail}`}
-            onMouseEnter={() => onHoverDesk(desk.id)}
-            onMouseLeave={() => onHoverDesk('')}
-            onClick={(event) => {
-              event.stopPropagation();
-              onSelectDesk(desk.id);
-            }}
-          />
-        ))}
-      </div>
+      <FloorplanImage imageUrl={imageUrl} imageAlt={imageAlt} imgRef={imgRef} onLoad={sync} />
+      <DeskOverlay
+        desks={desks}
+        selectedDeskId={selectedDeskId}
+        hoveredDeskId={hoveredDeskId}
+        overlayRect={overlayRect}
+        onHoverDesk={onHoverDesk}
+        onSelectDesk={onSelectDesk}
+      />
     </div>
   );
 }

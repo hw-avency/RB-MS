@@ -184,6 +184,15 @@ app.get('/health', async (_req, res) => {
   }
 });
 
+app.get('/api/health', async (_req, res) => {
+  try {
+    await prisma.$queryRaw`SELECT 1`;
+    res.status(200).json({ status: 'ok' });
+  } catch {
+    res.status(500).json({ status: 'error' });
+  }
+});
+
 app.post('/admin/login', (req, res) => {
   const { email, password } = req.body as { email?: string; password?: string };
   if (!email || !password) {
