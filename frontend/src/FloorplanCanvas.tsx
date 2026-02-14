@@ -98,7 +98,7 @@ const DeskOverlay = memo(function DeskOverlay({ desks, selectedDeskId, hoveredDe
               {showDebugCross && <span className="desk-pin-debug-cross" style={{ left: `${point.x}px`, top: `${point.y}px` }} aria-hidden="true" />}
               <button
                 type="button"
-                className={`desk-pin ${desk.status} ${selectedDeskId === desk.id ? 'selected' : ''} ${hoveredDeskId === desk.id ? 'hovered' : ''} ${desk.isCurrentUsersDesk ? 'is-own-desk' : ''} ${desk.isHighlighted ? 'is-highlighted' : ''} ${desk.isSelected ? 'is-selected' : ''}`}
+                className={`desk-pin ${desk.status} ${selectedDeskId === desk.id ? 'selected' : ''} ${hoveredDeskId === desk.id ? 'hovered' : ''} ${desk.isCurrentUsersDesk ? 'is-own-desk' : ''} ${desk.isHighlighted ? 'is-highlighted' : ''} ${desk.isSelected ? 'is-selected' : ''} ${showDebugCross ? 'debug-outline' : ''}`}
                 style={{ left: `${point.x - DESK_PIN_HIT_SIZE / 2}px`, top: `${point.y - DESK_PIN_HIT_SIZE / 2}px` }}
                 onMouseEnter={(event) => {
                   const rect = event.currentTarget.getBoundingClientRect();
@@ -113,7 +113,7 @@ const DeskOverlay = memo(function DeskOverlay({ desks, selectedDeskId, hoveredDe
                 onDoubleClick={(event) => { event.stopPropagation(); onDeskDoubleClick?.(desk.id); }}
                 aria-label={`${desk.name} · ${desk.status === 'free' ? 'Frei' : desk.booking?.userDisplayName ?? desk.booking?.userEmail ?? 'Belegt'}`}
               >
-                <span className="desk-pin-inner">
+                <span className={`desk-pin-inner ${showDebugCross ? 'debug-outline' : ''}`}>
                   {desk.status === 'booked' ? (
                     <>
                       {hasPhoto && (

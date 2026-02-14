@@ -28,6 +28,7 @@ const ENTRA_CLIENT_ID = process.env.ENTRA_CLIENT_ID?.trim();
 const ENTRA_CLIENT_SECRET = process.env.ENTRA_CLIENT_SECRET;
 const ENTRA_REDIRECT_URI = process.env.ENTRA_REDIRECT_URI?.trim();
 const ENTRA_POST_LOGIN_REDIRECT = process.env.ENTRA_POST_LOGIN_REDIRECT?.trim() ?? `${process.env.FRONTEND_URL ?? ''}/#/`;
+const GRAPH_APP_SCOPE = 'https://graph.microsoft.com/.default';
 
 const corsOptions = {
   origin: (origin: string | undefined, callback: (error: Error | null, allow?: boolean) => void) => {
@@ -159,6 +160,7 @@ type IdTokenClaims = {
 };
 let oidcMetadataCache: OidcMetadata | null = null;
 let jwksCache: { keys: Jwk[] } | null = null;
+let graphAppTokenCache: { token: string; expiresAt: number } | null = null;
 
 const parseBase64UrlJson = <T>(value: string): T => {
   const padded = value.padEnd(value.length + ((4 - (value.length % 4)) % 4), '=');
@@ -425,14 +427,80 @@ const hashPassword = async (value: string): Promise<string> => bcrypt.hash(value
 
 const getEmployeePhotoUrl = (employeeId: string): string => `/employees/${employeeId}/photo`;
 
-const syncEmployeePhotoFromGraph = async (employeeId: string, graphAccessToken: string) => {
-  const graphResponse = await fetch('https://graph.microsoft.com/v1.0/me/photo/$value', {
+const getGraphAppAccessToken = async (): Promise<string | null> => {
+  if (!ENTRA_TENANT_ID || !ENTRA_CLIENT_ID || !ENTRA_CLIENT_SECRET) {
+    return null;
+  }
+
+  if (graphAppTokenCache && graphAppTokenCache.expiresAt > Date.now() + 60_000) {
+    return graphAppTokenCache.token;
+  }
+
+  const tokenEndpoint = `https://login.microsoftonline.com/${ENTRA_TENANT_ID}/oauth2/v2.0/token`;
+  const response = await fetch(tokenEndpoint, {
+    method: 'POST',
+    headers: { 'content-type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      grant_type: 'client_credentials',
+      client_id: ENTRA_CLIENT_ID,
+      client_secret: ENTRA_CLIENT_SECRET,
+      scope: GRAPH_APP_SCOPE
+    })
+  });
+
+  if (!response.ok) {
+    return null;
+  }
+
+  const tokenPayload = await response.json() as { access_token?: string; expires_in?: number };
+  if (!tokenPayload.access_token) {
+    return null;
+  }
+
+  graphAppTokenCache = {
+    token: tokenPayload.access_token,
+    expiresAt: Date.now() + ((tokenPayload.expires_in ?? 300) * 1000)
+  };
+
+  return graphAppTokenCache.token;
+};
+
+type GraphPhotoPayload = { photoData: Buffer; photoType: string; photoEtag: string };
+
+const readGraphPhoto = async (url: string, accessToken: string): Promise<GraphPhotoPayload | null> => {
+  const graphResponse = await fetch(url, {
     headers: {
-      authorization: `Bearer ${graphAccessToken}`
+      authorization: `Bearer ${accessToken}`
     }
   });
 
   if (graphResponse.status === 404) {
+    return null;
+  }
+
+  if (!graphResponse.ok) {
+    throw new Error('GRAPH_PHOTO_FETCH_FAILED');
+  }
+
+  const photoData = Buffer.from(await graphResponse.arrayBuffer());
+  const photoType = graphResponse.headers.get('content-type') ?? 'image/jpeg';
+  const photoEtag = crypto.createHash('sha256').update(photoData).digest('hex');
+  return { photoData, photoType, photoEtag };
+};
+
+const saveEmployeePhoto = async (employeeId: string, photo: GraphPhotoPayload | null) => {
+  const existingEmployee = await prisma.employee.findUnique({
+    where: { id: employeeId },
+    select: { id: true, photoEtag: true, photoUrl: true, photoData: true }
+  });
+
+  if (!existingEmployee) return;
+
+  if (!photo) {
+    if (!existingEmployee.photoData && existingEmployee.photoUrl) {
+      return;
+    }
+
     await prisma.employee.update({
       where: { id: employeeId },
       data: {
@@ -446,18 +514,7 @@ const syncEmployeePhotoFromGraph = async (employeeId: string, graphAccessToken: 
     return;
   }
 
-  if (!graphResponse.ok) {
-    return;
-  }
-
-  const photoBuffer = Buffer.from(await graphResponse.arrayBuffer());
-  const photoType = graphResponse.headers.get('content-type') ?? 'image/jpeg';
-  const nextEtag = crypto.createHash('sha256').update(photoBuffer).digest('hex');
-
-  const employee = await prisma.employee.findUnique({ where: { id: employeeId }, select: { photoEtag: true, photoUrl: true } });
-  if (!employee) return;
-
-  if (employee.photoEtag === nextEtag && employee.photoUrl) {
+  if (existingEmployee.photoEtag === photo.photoEtag && existingEmployee.photoUrl) {
     return;
   }
 
@@ -465,12 +522,36 @@ const syncEmployeePhotoFromGraph = async (employeeId: string, graphAccessToken: 
     where: { id: employeeId },
     data: {
       photoUrl: getEmployeePhotoUrl(employeeId),
-      photoEtag: nextEtag,
-      photoData: photoBuffer,
-      photoType,
+      photoEtag: photo.photoEtag,
+      photoData: new Uint8Array(photo.photoData),
+      photoType: photo.photoType,
       photoUpdatedAt: new Date()
     }
   });
+};
+
+const syncEmployeePhotoFromGraph = async (employeeId: string, graphAccessToken: string) => {
+  try {
+    const photo = await readGraphPhoto('https://graph.microsoft.com/v1.0/me/photo/$value', graphAccessToken);
+    await saveEmployeePhoto(employeeId, photo);
+  } catch {
+    return;
+  }
+};
+
+const syncEmployeePhotoWithAppToken = async (employee: { id: string; entraOid: string | null; email: string }) => {
+  const appAccessToken = await getGraphAppAccessToken();
+  if (!appAccessToken) return;
+
+  const graphUserIdentifier = employee.entraOid ?? employee.email;
+
+  try {
+    const encodedUserId = encodeURIComponent(graphUserIdentifier);
+    const photo = await readGraphPhoto(`https://graph.microsoft.com/v1.0/users/${encodedUserId}/photo/$value`, appAccessToken);
+    await saveEmployeePhoto(employee.id, photo);
+  } catch {
+    return;
+  }
 };
 
 const isValidEmailInput = (value: string): boolean => value.includes('@');
@@ -751,6 +832,8 @@ app.get('/auth/entra/callback', async (req, res) => {
     const user = await upsertEmployeeFromEntraLogin({ oid, tid, email, name });
     if (tokenPayload.access_token) {
       await syncEmployeePhotoFromGraph(user.employeeId, tokenPayload.access_token);
+    } else {
+      await syncEmployeePhotoWithAppToken({ id: user.employeeId, entraOid: oid, email });
     }
     const session = createSession(user.id, {
       graphAccessToken: tokenPayload.access_token,
@@ -799,6 +882,19 @@ app.post('/auth/login', async (req, res) => {
 
     const session = createSession(user.id);
     applySessionCookies(res, session);
+
+    const employee = await prisma.employee.findUnique({
+      where: { email: normalizedEmail },
+      select: { id: true, email: true, entraOid: true }
+    });
+    if (employee) {
+      await syncEmployeePhotoWithAppToken(employee);
+      await prisma.employee.update({
+        where: { id: employee.id },
+        data: { lastLoginAt: new Date() }
+      });
+    }
+
     console.log('LOGIN_SUCCESS', { requestId, userId: user.id, role: user.role });
 
     res.status(200).json({
@@ -1001,10 +1097,18 @@ app.post('/admin/employees', requireAdmin, async (req, res) => {
         }
       });
 
-      return { ...createdEmployee, photoUrl: getEmployeePhotoUrl(createdEmployee.id) };
+      return { id: createdEmployee.id, email: normalizedEmail, entraOid: null };
     });
 
-    res.status(201).json(employee);
+    await syncEmployeePhotoWithAppToken(employee);
+
+    const createdEmployee = await prisma.employee.findUnique({ where: { id: employee.id }, select: employeeSelect });
+    if (!createdEmployee) {
+      res.status(500).json({ error: 'server_error', message: 'Employee could not be loaded after create' });
+      return;
+    }
+
+    res.status(201).json({ ...createdEmployee, photoUrl: createdEmployee.photoUrl ?? getEmployeePhotoUrl(createdEmployee.id) });
   } catch (error) {
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
       sendConflict(res, 'Employee email already exists', { email: normalizedEmail });
