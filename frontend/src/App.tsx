@@ -6,6 +6,12 @@ import { useAuth } from './auth/AuthProvider';
 
 type Route = '/' | '/admin' | '/login' | string;
 
+type LoginDebugInfo = {
+  status?: number;
+  code?: string;
+  requestId?: string;
+};
+
 const toRoutePath = (hash: string) => {
   if (!hash || hash === '#') return '/';
   const raw = hash.startsWith('#') ? hash.slice(1) : hash;
@@ -26,18 +32,43 @@ function LoginPage() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
+  const [debugInfo, setDebugInfo] = useState<LoginDebugInfo | null>(null);
   const [busy, setBusy] = useState(false);
+  const isDev = import.meta.env.DEV;
 
   const onSubmit = async (event: FormEvent) => {
     event.preventDefault();
     setError('');
+    setDebugInfo(null);
     setBusy(true);
     try {
       await login(email, password);
       navigate('/');
     } catch (err) {
-      if (err instanceof ApiError && err.code === 'UNAUTHORIZED') {
-        setError('Login fehlgeschlagen');
+      if (err instanceof ApiError) {
+        if (err.kind === 'BACKEND_UNREACHABLE') {
+          setError('Backend nicht erreichbar');
+        } else if (err.backendCode === 'SESSION_MISSING') {
+          setError('Login ok, aber Session fehlt');
+        } else if (err.status === 401) {
+          if (err.backendCode === 'USER_NOT_FOUND') {
+            setError('User nicht gefunden');
+          } else if (err.backendCode === 'PASSWORD_MISMATCH') {
+            setError('Passwort falsch');
+          } else {
+            setError('Ungültige Zugangsdaten');
+          }
+        } else if (err.status >= 500) {
+          setError('Serverfehler beim Login');
+        } else {
+          setError('Login fehlgeschlagen');
+        }
+
+        setDebugInfo({
+          status: err.status || undefined,
+          code: err.backendCode ?? err.code,
+          requestId: err.requestId
+        });
       } else {
         setError('Login fehlgeschlagen');
       }
@@ -46,7 +77,7 @@ function LoginPage() {
     }
   };
 
-  return <main className="app-shell"><section className="card stack-sm down-card"><h2>Anmelden</h2><form className="stack-sm" onSubmit={onSubmit}><input required type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="E-Mail" /><input required type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Passwort" />{error && <p className="error-banner">{error}</p>}<button className="btn" disabled={busy}>{busy ? 'Anmelden…' : 'Anmelden'}</button></form></section></main>;
+  return <main className="app-shell"><section className="card stack-sm down-card"><h2>Anmelden</h2><form className="stack-sm" onSubmit={onSubmit}><input required type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="E-Mail" /><input required type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Passwort" />{error && <p className="error-banner">{error}</p>}{isDev && debugInfo && <p className="muted">debug: status={debugInfo.status ?? '-'} code={debugInfo.code ?? '-'} requestId={debugInfo.requestId ?? '-'}</p>}<button className="btn" disabled={busy}>{busy ? 'Anmelden…' : 'Anmelden'}</button></form></section></main>;
 }
 
 function LoadingGate() {

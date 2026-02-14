@@ -48,11 +48,29 @@ type AuthUser = { id: string; email: string; displayName: string; role: Employee
 declare global {
   namespace Express {
     interface Request {
+      requestId?: string;
       authUser?: AuthUser;
       authSession?: SessionRecord;
     }
   }
 }
+
+const createRequestId = (): string => {
+  if (typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+
+  return `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+};
+
+const attachRequestId: express.RequestHandler = (req, res, next) => {
+  const requestId = createRequestId();
+  req.requestId = requestId;
+  res.setHeader('X-Request-Id', requestId);
+  next();
+};
+
+app.use(attachRequestId);
 
 const SESSION_COOKIE_NAME = 'rbms_session';
 const CSRF_COOKIE_NAME = 'rbms_csrf';
@@ -311,8 +329,13 @@ app.use(attachAuthUser);
 
 const ensureBreakglassAdmin = async () => {
   const defaultHash = await hashPassword(DEFAULT_USER_PASSWORD);
+  console.log('BREAKGLASS_ENV_PRESENT', { emailSet: Boolean(ADMIN_EMAIL), passwordSet: Boolean(ADMIN_PASSWORD) });
 
   if (ADMIN_EMAIL && ADMIN_PASSWORD) {
+    const existingBreakglass = await prisma.user.findUnique({
+      where: { email: ADMIN_EMAIL },
+      select: { id: true }
+    });
     const breakglassHash = await hashPassword(ADMIN_PASSWORD);
     await prisma.user.upsert({
       where: { email: ADMIN_EMAIL },
@@ -330,7 +353,7 @@ const ensureBreakglassAdmin = async () => {
         passwordHash: breakglassHash
       }
     });
-    console.log(`Breakglass upserted: ${ADMIN_EMAIL}`);
+    console.log('BREAKGLASS_UPSERT', { email: ADMIN_EMAIL, created: !existingBreakglass, role: 'admin' });
   } else {
     console.warn('Breakglass skipped: ADMIN_EMAIL or ADMIN_PASSWORD missing');
   }
@@ -359,38 +382,54 @@ const ensureBreakglassAdmin = async () => {
 };
 
 app.post('/auth/login', async (req, res) => {
-  const { email, password } = req.body as { email?: string; password?: string };
-  if (!email || !password) {
-    res.status(400).json({ error: 'validation', message: 'email and password are required' });
-    return;
-  }
+  const requestId = req.requestId ?? 'unknown';
 
-  console.log(`Login attempt for ${normalizeEmail(email)}`);
-  const user = await prisma.user.findUnique({
-    where: { email: normalizeEmail(email) },
-    select: { id: true, email: true, displayName: true, passwordHash: true, role: true, isActive: true }
-  });
-
-  console.log(`User found: ${user ? 'yes' : 'no'}`);
-  const passwordMatches = user ? await bcrypt.compare(password, user.passwordHash) : false;
-  console.log(`Password compare result: ${passwordMatches}`);
-
-  if (!user || !user.isActive || !passwordMatches) {
-    res.status(401).json({ error: 'unauthorized', message: 'Invalid credentials' });
-    return;
-  }
-
-  const session = createSession(user.id);
-  applySessionCookies(res, session);
-
-  res.status(200).json({
-    user: {
-      id: user.id,
-      email: user.email,
-      displayName: user.displayName,
-      role: user.role === 'admin' ? 'admin' : 'user'
+  try {
+    const { email, password } = req.body as { email?: string; password?: string };
+    if (!email || !password) {
+      res.status(400).json({ code: 'VALIDATION_ERROR', message: 'email and password are required' });
+      return;
     }
-  });
+
+    const normalizedEmail = normalizeEmail(email);
+    console.log('LOGIN_ATTEMPT', { requestId, email: normalizedEmail, ip: req.ip });
+
+    const user = await prisma.user.findUnique({
+      where: { email: normalizedEmail },
+      select: { id: true, email: true, displayName: true, passwordHash: true, role: true, isActive: true }
+    });
+
+    if (!user || !user.isActive) {
+      console.log('LOGIN_FAIL_USER_NOT_FOUND', { requestId, email: normalizedEmail });
+      res.status(401).json({ code: 'USER_NOT_FOUND', message: 'Invalid credentials' });
+      return;
+    }
+
+    const passwordMatches = await bcrypt.compare(password, user.passwordHash);
+    if (!passwordMatches) {
+      console.log('LOGIN_FAIL_PASSWORD_MISMATCH', { requestId, userId: user.id });
+      res.status(401).json({ code: 'PASSWORD_MISMATCH', message: 'Invalid credentials' });
+      return;
+    }
+
+    const session = createSession(user.id);
+    applySessionCookies(res, session);
+    console.log('LOGIN_SUCCESS', { requestId, userId: user.id, role: user.role });
+
+    res.status(200).json({
+      user: {
+        id: user.id,
+        email: user.email,
+        displayName: user.displayName,
+        role: user.role === 'admin' ? 'admin' : 'user'
+      }
+    });
+  } catch (error) {
+    const errorName = error instanceof Error ? error.name : 'UnknownError';
+    const errorMessage = error instanceof Error ? error.message : 'Unexpected login error';
+    console.error('LOGIN_ERROR', { requestId, errorName, errorMessage });
+    res.status(500).json({ code: 'SERVER_ERROR', message: 'Login failed' });
+  }
 });
 
 app.post('/auth/logout', (req, res) => {
@@ -401,8 +440,11 @@ app.post('/auth/logout', (req, res) => {
 });
 
 app.get('/auth/me', (req, res) => {
+  const requestId = req.requestId ?? 'unknown';
+  console.log('ME_CHECK', { requestId, hasSession: Boolean(req.authSession && req.authUser) });
+
   if (!req.authUser) {
-    res.status(401).json({ error: 'unauthorized', message: 'Authentication required' });
+    res.status(401).json({ code: 'UNAUTHENTICATED', message: 'Authentication required' });
     return;
   }
 

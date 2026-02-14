@@ -2,18 +2,38 @@ const API_BASE = import.meta.env.VITE_API_BASE_URL || window.location.origin;
 const REQUEST_TIMEOUT_MS = 6000;
 
 export type ApiErrorCode = 'BACKEND_UNREACHABLE' | 'UNAUTHORIZED' | 'SERVER_ERROR' | 'UNKNOWN';
+export type ApiErrorKind = 'BACKEND_UNREACHABLE' | 'HTTP_ERROR';
+
+type ErrorPayload = {
+  code?: string;
+  message?: string;
+};
 
 export class ApiError extends Error {
   status: number;
   details: unknown;
   code: ApiErrorCode;
+  kind: ApiErrorKind;
+  backendCode?: string;
+  requestId?: string;
 
-  constructor(message: string, status: number, code: ApiErrorCode, details?: unknown) {
-    super(message);
+  constructor(params: {
+    message: string;
+    status: number;
+    code: ApiErrorCode;
+    kind: ApiErrorKind;
+    details?: unknown;
+    backendCode?: string;
+    requestId?: string;
+  }) {
+    super(params.message);
     this.name = 'ApiError';
-    this.status = status;
-    this.code = code;
-    this.details = details;
+    this.status = params.status;
+    this.code = params.code;
+    this.kind = params.kind;
+    this.details = params.details;
+    this.backendCode = params.backendCode;
+    this.requestId = params.requestId;
   }
 }
 
@@ -52,9 +72,22 @@ const normalizeErrorMessage = (body: unknown, status: number): string => {
   return `Request failed with status ${status}`;
 };
 
+const toBackendCode = (body: unknown): string | undefined => {
+  if (typeof body === 'object' && body !== null && 'code' in body && typeof (body as ErrorPayload).code === 'string') {
+    return (body as ErrorPayload).code;
+  }
+
+  return undefined;
+};
+
 async function request<T>(path: string, method: HttpMethod, payload?: unknown): Promise<T> {
   if (!backendAvailable && !path.endsWith('/health') && !path.endsWith('/api/health')) {
-    throw new ApiError('Backend nicht erreichbar. Bitte prüfen, ob der Server läuft.', 0, 'BACKEND_UNREACHABLE');
+    throw new ApiError({
+      message: 'Backend nicht erreichbar. Bitte prüfen, ob der Server läuft.',
+      status: 0,
+      code: 'BACKEND_UNREACHABLE',
+      kind: 'BACKEND_UNREACHABLE'
+    });
   }
 
   const controller = new AbortController();
@@ -75,7 +108,12 @@ async function request<T>(path: string, method: HttpMethod, payload?: unknown): 
     });
   } catch {
     backendAvailable = false;
-    throw new ApiError('Backend nicht erreichbar. Bitte prüfen, ob der Server läuft.', 0, 'BACKEND_UNREACHABLE');
+    throw new ApiError({
+      message: 'Backend nicht erreichbar. Bitte prüfen, ob der Server läuft.',
+      status: 0,
+      code: 'BACKEND_UNREACHABLE',
+      kind: 'BACKEND_UNREACHABLE'
+    });
   } finally {
     window.clearTimeout(timeout);
   }
@@ -83,9 +121,19 @@ async function request<T>(path: string, method: HttpMethod, payload?: unknown): 
   const contentType = response.headers.get('content-type') ?? '';
   const isJson = contentType.includes('application/json');
   const body = isJson ? await response.json() : await response.text();
+  const requestId = response.headers.get('x-request-id') ?? undefined;
 
   if (!response.ok) {
-    const error = new ApiError(normalizeErrorMessage(body, response.status), response.status, mapStatusToCode(response.status), body);
+    const error = new ApiError({
+      message: normalizeErrorMessage(body, response.status),
+      status: response.status,
+      code: mapStatusToCode(response.status),
+      kind: 'HTTP_ERROR',
+      details: body,
+      backendCode: toBackendCode(body),
+      requestId
+    });
+
     if (error.code === 'UNAUTHORIZED') {
       unauthorizedHandler?.();
     }

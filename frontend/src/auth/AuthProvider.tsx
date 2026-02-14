@@ -54,12 +54,34 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const login = useCallback(async (email: string, password: string) => {
     await post<AuthMeResponse>('/auth/login', { email, password });
-    const currentUser = await refreshMe();
 
-    if (!currentUser) {
-      throw new ApiError('Nicht autorisiert.', 401, 'UNAUTHORIZED');
+    try {
+      const meResponse = await get<AuthMeResponse>('/auth/me');
+      setUser(meResponse.user);
+      return;
+    } catch (error) {
+      setUser(null);
+      if (error instanceof ApiError) {
+        throw new ApiError({
+          message: 'Login ok, aber Session fehlt.',
+          status: error.status,
+          code: error.code,
+          kind: error.kind,
+          details: error.details,
+          backendCode: 'SESSION_MISSING',
+          requestId: error.requestId
+        });
+      }
+
+      throw new ApiError({
+        message: 'Login ok, aber Session fehlt.',
+        status: 401,
+        code: 'UNAUTHORIZED',
+        kind: 'HTTP_ERROR',
+        backendCode: 'SESSION_MISSING'
+      });
     }
-  }, [refreshMe]);
+  }, []);
 
   const logout = useCallback(async () => {
     try {
