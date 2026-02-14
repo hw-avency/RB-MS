@@ -73,6 +73,5 @@ Hinweis: Beim Container-Start werden automatisch `prisma generate`, `prisma migr
 
 ## Admin UI
 
-- Der Admin-Bereich ist unter `/admin` erreichbar (`/admin/floorplans`, `/admin/desks`, `/admin/bookings`, `/admin/employees`).
-- Für Render Static Site Routing muss jede unbekannte Route auf `index.html` rewriten, damit Deep-Links wie `/admin/employees` nach Refresh kein 404 liefern.
-- In diesem Repo ist das doppelt abgesichert über `render.yaml` (`routes` Rewrites) und `frontend/public/_redirects` (`/* /index.html 200`).
+- Der Admin-Bereich ist unter `/#/admin` erreichbar (`/#/admin/floorplans`, `/#/admin/desks`, `/#/admin/bookings`, `/#/admin/employees`).
+- Der Hash-Router sorgt dafür, dass Deep-Links wie `/#/admin/employees` inklusive Browser-Refresh ohne Server-Rewrite funktionieren.
