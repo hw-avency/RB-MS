@@ -1,6 +1,7 @@
 import { FormEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { API_BASE, ApiError, checkBackendHealth, get, markBackendAvailable, post, put } from './api';
+import { Avatar } from './components/Avatar';
 import { UserMenu } from './components/UserMenu';
 import { FloorplanCanvas } from './FloorplanCanvas';
 import type { AuthUser } from './auth/AuthProvider';
@@ -511,8 +512,13 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
                   }}
                 >
                   <td>
-                    <strong>{occupant.name}</strong>
-                    <p className="muted">{occupant.email}</p>
+                    <div className="occupant-person-cell">
+                      <Avatar displayName={occupant.name} email={occupant.email} photoUrl={occupant.photoUrl} size={24} />
+                      <div>
+                        <strong>{occupant.name}</strong>
+                        <p className="muted">{occupant.email}</p>
+                      </div>
+                    </div>
                   </td>
                   <td>{occupant.deskLabel}</td>
                 </tr>
