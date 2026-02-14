@@ -1,6 +1,6 @@
 import { FormEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { API_BASE, ApiError, checkBackendHealth, get, markBackendAvailable, post, put } from './api';
+import { API_BASE, ApiError, checkBackendHealth, get, markBackendAvailable, post, put, resolveApiUrl } from './api';
 import { Avatar } from './components/Avatar';
 import { UserMenu } from './components/UserMenu';
 import { FloorplanCanvas } from './FloorplanCanvas';
@@ -51,12 +51,6 @@ const getApiErrorMessage = (error: unknown, fallback: string): string => {
   return fallback;
 };
 
-const resolvePhotoUrl = (value?: string): string | undefined => {
-  if (!value) return undefined;
-  if (/^https?:\/\//i.test(value)) return value;
-  return `${API_BASE}${value.startsWith('/') ? value : `/${value}`}`;
-};
-
 export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogout, currentUser }: { onOpenAdmin: () => void; canOpenAdmin: boolean; currentUserEmail?: string; onLogout: () => Promise<void>; currentUser: AuthUser }) {
   const [floorplans, setFloorplans] = useState<Floorplan[]>([]);
   const [selectedFloorplanId, setSelectedFloorplanId] = useState('');
@@ -99,10 +93,10 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
     if (!desk.booking) return desk;
     const employee = desk.booking.employeeId ? employeesById.get(desk.booking.employeeId) : employeesByEmail.get(desk.booking.userEmail.toLowerCase());
     const fallbackPhotoUrl = currentUserEmail && desk.booking.userEmail.toLowerCase() === currentUserEmail.toLowerCase()
-      ? resolvePhotoUrl(`/user/me/photo?v=${encodeURIComponent(currentUserEmail)}`)
+      ? resolveApiUrl(`/user/me/photo?v=${encodeURIComponent(currentUserEmail)}`)
       : undefined;
-    const employeePhotoUrl = resolvePhotoUrl(employee?.photoUrl);
-    const bookingPhotoUrl = resolvePhotoUrl(desk.booking.userPhotoUrl);
+    const employeePhotoUrl = resolveApiUrl(employee?.photoUrl);
+    const bookingPhotoUrl = resolveApiUrl(desk.booking.userPhotoUrl);
     return {
       ...desk,
       booking: {
@@ -243,7 +237,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
 
   const createSingleBooking = async (): Promise<'created' | 'pending_override' | 'unchanged'> => {
     if (!selectedDeskId) {
-      throw new Error('Bitte Desk auswählen.');
+      throw new Error('Bitte Tisch auswählen.');
     }
 
     const existingBooking = desks.find((desk) => desk.booking && desk.booking.userEmail.toLowerCase() === selectedEmployeeEmail.toLowerCase())?.booking;
@@ -262,7 +256,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
     }
 
     if (existingBooking && existingDesk?.id === selectedDeskId) {
-      setToastMessage('Dieser Platz ist bereits gebucht.');
+      setToastMessage('Dieser Tisch ist bereits gebucht.');
       return 'unchanged';
     }
 
@@ -292,7 +286,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
 
   const createRangeBooking = async () => {
     if (!selectedDeskId) {
-      throw new Error('Bitte Desk auswählen.');
+      throw new Error('Bitte Tisch auswählen.');
     }
 
     if (rangeStartDate > rangeEndDate) {
@@ -312,7 +306,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
 
   const createSeriesBooking = async () => {
     if (!selectedDeskId) {
-      throw new Error('Bitte Desk auswählen.');
+      throw new Error('Bitte Tisch auswählen.');
     }
 
     if (seriesWeekdays.length === 0) {
@@ -418,16 +412,10 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
       </section>
 
       <section className="card stack-sm">
-        <h3 className="section-title">Filter & Legende</h3>
-        <label className="field">
-          <span>Standort/Floorplan</span>
-          <select value={selectedFloorplanId} onChange={(event) => setSelectedFloorplanId(event.target.value)}>
-            {floorplans.map((floorplan) => <option key={floorplan.id} value={floorplan.id}>{floorplan.name}</option>)}
-          </select>
-        </label>
+        <h3 className="section-title">Legende</h3>
         <label className="toggle">
           <input type="checkbox" checked={onlyFree} onChange={(event) => setOnlyFree(event.target.checked)} />
-          <span>Nur freie Plätze</span>
+          <span>Nur freie Plätze anzeigen</span>
         </label>
         <div className="legend">
           <span><i className="dot free" /> Frei</span>
@@ -461,7 +449,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
             <p className="muted">Belegt</p>
             <h4>{selectedDeskOccupant.name}</h4>
             <p className="muted">{selectedDeskOccupant.email}</p>
-            <p><strong>Desk:</strong> {selectedDeskOccupant.deskLabel}</p>
+            <p><strong>Tisch:</strong> {selectedDeskOccupant.deskLabel}</p>
           </div>
         ) : (
           <div className="empty-state stack-sm">
@@ -489,7 +477,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
             <thead>
               <tr>
                 <th>Person</th>
-                <th>Desk</th>
+                <th>Tisch</th>
               </tr>
             </thead>
             <tbody>
@@ -611,9 +599,9 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
             </div>
             <form onSubmit={createBooking} className="stack-sm">
               <label className="field">
-                <span>Desk</span>
+                <span>Tisch</span>
                 <select value={selectedDeskId} onChange={(event) => setSelectedDeskId(event.target.value)}>
-                  <option value="">Desk wählen</option>
+                  <option value="">Tisch wählen</option>
                   {desks.map((desk) => <option key={desk.id} value={desk.id}>{desk.name}</option>)}
                 </select>
               </label>

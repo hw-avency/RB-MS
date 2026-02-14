@@ -237,4 +237,10 @@ export function del<T>(path: string): Promise<T> {
   return request<T>(path, 'DELETE');
 }
 
+export function resolveApiUrl(value?: string | null): string | undefined {
+  if (!value) return undefined;
+  if (/^https?:\/\//i.test(value)) return value;
+  return `${API_BASE}${value.startsWith('/') ? value : `/${value}`}`;
+}
+
 export { API_BASE };

@@ -1,4 +1,5 @@
 import { CSSProperties, useEffect, useMemo, useState } from 'react';
+import { resolveApiUrl } from '../api';
 
 type AvatarProps = {
   displayName?: string;
@@ -36,12 +37,13 @@ const buildInitials = (displayName?: string, email?: string): string => {
 export function Avatar({ displayName, email, photoUrl, size = 24 }: AvatarProps) {
   const [imageFailed, setImageFailed] = useState(false);
   const initials = useMemo(() => buildInitials(displayName, email), [displayName, email]);
+  const resolvedPhotoUrl = useMemo(() => resolveApiUrl(photoUrl), [photoUrl]);
 
   useEffect(() => {
     setImageFailed(false);
-  }, [photoUrl]);
+  }, [resolvedPhotoUrl]);
 
-  const showImage = Boolean(photoUrl) && !imageFailed;
+  const showImage = Boolean(resolvedPhotoUrl) && !imageFailed;
   const style = {
     width: size,
     height: size,
@@ -50,7 +52,7 @@ export function Avatar({ displayName, email, photoUrl, size = 24 }: AvatarProps)
 
   return (
     <span className="app-avatar" style={style} aria-hidden>
-      {showImage && <img src={photoUrl ?? undefined} alt="" onError={() => setImageFailed(true)} />}
+      {showImage && <img src={resolvedPhotoUrl} alt="" loading="lazy" referrerPolicy="no-referrer" onError={() => setImageFailed(true)} />}
       {!showImage && <span>{initials}</span>}
     </span>
   );

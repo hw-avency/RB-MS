@@ -30,7 +30,7 @@ html, body, #root { margin: 0; min-height: 100%; background: hsl(var(--backgroun
 .avatar-sm{width:30px;height:30px;font-size:11px}
 .avatar img{width:100%;height:100%;object-fit:cover;display:block}
 .app-avatar{border-radius:999px;background:hsl(var(--muted));display:grid;place-items:center;overflow:hidden;font-weight:700;color:hsl(var(--muted-foreground));flex-shrink:0;text-transform:uppercase}
-.app-avatar img{width:100%;height:100%;object-fit:cover;display:block}
+.app-avatar img{width:100%;height:100%;object-fit:cover;display:block;position:relative;z-index:2}
 .user-chip-name{font-size:13px;max-width:180px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .user-chip-chevron{color:hsl(var(--muted-foreground))}
 .user-menu-content{position:absolute;right:0;top:calc(100% + 8px);background:white;border:1px solid hsl(var(--border));border-radius:12px;padding:8px;display:grid;gap:4px;min-width:280px;max-width:320px;box-shadow:0 12px 20px rgba(15,23,42,.12);z-index:30}
@@ -254,3 +254,13 @@ tr{cursor:pointer}.row-selected{background:hsl(var(--muted))}
 @media (max-width: 900px){.admin-content-v2{max-width:100%}.dashboard-grid{grid-template-columns:1fr}.admin-search{min-width:100%}}
 
 .bulk-actions{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:10px 12px;border:1px solid hsl(var(--border));border-radius:10px;background:hsl(var(--muted)/.4)}
+
+
+.floor-thumb-btn{border:0;background:transparent;padding:0;cursor:pointer}
+.floor-thumb{width:120px;height:80px;object-fit:cover;border-radius:8px;border:1px solid hsl(var(--border));display:block}
+.bookings-layout{display:grid;grid-template-columns:minmax(0,1.4fr) minmax(320px,.9fr);gap:12px;align-items:start}
+.bookings-floor-preview .canvas-body{min-height:380px}
+.booking-editor-dialog{max-width:min(1100px,96vw)}
+.booking-editor-layout{display:grid;grid-template-columns:minmax(260px,340px) minmax(0,1fr);gap:12px;align-items:start}
+.booking-editor-plan .canvas-body{min-height:320px}
+@media (max-width: 1024px){.bookings-layout,.booking-editor-layout{grid-template-columns:1fr}}

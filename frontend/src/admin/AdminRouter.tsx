@@ -1,6 +1,6 @@
 import { FormEvent, ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { del, get, patch, post } from '../api';
+import { del, get, patch, post, resolveApiUrl } from '../api';
 import { Avatar } from '../components/Avatar';
 import { UserMenu } from '../components/UserMenu';
 import { FloorplanCanvas } from '../FloorplanCanvas';
@@ -24,7 +24,7 @@ type DeskFormState = {
 const navItems = [
   { to: '/admin', label: 'Dashboard' },
   { to: '/admin/floorplans', label: 'Floorpläne' },
-  { to: '/admin/desks', label: 'Desks' },
+  { to: '/admin/desks', label: 'Tische' },
   { to: '/admin/bookings', label: 'Buchungen' },
   { to: '/admin/employees', label: 'Mitarbeiter' }
 ];
@@ -232,7 +232,7 @@ function DashboardPage({ path, navigate, onLogout, currentUser }: RouteProps) {
     <AdminLayout path={path} navigate={navigate} onLogout={onLogout} title="Dashboard" currentUser={currentUser ?? null}>
       {state.error && <ErrorState text={state.error} onRetry={load} />}
       <section className="dashboard-grid">
-        {[{ label: 'Aktive Mitarbeiter', value: employees.filter((e) => e.isActive).length, icon: '👥', to: '/admin/employees' }, { label: 'Desks', value: desks.length, icon: '🖱️', to: '/admin/desks' }, { label: 'Floorpläne', value: floorplans.length, icon: '🗺️', to: '/admin/floorplans' }, { label: 'Buchungen (7 Tage)', value: bookingsNextWeek, icon: '📅', to: '/admin/bookings' }].map((card) => (
+        {[{ label: 'Aktive Mitarbeiter', value: employees.filter((e) => e.isActive).length, icon: '👥', to: '/admin/employees' }, { label: 'Tische', value: desks.length, icon: '🖱️', to: '/admin/desks' }, { label: 'Floorpläne', value: floorplans.length, icon: '🗺️', to: '/admin/floorplans' }, { label: 'Buchungen (7 Tage)', value: bookingsNextWeek, icon: '📅', to: '/admin/bookings' }].map((card) => (
           <button className="card dashboard-kpi" key={card.label} onClick={() => navigate(card.to)}><span className="dashboard-kpi-icon">{card.icon}</span><strong>{card.value}</strong><p>{card.label}</p></button>
         ))}
       </section>
@@ -244,7 +244,7 @@ function DashboardPage({ path, navigate, onLogout, currentUser }: RouteProps) {
               {recent.map((booking) => {
                 const desk = desks.find((item) => item.id === booking.deskId);
                 const floorplan = floorplans.find((plan) => plan.id === desk?.floorplanId);
-                return <button key={booking.id} className="dashboard-booking-row" onClick={() => navigate('/admin/bookings')}><div><strong>{booking.userDisplayName || booking.userEmail}</strong><p className="muted">{formatDateOnly(booking.date)} · {desk?.name ?? 'Desk'}</p></div><span className="muted">{floorplan?.name ?? '—'}</span></button>;
+                return <button key={booking.id} className="dashboard-booking-row" onClick={() => navigate('/admin/bookings')}><div><strong>{booking.userDisplayName || booking.userEmail}</strong><p className="muted">{formatDateOnly(booking.date)} · {desk?.name ?? 'Tisch'}</p></div><span className="muted">{floorplan?.name ?? '—'}</span></button>;
               })}
             </div>
           )}
@@ -254,7 +254,7 @@ function DashboardPage({ path, navigate, onLogout, currentUser }: RouteProps) {
           <div className="quick-actions-grid">
             <button className="btn" onClick={() => navigate('/admin/employees?create=1')}>Mitarbeiter anlegen</button>
             <button className="btn" onClick={() => navigate('/admin/floorplans?create=1')}>Floorplan anlegen</button>
-            <button className="btn" onClick={() => navigate('/admin/desks?create=1')}>Desk anlegen</button>
+            <button className="btn" onClick={() => navigate('/admin/desks?create=1')}>Tisch anlegen</button>
             <button className="btn" onClick={() => navigate('/admin/bookings?create=1')}>Buchung anlegen</button>
           </div>
         </article>
@@ -293,7 +293,7 @@ function FloorplansPage({ path, navigate, onLogout, currentUser }: RouteProps) {
       <section className="card stack-sm">
         <div className="crud-toolbar"><div className="inline-between"><h3>Floorpläne</h3><Badge>{filtered.length}</Badge></div><div className="admin-search">🔎<input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Floorplan suchen" /></div></div>
         {state.error && <ErrorState text={state.error} onRetry={load} />}
-        <div className="table-wrap"><table className="admin-table"><thead><tr><th>Name</th><th>Bild URL</th><th>Erstellt</th><th className="align-right">Aktionen</th></tr></thead>{state.loading && !state.ready ? <SkeletonRows columns={4} /> : <tbody>{filtered.map((floorplan) => <tr key={floorplan.id}><td>{floorplan.name}</td><td className="truncate-cell" title={floorplan.imageUrl}>{floorplan.imageUrl}</td><td>{formatDate(floorplan.createdAt)}</td><td className="align-right"><RowMenu items={[{ label: 'Bearbeiten', onSelect: () => setEditing(floorplan) }, { label: 'Löschen', onSelect: () => setPendingDelete(floorplan), danger: true }]} /></td></tr>)}</tbody>}</table></div>
+        <div className="table-wrap"><table className="admin-table"><thead><tr><th>Vorschau</th><th>Name</th><th>Bild URL</th><th>Erstellt</th><th className="align-right">Aktionen</th></tr></thead>{state.loading && !state.ready ? <SkeletonRows columns={5} /> : <tbody>{filtered.map((floorplan) => <tr key={floorplan.id}><td><button className="floor-thumb-btn" onClick={() => setEditing(floorplan)} aria-label={`Floorplan ${floorplan.name} öffnen`}><img className="floor-thumb" src={resolveApiUrl(floorplan.imageUrl)} alt={floorplan.name} loading="lazy" /></button></td><td><button className="btn btn-ghost" onClick={() => setEditing(floorplan)}>{floorplan.name}</button></td><td className="truncate-cell" title={floorplan.imageUrl}>{floorplan.imageUrl}</td><td>{formatDate(floorplan.createdAt)}</td><td className="align-right"><RowMenu items={[{ label: 'Bearbeiten', onSelect: () => setEditing(floorplan) }, { label: 'Löschen', onSelect: () => setPendingDelete(floorplan), danger: true }]} /></td></tr>)}</tbody>}</table></div>
         {!state.loading && filtered.length === 0 && <EmptyState text="Keine Floorpläne vorhanden." action={<button className="btn" onClick={() => setShowCreate(true)}>Neu anlegen</button>} />}
       </section>
       {(showCreate || editing) && <FloorplanEditor floorplan={editing} onClose={() => { setShowCreate(false); setEditing(null); navigate('/admin/floorplans'); }} onSaved={async () => { setShowCreate(false); setEditing(null); toasts.success('Floorplan gespeichert'); await load(); }} onError={toasts.error} />}
@@ -330,7 +330,7 @@ function PositionPickerDialog({ floorplan, x, y, onClose, onPick }: { floorplan:
     setPy(Math.max(0, Math.min(1, nextY)));
   };
   return (
-    <div className="overlay"><section className="card dialog stack-sm"><h3>Position im Plan setzen</h3><p className="muted">Klicke im Plan, um die Desk-Position zu setzen.</p><div className="position-picker" onClick={setByClick}>{floorplan?.imageUrl ? <img src={floorplan.imageUrl} alt={floorplan.name} className="position-image" /> : <div className="empty-state">Kein Floorplan-Bild</div>}<span className="position-pin" style={{ left: `${px * 100}%`, top: `${py * 100}%` }} /></div><p className="muted">Position: {Math.round(px * 100)}% / {Math.round(py * 100)}%</p><div className="inline-end"><button className="btn btn-outline" onClick={onClose}>Abbrechen</button><button className="btn" onClick={() => onPick(px, py)}>Übernehmen</button></div></section></div>
+    <div className="overlay"><section className="card dialog stack-sm"><h3>Position im Plan setzen</h3><p className="muted">Klicke im Plan, um die Tisch-Position zu setzen.</p><div className="position-picker" onClick={setByClick}>{floorplan?.imageUrl ? <img src={floorplan.imageUrl} alt={floorplan.name} className="position-image" /> : <div className="empty-state">Kein Floorplan-Bild</div>}<span className="position-pin" style={{ left: `${px * 100}%`, top: `${py * 100}%` }} /></div><p className="muted">Position: {Math.round(px * 100)}% / {Math.round(py * 100)}%</p><div className="inline-end"><button className="btn btn-outline" onClick={onClose}>Abbrechen</button><button className="btn" onClick={() => onPick(px, py)}>Übernehmen</button></div></section></div>
   );
 }
 
@@ -367,7 +367,7 @@ function DeskEditor({ desk, floorplans, defaultFloorplanId, initialPosition, loc
 
   return (
     <>
-      <div className="overlay"><section className="card dialog stack-sm"><h3>{desk ? 'Desk bearbeiten' : 'Desk anlegen'}</h3><form className="stack-sm" onSubmit={submit}>{lockFloorplan ? <label className="field"><span>Floorplan</span><input value={floorplans.find((f) => f.id === form.floorplanId)?.name ?? '—'} disabled /></label> : <label className="field"><span>Floorplan</span><select required value={form.floorplanId} onChange={(e) => onFloorplanChange(e.target.value)}><option value="">Floorplan wählen</option>{floorplans.map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}</select></label>}<label className="field"><span>Label</span><input required placeholder="Desk Name" value={form.name} onChange={(e) => setForm((current) => ({ ...current, name: e.target.value }))} /></label><div className="field"><span>Position</span><div className="inline-between"><Badge tone={form.x !== null && form.y !== null ? 'ok' : 'warn'}>{form.x !== null && form.y !== null ? `Position gesetzt (${Math.round(form.x * 100)}% / ${Math.round(form.y * 100)}%)` : 'Keine Position gesetzt'}</Badge><div className="admin-toolbar">{onRequestPositionMode && <button type="button" className="btn btn-outline" onClick={() => { onClose(); onRequestPositionMode(); }}>Position im Plan ändern</button>}<button type="button" className="btn btn-outline" disabled={!form.floorplanId} onClick={() => setShowPicker(true)}>{form.x !== null && form.y !== null ? 'Neu positionieren' : 'Position im Plan setzen'}</button></div></div>{!form.floorplanId && <p className="muted">Bitte Floorplan wählen.</p>}</div>{inlineError && <p className="error-banner">{inlineError}</p>}<div className="inline-end"><button type="button" className="btn btn-outline" onClick={onClose}>Abbrechen</button><button className="btn" disabled={!canSave}>Speichern</button></div></form></section></div>
+      <div className="overlay"><section className="card dialog stack-sm"><h3>{desk ? 'Tisch bearbeiten' : 'Tisch anlegen'}</h3><form className="stack-sm" onSubmit={submit}>{lockFloorplan ? <label className="field"><span>Floorplan</span><input value={floorplans.find((f) => f.id === form.floorplanId)?.name ?? '—'} disabled /></label> : <label className="field"><span>Floorplan</span><select required value={form.floorplanId} onChange={(e) => onFloorplanChange(e.target.value)}><option value="">Floorplan wählen</option>{floorplans.map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}</select></label>}<label className="field"><span>Label</span><input required placeholder="Tischname" value={form.name} onChange={(e) => setForm((current) => ({ ...current, name: e.target.value }))} /></label><div className="field"><span>Position</span><div className="inline-between"><Badge tone={form.x !== null && form.y !== null ? 'ok' : 'warn'}>{form.x !== null && form.y !== null ? `Position gesetzt (${Math.round(form.x * 100)}% / ${Math.round(form.y * 100)}%)` : 'Keine Position gesetzt'}</Badge><div className="admin-toolbar">{onRequestPositionMode && <button type="button" className="btn btn-outline" onClick={() => { onClose(); onRequestPositionMode(); }}>Position im Plan ändern</button>}<button type="button" className="btn btn-outline" disabled={!form.floorplanId} onClick={() => setShowPicker(true)}>{form.x !== null && form.y !== null ? 'Neu positionieren' : 'Position im Plan setzen'}</button></div></div>{!form.floorplanId && <p className="muted">Bitte Floorplan wählen.</p>}</div>{inlineError && <p className="error-banner">{inlineError}</p>}<div className="inline-end"><button type="button" className="btn btn-outline" onClick={onClose}>Abbrechen</button><button className="btn" disabled={!canSave}>Speichern</button></div></form></section></div>
       {showPicker && <PositionPickerDialog floorplan={floorplan} x={form.x} y={form.y} onClose={() => setShowPicker(false)} onPick={(x, y) => { setForm((current) => ({ ...current, x, y })); setShowPicker(false); setInlineError(''); }} />}
     </>
   );
@@ -511,7 +511,7 @@ function DesksPage({ path, navigate, onLogout, currentUser }: RouteProps) {
     try {
       const selectedIds = Array.from(selectedDeskIds);
       await del(`/admin/desks?ids=${encodeURIComponent(selectedIds.join(','))}`);
-      toasts.success(`${selectedIds.length} Desk(s) gelöscht`);
+      toasts.success(`${selectedIds.length} Tisch(e) gelöscht`);
       setBulkDeleteOpen(false);
       clearSelection();
       await loadDesks(floorplanId);
@@ -523,27 +523,27 @@ function DesksPage({ path, navigate, onLogout, currentUser }: RouteProps) {
   };
 
   return (
-    <AdminLayout path={path} navigate={navigate} onLogout={onLogout} title="Desks" currentUser={currentUser ?? null}>
+    <AdminLayout path={path} navigate={navigate} onLogout={onLogout} title="Tische" currentUser={currentUser ?? null}>
       <section className="card stack-sm">
-        <div className="crud-toolbar"><div className="inline-between"><h3>Desks</h3><Badge>{filtered.length}</Badge></div><div className="admin-toolbar admin-toolbar-wrap"><select value={floorplanId} onChange={(e) => { setFloorplanId(e.target.value); setSelectedDeskId(''); cancelModes(); }}><option value="">Floorplan wählen</option>{floorplans.map((plan) => <option key={plan.id} value={plan.id}>{plan.name}</option>)}</select><div className="admin-search">🔎<input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Desk suchen" /></div><button className="btn" disabled={!floorplanId} onClick={startCreateMode}>Neuer Desk</button>{canvasMode !== 'idle' && <button className="btn btn-outline" onClick={cancelModes}>Abbrechen</button>}</div></div>
+        <div className="crud-toolbar"><div className="inline-between"><h3>Tische</h3><Badge>{filtered.length}</Badge></div><div className="admin-toolbar admin-toolbar-wrap"><select value={floorplanId} onChange={(e) => { setFloorplanId(e.target.value); setSelectedDeskId(''); cancelModes(); }}><option value="">Floorplan wählen</option>{floorplans.map((plan) => <option key={plan.id} value={plan.id}>{plan.name}</option>)}</select><div className="admin-search">🔎<input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Tisch suchen" /></div><button className="btn" disabled={!floorplanId} onClick={startCreateMode}>Neuer Tisch</button>{canvasMode !== 'idle' && <button className="btn btn-outline" onClick={cancelModes}>Abbrechen</button>}</div></div>
         {state.error && <ErrorState text={state.error} onRetry={() => void loadDesks(floorplanId)} />}
 
         <div className="desks-layout">
           <section className="desks-floor card stack-sm">
-            <div className="inline-between"><strong>Floorplan-Editor</strong>{canvasMode === 'create' && <Badge tone="warn">Klicke auf den Plan, um den Desk zu platzieren</Badge>}{canvasMode === 'reposition' && pendingRepositionDesk && <Badge tone="warn">Neue Position für {pendingRepositionDesk.name} wählen</Badge>}</div>
+            <div className="inline-between"><strong>Floorplan-Editor</strong>{canvasMode === 'create' && <Badge tone="warn">Klicke auf den Plan, um den Tisch zu platzieren</Badge>}{canvasMode === 'reposition' && pendingRepositionDesk && <Badge tone="warn">Neue Position für {pendingRepositionDesk.name} wählen</Badge>}</div>
             {!floorplan && <EmptyState text="Bitte Floorplan wählen." />}
             {floorplan && <div className={`canvas-body admin-floor-canvas ${canvasMode !== 'idle' ? 'is-active-mode' : ''}`}><FloorplanCanvas imageUrl={floorplan.imageUrl} imageAlt={floorplan.name} desks={desks.map((desk) => ({ id: desk.id, name: desk.name, x: desk.x, y: desk.y, status: 'free', booking: null, isSelected: selectedDeskIds.has(desk.id) }))} selectedDeskId={selectedDeskId} hoveredDeskId={hoveredDeskId} onHoverDesk={setHoveredDeskId} onSelectDesk={(deskId) => { setSelectedDeskId(deskId); toggleDeskSelection(deskId); }} onCanvasClick={onCanvasClick} onDeskDoubleClick={(deskId) => { const target = desks.find((desk) => desk.id === deskId); if (target) setEditingDesk(target); }} /></div>}
           </section>
 
           <section className="desks-table card stack-sm">
             {selectedDeskIds.size > 0 && <div className="bulk-actions"><strong>{selectedDeskIds.size} ausgewählt</strong><div className="inline-end"><button className="btn btn-danger" disabled={isBulkDeleting} onClick={() => setBulkDeleteOpen(true)}>{isBulkDeleting ? 'Lösche…' : 'Auswahl löschen'}</button><button className="btn btn-outline" disabled={isBulkDeleting} onClick={clearSelection}>Abbrechen</button></div></div>}
-            <div className="table-wrap"><table className="admin-table"><thead><tr><th><input type="checkbox" checked={isAllVisibleSelected} onChange={toggleAllVisibleDesks} aria-label="Alle sichtbaren Desks auswählen" /></th><th>Label</th><th>Aktualisiert</th><th className="align-right">Aktionen</th></tr></thead>{state.loading && !state.ready ? <SkeletonRows columns={4} /> : <tbody>{filtered.map((desk) => <tr key={desk.id} ref={(row) => { rowRefs.current[desk.id] = row; }} className={selectedDeskId === desk.id ? 'row-selected' : ''} onClick={() => setSelectedDeskId(desk.id)}><td><input type="checkbox" checked={selectedDeskIds.has(desk.id)} onClick={(e) => e.stopPropagation()} onChange={() => toggleDeskSelection(desk.id)} aria-label={`${desk.name} auswählen`} /></td><td>{desk.name}</td><td>{formatDate(desk.updatedAt ?? desk.createdAt)}</td><td className="align-right"><RowMenu items={[{ label: 'Position ändern', onSelect: () => { setSelectedDeskId(desk.id); setPendingRepositionDesk(desk); setCanvasMode('reposition'); } }, { label: 'Bearbeiten', onSelect: () => setEditingDesk(desk) }, { label: 'Löschen', onSelect: () => setDeleteDesk(desk), danger: true }]} /></td></tr>)}</tbody>}</table></div>
-            {!state.loading && filtered.length === 0 && <EmptyState text="Keine Desks gefunden." action={<button className="btn" onClick={startCreateMode}>Neuen Desk platzieren</button>} />}
+            <div className="table-wrap"><table className="admin-table"><thead><tr><th><input type="checkbox" checked={isAllVisibleSelected} onChange={toggleAllVisibleDesks} aria-label="Alle sichtbaren Tische auswählen" /></th><th>Label</th><th>Aktualisiert</th><th className="align-right">Aktionen</th></tr></thead>{state.loading && !state.ready ? <SkeletonRows columns={4} /> : <tbody>{filtered.map((desk) => <tr key={desk.id} ref={(row) => { rowRefs.current[desk.id] = row; }} className={selectedDeskId === desk.id ? 'row-selected' : ''} onClick={() => setSelectedDeskId(desk.id)}><td><input type="checkbox" checked={selectedDeskIds.has(desk.id)} onClick={(e) => e.stopPropagation()} onChange={() => toggleDeskSelection(desk.id)} aria-label={`${desk.name} auswählen`} /></td><td>{desk.name}</td><td>{formatDate(desk.updatedAt ?? desk.createdAt)}</td><td className="align-right"><RowMenu items={[{ label: 'Position ändern', onSelect: () => { setSelectedDeskId(desk.id); setPendingRepositionDesk(desk); setCanvasMode('reposition'); } }, { label: 'Bearbeiten', onSelect: () => setEditingDesk(desk) }, { label: 'Löschen', onSelect: () => setDeleteDesk(desk), danger: true }]} /></td></tr>)}</tbody>}</table></div>
+            {!state.loading && filtered.length === 0 && <EmptyState text="Keine Tische gefunden." action={<button className="btn" onClick={startCreateMode}>Neuen Tisch platzieren</button>} />}
           </section>
         </div>
       </section>
-      {(createRequest || editingDesk) && <DeskEditor desk={editingDesk} floorplans={floorplans} defaultFloorplanId={floorplanId} initialPosition={createRequest} lockFloorplan={Boolean(createRequest)} onRequestPositionMode={editingDesk ? () => { setPendingRepositionDesk(editingDesk); setCanvasMode('reposition'); } : undefined} onClose={() => { setCreateRequest(null); setEditingDesk(null); navigate('/admin/desks'); }} onSaved={async () => { setCreateRequest(null); setEditingDesk(null); toasts.success('Desk gespeichert'); await loadDesks(floorplanId); }} onError={toasts.error} />}
-      {deleteDesk && <ConfirmDialog title="Desk löschen?" description={`Desk "${deleteDesk.name}" wird entfernt.`} onCancel={() => setDeleteDesk(null)} onConfirm={async () => { await del(`/admin/desks/${deleteDesk.id}`); setDeleteDesk(null); toasts.success('Desk gelöscht'); await loadDesks(floorplanId); }} />}
+      {(createRequest || editingDesk) && <DeskEditor desk={editingDesk} floorplans={floorplans} defaultFloorplanId={floorplanId} initialPosition={createRequest} lockFloorplan={Boolean(createRequest)} onRequestPositionMode={editingDesk ? () => { setPendingRepositionDesk(editingDesk); setCanvasMode('reposition'); } : undefined} onClose={() => { setCreateRequest(null); setEditingDesk(null); navigate('/admin/desks'); }} onSaved={async () => { setCreateRequest(null); setEditingDesk(null); toasts.success('Tisch gespeichert'); await loadDesks(floorplanId); }} onError={toasts.error} />}
+      {deleteDesk && <ConfirmDialog title="Tisch löschen?" description={`Tisch "${deleteDesk.name}" wird entfernt.`} onCancel={() => setDeleteDesk(null)} onConfirm={async () => { await del(`/admin/desks/${deleteDesk.id}`); setDeleteDesk(null); toasts.success('Tisch gelöscht'); await loadDesks(floorplanId); }} />}
       {bulkDeleteOpen && <ConfirmDialog title={`${selectedDeskIds.size} Einträge löschen?`} description="Dieser Vorgang ist irreversibel." onCancel={() => setBulkDeleteOpen(false)} onConfirm={() => void runBulkDelete()} confirmDisabled={isBulkDeleting} confirmLabel={isBulkDeleting ? 'Lösche…' : 'Löschen'} />}
       <ToastViewport toasts={toasts.toasts} />
     </AdminLayout>
@@ -568,6 +568,7 @@ function BookingsPage({ path, navigate, onLogout, currentUser }: RouteProps) {
   const [selectedBookingIds, setSelectedBookingIds] = useState<string[]>([]);
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
   const [isBulkDeleting, setIsBulkDeleting] = useState(false);
+  const [focusedBookingId, setFocusedBookingId] = useState<string>('');
 
   const load = async () => {
     setState((current) => ({ ...current, loading: true, error: '' }));
@@ -579,6 +580,7 @@ function BookingsPage({ path, navigate, onLogout, currentUser }: RouteProps) {
       setDesks(deskRows);
       setEmployees(employeeRows);
       setBookings(bookingRows);
+      setFocusedBookingId((current) => current || bookingRows[0]?.id || '');
       setState({ loading: false, error: '', ready: true });
     } catch (err) {
       setState({ loading: false, error: err instanceof Error ? err.message : 'Fehler beim Laden', ready: true });
@@ -595,10 +597,14 @@ function BookingsPage({ path, navigate, onLogout, currentUser }: RouteProps) {
   }), [bookings, desks, deskId, floorplanId, personQuery]);
   const isAllVisibleSelected = filtered.length > 0 && filtered.every((booking) => selectedBookingIds.includes(booking.id));
 
+  const focusedBooking = filtered.find((booking) => booking.id === focusedBookingId) ?? filtered[0] ?? null;
+  const focusedDesk = desks.find((desk) => desk.id === focusedBooking?.deskId);
+  const focusedFloor = floorplans.find((plan) => plan.id === focusedDesk?.floorplanId);
+  const focusedDesks = focusedFloor ? desks.filter((desk) => desk.floorplanId === focusedFloor.id).map((desk) => ({ id: desk.id, name: desk.name, x: desk.x, y: desk.y, status: 'free' as const, booking: null, isSelected: desk.id === focusedDesk?.id, isHighlighted: desk.id === focusedDesk?.id })) : [];
+
   const toggleBookingSelection = (bookingId: string) => {
     setSelectedBookingIds((current) => current.includes(bookingId) ? current.filter((id) => id !== bookingId) : [...current, bookingId]);
   };
-
   const toggleAllVisibleBookings = () => {
     if (isAllVisibleSelected) {
       setSelectedBookingIds((current) => current.filter((id) => !filtered.some((booking) => booking.id === id)));
@@ -606,7 +612,6 @@ function BookingsPage({ path, navigate, onLogout, currentUser }: RouteProps) {
     }
     setSelectedBookingIds((current) => Array.from(new Set([...current, ...filtered.map((booking) => booking.id)])));
   };
-
   const runBulkDelete = async () => {
     if (selectedBookingIds.length === 0 || isBulkDeleting) return;
     setIsBulkDeleting(true);
@@ -622,35 +627,39 @@ function BookingsPage({ path, navigate, onLogout, currentUser }: RouteProps) {
       setIsBulkDeleting(false);
     }
   };
+  const resetFilters = () => { setFloorplanId(''); setDeskId(''); setPersonQuery(''); setSelectedBookingIds([]); };
 
-  const resetFilters = () => {
-    setFloorplanId('');
-    setDeskId('');
-    setPersonQuery('');
-    setSelectedBookingIds([]);
-  };
-
-  return (
-    <AdminLayout path={path} navigate={navigate} onLogout={onLogout} title="Buchungen" actions={<button className="btn" onClick={() => setCreating(true)}>Neu</button>} currentUser={currentUser ?? null}>
+  return <AdminLayout path={path} navigate={navigate} onLogout={onLogout} title="Buchungen" actions={<button className="btn" onClick={() => setCreating(true)}>Neu</button>} currentUser={currentUser ?? null}>
+    <section className="bookings-layout">
       <section className="card stack-sm">
-        <div className="crud-toolbar"><div className="inline-between"><h3>Buchungen</h3><Badge>{filtered.length}</Badge></div><div className="admin-toolbar admin-toolbar-wrap"><input type="date" value={from} onChange={(e) => setFrom(e.target.value)} /><input type="date" value={to} onChange={(e) => setTo(e.target.value)} /><select value={floorplanId} onChange={(e) => setFloorplanId(e.target.value)}><option value="">Alle Floorpläne</option>{floorplans.map((plan) => <option key={plan.id} value={plan.id}>{plan.name}</option>)}</select><select value={deskId} onChange={(e) => setDeskId(e.target.value)}><option value="">Alle Desks</option>{desks.filter((desk) => (floorplanId ? desk.floorplanId === floorplanId : true)).map((desk) => <option key={desk.id} value={desk.id}>{desk.name}</option>)}</select><div className="admin-search">🔎<input value={personQuery} onChange={(e) => setPersonQuery(e.target.value)} placeholder="Person suchen" /></div><button className="btn btn-outline" onClick={resetFilters}>Filter zurücksetzen</button></div></div>
+        <div className="crud-toolbar"><div className="inline-between"><h3>Buchungen</h3><Badge>{filtered.length}</Badge></div><div className="admin-toolbar admin-toolbar-wrap"><input type="date" value={from} onChange={(e) => setFrom(e.target.value)} /><input type="date" value={to} onChange={(e) => setTo(e.target.value)} /><select value={floorplanId} onChange={(e) => setFloorplanId(e.target.value)}><option value="">Alle Floorpläne</option>{floorplans.map((plan) => <option key={plan.id} value={plan.id}>{plan.name}</option>)}</select><select value={deskId} onChange={(e) => setDeskId(e.target.value)}><option value="">Alle Tische</option>{desks.filter((desk) => (floorplanId ? desk.floorplanId === floorplanId : true)).map((desk) => <option key={desk.id} value={desk.id}>{desk.name}</option>)}</select><div className="admin-search">🔎<input value={personQuery} onChange={(e) => setPersonQuery(e.target.value)} placeholder="Person suchen" /></div><button className="btn btn-outline" onClick={resetFilters}>Filter zurücksetzen</button></div></div>
         {state.error && <ErrorState text={state.error} onRetry={load} />}
         {selectedBookingIds.length > 0 && <div className="bulk-actions"><strong>{selectedBookingIds.length} ausgewählt</strong><div className="inline-end"><button className="btn btn-danger" disabled={isBulkDeleting} onClick={() => setBulkDeleteOpen(true)}>{isBulkDeleting ? 'Lösche…' : 'Auswahl löschen'}</button><button className="btn btn-outline" disabled={isBulkDeleting} onClick={() => setSelectedBookingIds([])}>Abbrechen</button></div></div>}
-        <div className="table-wrap"><table className="admin-table"><thead><tr><th><input type="checkbox" checked={isAllVisibleSelected} onChange={toggleAllVisibleBookings} aria-label="Alle sichtbaren Buchungen auswählen" /></th><th>Datum</th><th>Person</th><th>Desk</th><th>Floorplan</th><th>Erstellt</th><th className="align-right">Aktionen</th></tr></thead>{state.loading && !state.ready ? <SkeletonRows columns={7} /> : <tbody>{filtered.map((booking) => { const desk = desks.find((item) => item.id === booking.deskId); const floorplan = floorplans.find((plan) => plan.id === desk?.floorplanId); return <tr key={booking.id}><td><input type="checkbox" checked={selectedBookingIds.includes(booking.id)} onChange={() => toggleBookingSelection(booking.id)} aria-label={`Buchung ${booking.id} auswählen`} /></td><td>{formatDateOnly(booking.date)}</td><td>{booking.userDisplayName || booking.userEmail}</td><td>{desk?.name ?? booking.deskId}</td><td>{floorplan?.name ?? '—'}</td><td>{formatDate(booking.createdAt)}</td><td className="align-right"><RowMenu items={[{ label: 'Bearbeiten', onSelect: () => setEditing(booking) }, { label: 'Löschen', onSelect: () => setDeleteBooking(booking), danger: true }]} /></td></tr>; })}</tbody>}</table></div>
-        {!state.loading && filtered.length === 0 && <EmptyState text="Keine Buchungen im Zeitraum gefunden." action={<button className="btn" onClick={() => setCreating(true)}>Neu anlegen</button>} />}
+        <div className="table-wrap"><table className="admin-table"><thead><tr><th><input type="checkbox" checked={isAllVisibleSelected} onChange={toggleAllVisibleBookings} aria-label="Alle sichtbaren Buchungen auswählen" /></th><th>Datum</th><th>Person</th><th>Tisch</th><th>Floorplan</th><th>Erstellt</th><th className="align-right">Aktionen</th></tr></thead>{state.loading && !state.ready ? <SkeletonRows columns={7} /> : <tbody>{filtered.map((booking) => { const desk = desks.find((item) => item.id === booking.deskId); const floorplan = floorplans.find((plan) => plan.id === desk?.floorplanId); return <tr key={booking.id} className={focusedBooking?.id === booking.id ? 'row-selected' : ''} onClick={() => setFocusedBookingId(booking.id)}><td><input type="checkbox" checked={selectedBookingIds.includes(booking.id)} onClick={(e) => e.stopPropagation()} onChange={() => toggleBookingSelection(booking.id)} aria-label={`Buchung ${booking.id} auswählen`} /></td><td>{formatDateOnly(booking.date)}</td><td>{booking.userDisplayName || booking.userEmail}</td><td>{desk?.name ?? booking.deskId}</td><td>{floorplan?.name ?? '—'}</td><td>{formatDate(booking.createdAt)}</td><td className="align-right"><RowMenu items={[{ label: 'Bearbeiten', onSelect: () => setEditing(booking) }, { label: 'Löschen', onSelect: () => setDeleteBooking(booking), danger: true }]} /></td></tr>; })}</tbody>}</table></div>
       </section>
-      {(creating || editing) && <BookingEditor booking={editing} desks={desks} employees={employees} onClose={() => { setCreating(false); setEditing(null); navigate('/admin/bookings'); }} onSaved={async (m) => { toasts.success(m); setCreating(false); setEditing(null); await load(); }} onError={toasts.error} />}
-      {deleteBooking && <ConfirmDialog title="Buchung löschen?" description="Die ausgewählte Buchung wird entfernt." onCancel={() => setDeleteBooking(null)} onConfirm={async () => { await del(`/admin/bookings/${deleteBooking.id}`); setDeleteBooking(null); toasts.success('Buchung gelöscht'); await load(); }} />}
-      {bulkDeleteOpen && <ConfirmDialog title={`${selectedBookingIds.length} Einträge löschen?`} description="Dieser Vorgang ist irreversibel." onCancel={() => setBulkDeleteOpen(false)} onConfirm={() => void runBulkDelete()} confirmDisabled={isBulkDeleting} confirmLabel={isBulkDeleting ? 'Lösche…' : 'Löschen'} />}
-      <ToastViewport toasts={toasts.toasts} />
-    </AdminLayout>
-  );
+      <aside className="card stack-sm bookings-floor-preview"><div className="inline-between"><h3>Floorplan</h3>{focusedDesk && <Badge tone="ok">Tisch: {focusedDesk.name}</Badge>}</div>{focusedFloor ? <div className="canvas-body"><FloorplanCanvas imageUrl={resolveApiUrl(focusedFloor.imageUrl) ?? focusedFloor.imageUrl} imageAlt={focusedFloor.name} desks={focusedDesks} selectedDeskId={focusedDesk?.id ?? ''} hoveredDeskId="" onHoverDesk={() => undefined} onSelectDesk={() => undefined} /></div> : <EmptyState text="Buchung auswählen, um den Tisch im Floorplan zu sehen." />}</aside>
+    </section>
+    {(creating || editing) && <BookingEditor booking={editing} desks={desks} employees={employees} floorplans={floorplans} onClose={() => { setCreating(false); setEditing(null); navigate('/admin/bookings'); }} onSaved={async (m) => { toasts.success(m); setCreating(false); setEditing(null); await load(); }} onError={toasts.error} />}
+    {deleteBooking && <ConfirmDialog title="Buchung löschen?" description="Die ausgewählte Buchung wird entfernt." onCancel={() => setDeleteBooking(null)} onConfirm={async () => { await del(`/admin/bookings/${deleteBooking.id}`); setDeleteBooking(null); toasts.success('Buchung gelöscht'); await load(); }} />}
+    {bulkDeleteOpen && <ConfirmDialog title={`${selectedBookingIds.length} Einträge löschen?`} description="Dieser Vorgang ist irreversibel." onCancel={() => setBulkDeleteOpen(false)} onConfirm={() => void runBulkDelete()} confirmDisabled={isBulkDeleting} confirmLabel={isBulkDeleting ? 'Lösche…' : 'Löschen'} />}
+    <ToastViewport toasts={toasts.toasts} />
+  </AdminLayout>;
 }
 
-function BookingEditor({ booking, desks, employees, onClose, onSaved, onError }: { booking: Booking | null; desks: Desk[]; employees: Employee[]; onClose: () => void; onSaved: (m: string) => Promise<void>; onError: (m: string) => void }) {
-  const [deskId, setDeskId] = useState(booking?.deskId ?? desks[0]?.id ?? '');
+function BookingEditor({ booking, desks, employees, floorplans, onClose, onSaved, onError }: { booking: Booking | null; desks: Desk[]; employees: Employee[]; floorplans: Floorplan[]; onClose: () => void; onSaved: (m: string) => Promise<void>; onError: (m: string) => void }) {
+  const initialDesk = desks.find((desk) => desk.id === booking?.deskId) ?? desks[0] ?? null;
+  const [floorplanId, setFloorplanId] = useState(initialDesk?.floorplanId ?? floorplans[0]?.id ?? '');
+  const [deskId, setDeskId] = useState(booking?.deskId ?? initialDesk?.id ?? '');
   const [date, setDate] = useState(booking?.date?.slice(0, 10) ?? today);
   const [userEmail, setUserEmail] = useState(booking?.userEmail ?? employees[0]?.email ?? '');
+  const floorDesks = desks.filter((desk) => desk.floorplanId === floorplanId);
+  const selectedFloor = floorplans.find((floor) => floor.id === floorplanId) ?? null;
+
+  useEffect(() => {
+    if (deskId && floorDesks.some((desk) => desk.id === deskId)) return;
+    setDeskId(floorDesks[0]?.id ?? '');
+  }, [deskId, floorDesks]);
+
   const submit = async (event: FormEvent) => {
     event.preventDefault();
     try {
@@ -665,7 +674,8 @@ function BookingEditor({ booking, desks, employees, onClose, onSaved, onError }:
       onError(err instanceof Error ? err.message : 'Speichern fehlgeschlagen');
     }
   };
-  return <div className="overlay"><section className="card dialog stack-sm"><h3>{booking ? 'Buchung bearbeiten' : 'Buchung anlegen'}</h3><form className="stack-sm" onSubmit={submit}><select required value={deskId} onChange={(e) => setDeskId(e.target.value)}>{desks.map((desk) => <option key={desk.id} value={desk.id}>{desk.name}</option>)}</select><input required type="date" value={date} onChange={(e) => setDate(e.target.value)} /><select required value={userEmail} onChange={(e) => setUserEmail(e.target.value)}>{employees.map((employee) => <option key={employee.id} value={employee.email}>{employee.displayName} ({employee.email})</option>)}</select><div className="inline-end"><button className="btn btn-outline" type="button" onClick={onClose}>Abbrechen</button><button className="btn">Speichern</button></div></form></section></div>;
+
+  return <div className="overlay"><section className="card dialog stack-sm booking-editor-dialog"><h3>{booking ? 'Buchung bearbeiten' : 'Buchung anlegen'}</h3><div className="booking-editor-layout"><form className="stack-sm" onSubmit={submit}><label className="field"><span>Floorplan</span><select required value={floorplanId} onChange={(e) => setFloorplanId(e.target.value)}>{floorplans.map((plan) => <option key={plan.id} value={plan.id}>{plan.name}</option>)}</select></label><label className="field"><span>Tisch</span><select required value={deskId} onChange={(e) => setDeskId(e.target.value)}>{floorDesks.map((desk) => <option key={desk.id} value={desk.id}>{desk.name}</option>)}</select></label><input required type="date" value={date} onChange={(e) => setDate(e.target.value)} /><select required value={userEmail} onChange={(e) => setUserEmail(e.target.value)}>{employees.map((employee) => <option key={employee.id} value={employee.email}>{employee.displayName} ({employee.email})</option>)}</select><div className="inline-end"><button className="btn btn-outline" type="button" onClick={onClose}>Abbrechen</button><button className="btn">Speichern</button></div></form><div className="booking-editor-plan">{selectedFloor ? <div className="canvas-body"><FloorplanCanvas imageUrl={resolveApiUrl(selectedFloor.imageUrl) ?? selectedFloor.imageUrl} imageAlt={selectedFloor.name} desks={floorDesks.map((desk) => ({ id: desk.id, name: desk.name, x: desk.x, y: desk.y, status: 'free' as const, booking: null, isSelected: desk.id === deskId, isHighlighted: desk.id === deskId }))} selectedDeskId={deskId} hoveredDeskId="" onHoverDesk={() => undefined} onSelectDesk={setDeskId} /></div> : <EmptyState text="Kein Floorplan ausgewählt." />}</div></div></section></div>;
 }
 
 function EmployeesPage({ path, navigate, onRoleStateChanged, onLogout, currentAdminEmail, currentUser }: RouteProps & { currentAdminEmail: string }) {
