@@ -423,6 +423,56 @@ const sendConflict = (res: express.Response, message: string, details: Record<st
 const normalizeEmail = (value: string): string => value.trim().toLowerCase();
 const hashPassword = async (value: string): Promise<string> => bcrypt.hash(value, PASSWORD_SALT_ROUNDS);
 
+const getEmployeePhotoUrl = (employeeId: string): string => `/employees/${employeeId}/photo`;
+
+const syncEmployeePhotoFromGraph = async (employeeId: string, graphAccessToken: string) => {
+  const graphResponse = await fetch('https://graph.microsoft.com/v1.0/me/photo/$value', {
+    headers: {
+      authorization: `Bearer ${graphAccessToken}`
+    }
+  });
+
+  if (graphResponse.status === 404) {
+    await prisma.employee.update({
+      where: { id: employeeId },
+      data: {
+        photoUrl: getEmployeePhotoUrl(employeeId),
+        photoEtag: null,
+        photoData: null,
+        photoType: null,
+        photoUpdatedAt: null
+      }
+    });
+    return;
+  }
+
+  if (!graphResponse.ok) {
+    return;
+  }
+
+  const photoBuffer = Buffer.from(await graphResponse.arrayBuffer());
+  const photoType = graphResponse.headers.get('content-type') ?? 'image/jpeg';
+  const nextEtag = crypto.createHash('sha256').update(photoBuffer).digest('hex');
+
+  const employee = await prisma.employee.findUnique({ where: { id: employeeId }, select: { photoEtag: true, photoUrl: true } });
+  if (!employee) return;
+
+  if (employee.photoEtag === nextEtag && employee.photoUrl) {
+    return;
+  }
+
+  await prisma.employee.update({
+    where: { id: employeeId },
+    data: {
+      photoUrl: getEmployeePhotoUrl(employeeId),
+      photoEtag: nextEtag,
+      photoData: photoBuffer,
+      photoType,
+      photoUpdatedAt: new Date()
+    }
+  });
+};
+
 const isValidEmailInput = (value: string): boolean => value.includes('@');
 
 const isValidEmployeeRole = (value: string): value is EmployeeRole => value === 'admin' || value === 'user';
@@ -432,12 +482,13 @@ const employeeSelect = {
   email: true,
   displayName: true,
   role: true,
-  isActive: true
+  isActive: true,
+  photoUrl: true
 } satisfies Prisma.EmployeeSelect;
 
 const getActiveEmployeesByEmail = async (emails: string[]) => {
   if (emails.length === 0) {
-    return new Map<string, { id: string; displayName: string }>();
+    return new Map<string, { id: string; displayName: string; photoUrl: string | null }>();
   }
 
   const uniqueEmails = Array.from(new Set(emails.map((email) => normalizeEmail(email))));
@@ -449,11 +500,12 @@ const getActiveEmployeesByEmail = async (emails: string[]) => {
     select: {
       id: true,
       email: true,
-      displayName: true
+      displayName: true,
+      photoUrl: true
     }
   });
 
-  return new Map(employees.map((employee) => [employee.email, { id: employee.id, displayName: employee.displayName }]));
+  return new Map(employees.map((employee) => [employee.email, { id: employee.id, displayName: employee.displayName, photoUrl: employee.photoUrl ?? getEmployeePhotoUrl(employee.id) }]));
 };
 
 const getDeskContext = async (deskId: string) => prisma.desk.findUnique({
@@ -611,7 +663,14 @@ const upsertEmployeeFromEntraLogin = async (claims: { oid: string; tid: string; 
       }
     });
 
-    return user;
+    await tx.employee.update({
+      where: { id: employee.id },
+      data: {
+        photoUrl: employee.photoUrl ?? getEmployeePhotoUrl(employee.id)
+      }
+    });
+
+    return { ...user, employeeId: employee.id };
   });
 };
 
@@ -690,6 +749,9 @@ app.get('/auth/entra/callback', async (req, res) => {
     }
 
     const user = await upsertEmployeeFromEntraLogin({ oid, tid, email, name });
+    if (tokenPayload.access_token) {
+      await syncEmployeePhotoFromGraph(user.employeeId, tokenPayload.access_token);
+    }
     const session = createSession(user.id, {
       graphAccessToken: tokenPayload.access_token,
       graphTokenExpiresInSeconds: tokenPayload.expires_in
@@ -829,7 +891,10 @@ app.get('/admin/employees', requireAdmin, async (_req, res) => {
     orderBy: [{ isActive: 'desc' }, { displayName: 'asc' }, { email: 'asc' }]
   });
 
-  res.status(200).json(employees);
+  res.status(200).json(employees.map((employee) => ({
+    ...employee,
+    photoUrl: employee.photoUrl ?? getEmployeePhotoUrl(employee.id)
+  })));
 });
 
 app.get('/employees', async (_req, res) => {
@@ -838,12 +903,42 @@ app.get('/employees', async (_req, res) => {
     select: {
       id: true,
       email: true,
-      displayName: true
+      displayName: true,
+      photoUrl: true
     },
     orderBy: [{ displayName: 'asc' }, { email: 'asc' }]
   });
 
-  res.status(200).json(employees);
+  res.status(200).json(employees.map((employee) => ({
+    ...employee,
+    photoUrl: employee.photoUrl ?? getEmployeePhotoUrl(employee.id)
+  })));
+});
+
+
+app.get('/employees/:id/photo', async (req, res) => {
+  const id = getRouteId(req.params.id);
+  if (!id) {
+    res.status(400).json({ error: 'validation', message: 'id is required' });
+    return;
+  }
+
+  const employee = await prisma.employee.findUnique({
+    where: { id },
+    select: { photoData: true, photoType: true, photoUpdatedAt: true }
+  });
+
+  if (!employee?.photoData) {
+    res.status(404).json({ error: 'not_found', message: 'Employee photo not found' });
+    return;
+  }
+
+  res.setHeader('Cache-Control', 'private, max-age=300');
+  if (employee.photoUpdatedAt) {
+    res.setHeader('Last-Modified', employee.photoUpdatedAt.toUTCString());
+  }
+  res.setHeader('Content-Type', employee.photoType ?? 'image/jpeg');
+  res.status(200).send(Buffer.from(employee.photoData));
 });
 
 app.post('/admin/employees', requireAdmin, async (req, res) => {
@@ -879,9 +974,15 @@ app.post('/admin/employees', requireAdmin, async (req, res) => {
         data: {
           email: normalizedEmail,
           displayName: normalizedDisplayName,
-          role: role ?? 'user'
+          role: role ?? 'user',
+          photoUrl: null
         },
         select: employeeSelect
+      });
+
+      await tx.employee.update({
+        where: { id: createdEmployee.id },
+        data: { photoUrl: getEmployeePhotoUrl(createdEmployee.id) }
       });
 
       await tx.user.upsert({
@@ -900,7 +1001,7 @@ app.post('/admin/employees', requireAdmin, async (req, res) => {
         }
       });
 
-      return createdEmployee;
+      return { ...createdEmployee, photoUrl: getEmployeePhotoUrl(createdEmployee.id) };
     });
 
     res.status(201).json(employee);
@@ -1435,7 +1536,9 @@ app.get('/bookings', async (req, res) => {
   const employeesByEmail = await getActiveEmployeesByEmail(bookings.map((booking) => booking.userEmail));
   const enrichedBookings = bookings.map((booking) => ({
     ...booking,
-    userDisplayName: employeesByEmail.get(normalizeEmail(booking.userEmail))?.displayName
+    employeeId: employeesByEmail.get(normalizeEmail(booking.userEmail))?.id,
+    userDisplayName: employeesByEmail.get(normalizeEmail(booking.userEmail))?.displayName,
+    userPhotoUrl: employeesByEmail.get(normalizeEmail(booking.userEmail))?.photoUrl ?? undefined
   }));
 
   res.status(200).json(enrichedBookings);
@@ -1502,7 +1605,9 @@ app.get('/occupancy', async (req, res) => {
         booking: {
           id: single.id,
           userEmail: single.userEmail,
+          employeeId: employeesByEmail.get(normalizeEmail(single.userEmail))?.id,
           userDisplayName: employeesByEmail.get(normalizeEmail(single.userEmail))?.displayName,
+          userPhotoUrl: employeesByEmail.get(normalizeEmail(single.userEmail))?.photoUrl ?? undefined,
           deskName: desk.name,
         deskId: desk.id,
           type: 'single' as const
@@ -1521,7 +1626,9 @@ app.get('/occupancy', async (req, res) => {
         booking: {
           id: recurring.id,
           userEmail: recurring.userEmail,
+          employeeId: employeesByEmail.get(normalizeEmail(recurring.userEmail))?.id,
           userDisplayName: employeesByEmail.get(normalizeEmail(recurring.userEmail))?.displayName,
+          userPhotoUrl: employeesByEmail.get(normalizeEmail(recurring.userEmail))?.photoUrl ?? undefined,
           deskName: desk.name,
         deskId: desk.id,
           type: 'recurring' as const
@@ -1539,7 +1646,7 @@ app.get('/occupancy', async (req, res) => {
     };
   });
 
-  const uniquePeopleByEmail = new Map<string, { email: string; userEmail: string; displayName?: string; deskName?: string; deskId?: string }>();
+  const uniquePeopleByEmail = new Map<string, { email: string; userEmail: string; displayName?: string; photoUrl?: string; deskName?: string; deskId?: string }>();
   occupancyDesks
     .filter((desk) => desk.booking)
     .forEach((desk) => {
@@ -1553,6 +1660,7 @@ app.get('/occupancy', async (req, res) => {
         email: userEmail,
         userEmail,
         displayName: employeesByEmail.get(normalizedEmail)?.displayName,
+        photoUrl: employeesByEmail.get(normalizedEmail)?.photoUrl ?? undefined,
         deskName: desk.name,
         deskId: desk.id
       });

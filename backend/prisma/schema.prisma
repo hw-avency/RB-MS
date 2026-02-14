@@ -26,6 +26,11 @@ model Employee {
   isActive    Boolean   @default(true)
   entraOid    String?   @unique
   tenantId    String?
+  photoUrl    String?
+  photoEtag   String?
+  photoData   Bytes?
+  photoType   String?
+  photoUpdatedAt DateTime?
   lastLoginAt DateTime?
   createdAt   DateTime  @default(now())
 }
