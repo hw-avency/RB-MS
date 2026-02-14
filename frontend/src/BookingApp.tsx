@@ -50,6 +50,12 @@ const getApiErrorMessage = (error: unknown, fallback: string): string => {
   return fallback;
 };
 
+const resolvePhotoUrl = (value?: string): string | undefined => {
+  if (!value) return undefined;
+  if (/^https?:\/\//i.test(value)) return value;
+  return `${API_BASE}${value.startsWith('/') ? value : `/${value}`}`;
+};
+
 export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogout, currentUser }: { onOpenAdmin: () => void; canOpenAdmin: boolean; currentUserEmail?: string; onLogout: () => Promise<void>; currentUser: AuthUser }) {
   const [floorplans, setFloorplans] = useState<Floorplan[]>([]);
   const [selectedFloorplanId, setSelectedFloorplanId] = useState('');
@@ -92,15 +98,17 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
     if (!desk.booking) return desk;
     const employee = desk.booking.employeeId ? employeesById.get(desk.booking.employeeId) : employeesByEmail.get(desk.booking.userEmail.toLowerCase());
     const fallbackPhotoUrl = currentUserEmail && desk.booking.userEmail.toLowerCase() === currentUserEmail.toLowerCase()
-      ? `${API_BASE}/user/me/photo?v=${encodeURIComponent(currentUserEmail)}`
+      ? resolvePhotoUrl(`/user/me/photo?v=${encodeURIComponent(currentUserEmail)}`)
       : undefined;
+    const employeePhotoUrl = resolvePhotoUrl(employee?.photoUrl);
+    const bookingPhotoUrl = resolvePhotoUrl(desk.booking.userPhotoUrl);
     return {
       ...desk,
       booking: {
         ...desk.booking,
         employeeId: desk.booking.employeeId ?? employee?.id,
         userDisplayName: desk.booking.userDisplayName ?? employee?.displayName,
-        userPhotoUrl: desk.booking.userPhotoUrl ?? employee?.photoUrl ?? fallbackPhotoUrl
+        userPhotoUrl: bookingPhotoUrl ?? employeePhotoUrl ?? fallbackPhotoUrl
       },
       isCurrentUsersDesk: Boolean(currentUserEmail && desk.booking.userEmail.toLowerCase() === currentUserEmail.toLowerCase())
     };

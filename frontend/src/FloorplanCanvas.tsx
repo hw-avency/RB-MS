@@ -7,7 +7,7 @@ type FloorplanDesk = {
   x: number;
   y: number;
   status: 'free' | 'booked';
-  booking: { userDisplayName?: string; userEmail: string; userPhotoUrl?: string } | null;
+  booking: { employeeId?: string; userDisplayName?: string; userEmail: string; userPhotoUrl?: string } | null;
   isCurrentUsersDesk?: boolean;
   isHighlighted?: boolean;
   isSelected?: boolean;
@@ -63,7 +63,7 @@ const FloorplanImage = memo(function FloorplanImage({ imageUrl, imageAlt, imgRef
 });
 
 const DeskOverlay = memo(function DeskOverlay({ desks, selectedDeskId, hoveredDeskId, selectedDate, overlayRect, onHoverDesk, onSelectDesk, onDeskDoubleClick }: { desks: FloorplanDesk[]; selectedDeskId: string; hoveredDeskId: string; selectedDate?: string; overlayRect: OverlayRect; onHoverDesk: (deskId: string) => void; onSelectDesk: (deskId: string) => void; onDeskDoubleClick?: (deskId: string) => void; }) {
-  const [brokenImages, setBrokenImages] = useState<Record<string, boolean>>({});
+  const [imageStates, setImageStates] = useState<Record<string, boolean>>({});
   const [tooltip, setTooltip] = useState<{ deskId: string; left: number; top: number } | null>(null);
   const showDebugCross = isDeskPinDebugEnabled();
 
@@ -86,7 +86,13 @@ const DeskOverlay = memo(function DeskOverlay({ desks, selectedDeskId, hoveredDe
         {desks.map((desk) => {
           const point = toPixelPoint(desk, overlayRect);
           const initials = getInitials(desk.booking?.userDisplayName, desk.booking?.userEmail);
-          const showPhoto = Boolean(desk.booking?.userPhotoUrl) && !brokenImages[desk.id];
+          const hasPhoto = Boolean(desk.booking?.userPhotoUrl);
+          const imgOk = hasPhoto && (imageStates[desk.id] ?? true);
+
+          if (import.meta.env.DEV && desk.status === 'booked') {
+            console.log('pin employee', desk.booking?.employeeId, desk.booking?.userDisplayName, desk.booking?.userPhotoUrl);
+          }
+
           return (
             <Fragment key={desk.id}>
               {showDebugCross && <span className="desk-pin-debug-cross" style={{ left: `${point.x}px`, top: `${point.y}px` }} aria-hidden="true" />}
@@ -109,7 +115,19 @@ const DeskOverlay = memo(function DeskOverlay({ desks, selectedDeskId, hoveredDe
               >
                 <span className="desk-pin-inner">
                   {desk.status === 'booked' ? (
-                    showPhoto ? <img src={desk.booking?.userPhotoUrl} alt={desk.booking?.userDisplayName ?? desk.booking?.userEmail ?? 'Mitarbeiter'} className="desk-pin-avatar-img" onError={() => setBrokenImages((current) => ({ ...current, [desk.id]: true }))} /> : <span className="desk-pin-initials">{initials}</span>
+                    <>
+                      {hasPhoto && (
+                        <img
+                          src={desk.booking?.userPhotoUrl}
+                          alt={desk.booking?.userDisplayName ?? desk.booking?.userEmail ?? 'Mitarbeiter'}
+                          className="desk-pin-avatar-img"
+                          onLoad={() => setImageStates((current) => ({ ...current, [desk.id]: true }))}
+                          onError={() => setImageStates((current) => ({ ...current, [desk.id]: false }))}
+                          referrerPolicy="no-referrer"
+                        />
+                      )}
+                      <span className={`desk-pin-initials ${imgOk ? 'is-hidden' : ''}`}>{initials || '•'}</span>
+                    </>
                   ) : (
                     <span className="desk-pin-free-dot" aria-hidden="true" />
                   )}
