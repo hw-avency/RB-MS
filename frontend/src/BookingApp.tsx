@@ -47,7 +47,7 @@ const getApiErrorMessage = (error: unknown, fallback: string): string => {
   return fallback;
 };
 
-export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onUserContextChanged }: { onOpenAdmin: () => void; canOpenAdmin: boolean; currentUserEmail?: string; onUserContextChanged: () => Promise<void> }) {
+export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogout }: { onOpenAdmin: () => void; canOpenAdmin: boolean; currentUserEmail?: string; onLogout: () => Promise<void> }) {
   const [floorplans, setFloorplans] = useState<Floorplan[]>([]);
   const [selectedFloorplanId, setSelectedFloorplanId] = useState('');
   const [selectedDate, setSelectedDate] = useState(today);
@@ -165,12 +165,6 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onUser
     const timer = window.setTimeout(() => setToastMessage(''), 3500);
     return () => window.clearTimeout(timer);
   }, [toastMessage]);
-
-  useEffect(() => {
-    if (!selectedEmployeeEmail) return;
-    localStorage.setItem('rbms-user-email', selectedEmployeeEmail);
-    void onUserContextChanged();
-  }, [onUserContextChanged, selectedEmployeeEmail]);
 
   useEffect(() => {
     if (!bookingDialogOpen) return;
@@ -444,7 +438,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onUser
         <div className="header-right">
           {canOpenAdmin && <button className="btn btn-outline" onClick={onOpenAdmin}>Admin</button>}
           <button className="btn btn-ghost" onClick={() => setDetailsSheetOpen(true)}>≡ Details</button>
-          <button className="avatar-btn">👤</button>
+          <button className="btn btn-outline" onClick={() => void onLogout()}>Logout</button>
         </div>
       </header>
 
