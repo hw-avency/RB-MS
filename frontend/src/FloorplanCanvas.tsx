@@ -6,7 +6,7 @@ type FloorplanDesk = {
   x: number;
   y: number;
   status: 'free' | 'booked';
-  booking: { userDisplayName?: string; userEmail: string } | null;
+  booking: { userDisplayName?: string; userEmail: string; userPhotoUrl?: string } | null;
 };
 
 type OverlayRect = { left: number; top: number; width: number; height: number };
@@ -18,6 +18,13 @@ const toNormalized = (raw: number, size: number): number => {
   if (raw <= 1) return clamp01(raw);
   if (raw <= 100) return clamp01(raw / 100);
   return clamp01(raw / Math.max(size, 1));
+};
+
+const getInitials = (name?: string, email?: string): string => {
+  const source = (name?.trim() || email?.split('@')[0] || '??').replace(/[^\p{L}\s]/gu, ' ');
+  const parts = source.split(/\s+/).filter(Boolean);
+  if (parts.length >= 2) return `${parts[0][0]}${parts[1][0]}`.toUpperCase();
+  return source.slice(0, 2).toUpperCase();
 };
 
 type FloorplanCanvasProps = {
@@ -36,44 +43,31 @@ const FloorplanImage = memo(function FloorplanImage({ imageUrl, imageAlt, imgRef
   return <img ref={imgRef} src={imageUrl} alt={imageAlt} className="floorplan-image" onLoad={onLoad} />;
 });
 
-const DeskOverlay = memo(function DeskOverlay({
-  desks,
-  selectedDeskId,
-  hoveredDeskId,
-  overlayRect,
-  onHoverDesk,
-  onSelectDesk,
-  onDeskDoubleClick
-}: {
-  desks: FloorplanDesk[];
-  selectedDeskId: string;
-  hoveredDeskId: string;
-  overlayRect: OverlayRect;
-  onHoverDesk: (deskId: string) => void;
-  onSelectDesk: (deskId: string) => void;
-  onDeskDoubleClick?: (deskId: string) => void;
-}) {
+const DeskOverlay = memo(function DeskOverlay({ desks, selectedDeskId, hoveredDeskId, overlayRect, onHoverDesk, onSelectDesk, onDeskDoubleClick }: { desks: FloorplanDesk[]; selectedDeskId: string; hoveredDeskId: string; overlayRect: OverlayRect; onHoverDesk: (deskId: string) => void; onSelectDesk: (deskId: string) => void; onDeskDoubleClick?: (deskId: string) => void; }) {
+  const [brokenImages, setBrokenImages] = useState<Record<string, boolean>>({});
   return (
     <div className="desk-overlay" style={{ left: overlayRect.left, top: overlayRect.top, width: overlayRect.width, height: overlayRect.height }}>
-      {desks.map((desk) => (
-        <button
-          key={desk.id}
-          type="button"
-          className={`desk-pin ${desk.status} ${selectedDeskId === desk.id ? 'selected' : ''} ${hoveredDeskId === desk.id ? 'hovered' : ''}`}
-          style={{ left: `${toNormalized(desk.x, overlayRect.width) * overlayRect.width}px`, top: `${toNormalized(desk.y, overlayRect.height) * overlayRect.height}px` }}
-          title={`${desk.name} · ${desk.status === 'free' ? 'Frei' : desk.booking?.userDisplayName ?? desk.booking?.userEmail}`}
-          onMouseEnter={() => onHoverDesk(desk.id)}
-          onMouseLeave={() => onHoverDesk('')}
-          onClick={(event) => {
-            event.stopPropagation();
-            onSelectDesk(desk.id);
-          }}
-          onDoubleClick={(event) => {
-            event.stopPropagation();
-            onDeskDoubleClick?.(desk.id);
-          }}
-        />
-      ))}
+      {desks.map((desk) => {
+        const initials = getInitials(desk.booking?.userDisplayName, desk.booking?.userEmail);
+        const showPhoto = Boolean(desk.booking?.userPhotoUrl) && !brokenImages[desk.id];
+        return (
+          <button
+            key={desk.id}
+            type="button"
+            className={`desk-pin ${desk.status} ${selectedDeskId === desk.id ? 'selected' : ''} ${hoveredDeskId === desk.id ? 'hovered' : ''} ${desk.status === 'booked' ? 'desk-pin-booked-avatar' : ''}`}
+            style={{ left: `${toNormalized(desk.x, overlayRect.width) * overlayRect.width}px`, top: `${toNormalized(desk.y, overlayRect.height) * overlayRect.height}px` }}
+            title={`${desk.name} · ${desk.status === 'free' ? 'Frei' : desk.booking?.userDisplayName ?? desk.booking?.userEmail}`}
+            onMouseEnter={() => onHoverDesk(desk.id)}
+            onMouseLeave={() => onHoverDesk('')}
+            onClick={(event) => { event.stopPropagation(); onSelectDesk(desk.id); }}
+            onDoubleClick={(event) => { event.stopPropagation(); onDeskDoubleClick?.(desk.id); }}
+          >
+            {desk.status === 'booked' && (
+              showPhoto ? <img src={desk.booking?.userPhotoUrl} alt={desk.booking?.userDisplayName ?? desk.booking?.userEmail ?? 'Mitarbeiter'} className="desk-pin-avatar-img" onError={() => setBrokenImages((current) => ({ ...current, [desk.id]: true }))} /> : <span className="desk-pin-initials">{initials}</span>
+            )}
+          </button>
+        );
+      })}
     </div>
   );
 });
@@ -103,34 +97,13 @@ export function FloorplanCanvas({ imageUrl, imageAlt, desks, selectedDeskId, hov
     const localY = event.clientY - clickedLayerRect.top;
     const xNorm = clamp01(localX / clickedLayerRect.width);
     const yNorm = clamp01(localY / clickedLayerRect.height);
-
-    if (import.meta.env.DEV) {
-      console.log({
-        clientX: event.clientX,
-        clientY: event.clientY,
-        rect: clickedLayerRect,
-        localX,
-        localY,
-        xNorm,
-        yNorm
-      });
-    }
-
     onCanvasClick({ xPct: xNorm, yPct: yNorm });
   };
 
   return (
     <div ref={containerRef} className="floorplan-canvas" role="presentation" onClick={handleCanvasClick}>
       <FloorplanImage imageUrl={imageUrl} imageAlt={imageAlt} imgRef={imgRef} onLoad={sync} />
-      <DeskOverlay
-        desks={desks}
-        selectedDeskId={selectedDeskId}
-        hoveredDeskId={hoveredDeskId}
-        overlayRect={overlayRect}
-        onHoverDesk={onHoverDesk}
-        onSelectDesk={onSelectDesk}
-        onDeskDoubleClick={onDeskDoubleClick}
-      />
+      <DeskOverlay desks={desks} selectedDeskId={selectedDeskId} hoveredDeskId={hoveredDeskId} overlayRect={overlayRect} onHoverDesk={onHoverDesk} onSelectDesk={onSelectDesk} onDeskDoubleClick={onDeskDoubleClick} />
     </div>
   );
 }

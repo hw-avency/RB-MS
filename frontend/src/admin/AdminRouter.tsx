@@ -1,4 +1,5 @@
 import { FormEvent, ReactNode, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { del, get, patch, post } from '../api';
 import { UserMenu } from '../components/UserMenu';
 import { FloorplanCanvas } from '../FloorplanCanvas';
@@ -66,22 +67,113 @@ function ErrorState({ text, onRetry }: { text: string; onRetry: () => void }) {
   return <div className="error-banner stack-sm"><span>{text}</span><button className="btn btn-outline" onClick={onRetry}>Retry</button></div>;
 }
 
-function ConfirmDialog({ title, description, onConfirm, onCancel }: { title: string; description: string; onConfirm: () => void; onCancel: () => void }) {
+function ConfirmDialog({ title, description, onConfirm, onCancel, confirmDisabled = false, confirmLabel = 'Löschen' }: { title: string; description: string; onConfirm: () => void; onCancel: () => void; confirmDisabled?: boolean; confirmLabel?: string }) {
   return (
-    <div className="overlay"><section className="card dialog stack-sm" role="dialog" aria-modal="true"><h3>{title}</h3><p className="muted">{description}</p><div className="inline-end"><button className="btn btn-outline" onClick={onCancel}>Abbrechen</button><button className="btn btn-danger" onClick={onConfirm}>Löschen</button></div></section></div>
+    <div className="overlay"><section className="card dialog stack-sm" role="dialog" aria-modal="true"><h3>{title}</h3><p className="muted">{description}</p><div className="inline-end"><button className="btn btn-outline" disabled={confirmDisabled} onClick={onCancel}>Abbrechen</button><button className="btn btn-danger" disabled={confirmDisabled} onClick={onConfirm}>{confirmLabel}</button></div></section></div>
   );
 }
 
-function RowMenu({ onEdit, onDelete, onExtra, extraLabel }: { onEdit: () => void; onDelete: () => void; onExtra?: () => void; extraLabel?: string }) {
+type RowMenuItem = { label: string; onSelect: () => void; danger?: boolean };
+
+function RowMenu({ items }: { items: RowMenuItem[] }) {
+  const [open, setOpen] = useState(false);
+  const [position, setPosition] = useState({ left: 0, top: 0 });
+  const [activeIndex, setActiveIndex] = useState(0);
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
+  const menuRef = useRef<HTMLDivElement | null>(null);
+
+  const syncPosition = () => {
+    if (!triggerRef.current || !menuRef.current) return;
+    const triggerRect = triggerRef.current.getBoundingClientRect();
+    const menuRect = menuRef.current.getBoundingClientRect();
+    const padding = 8;
+    const viewportWidth = window.innerWidth;
+    const viewportHeight = window.innerHeight;
+    const spaceBottom = viewportHeight - triggerRect.bottom;
+    const openAbove = spaceBottom < menuRect.height + padding;
+    const top = openAbove ? triggerRect.top - menuRect.height - 4 : triggerRect.bottom + 4;
+    const unclampedLeft = triggerRect.right - menuRect.width;
+    const left = Math.min(Math.max(unclampedLeft, padding), viewportWidth - menuRect.width - padding);
+    const clampedTop = Math.min(Math.max(top, padding), viewportHeight - menuRect.height - padding);
+    setPosition({ left, top: clampedTop });
+  };
+
+  useEffect(() => {
+    if (!open) return;
+    syncPosition();
+    const onWindowUpdate = () => syncPosition();
+    const onPointerDown = (event: MouseEvent) => {
+      const target = event.target as Node;
+      if (menuRef.current?.contains(target) || triggerRef.current?.contains(target)) return;
+      setOpen(false);
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setOpen(false);
+        triggerRef.current?.focus();
+        return;
+      }
+      if (event.key === 'ArrowDown') {
+        event.preventDefault();
+        setActiveIndex((current) => (current + 1) % items.length);
+      }
+      if (event.key === 'ArrowUp') {
+        event.preventDefault();
+        setActiveIndex((current) => (current - 1 + items.length) % items.length);
+      }
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        items[activeIndex]?.onSelect();
+        setOpen(false);
+      }
+    };
+    window.addEventListener('resize', onWindowUpdate);
+    window.addEventListener('scroll', onWindowUpdate, true);
+    window.addEventListener('mousedown', onPointerDown);
+    window.addEventListener('keydown', onKeyDown);
+    return () => {
+      window.removeEventListener('resize', onWindowUpdate);
+      window.removeEventListener('scroll', onWindowUpdate, true);
+      window.removeEventListener('mousedown', onPointerDown);
+      window.removeEventListener('keydown', onKeyDown);
+    };
+  }, [open, activeIndex, items]);
+
   return (
-    <details className="row-menu">
-      <summary className="btn btn-outline btn-icon">⋯</summary>
-      <div className="row-menu-content">
-        {onExtra && extraLabel && <button className="btn btn-ghost" onClick={onExtra}>{extraLabel}</button>}
-        <button className="btn btn-ghost" onClick={onEdit}>Bearbeiten</button>
-        <button className="btn btn-ghost btn-danger-text" onClick={onDelete}>Löschen</button>
-      </div>
-    </details>
+    <>
+      <button
+        ref={triggerRef}
+        type="button"
+        className="btn btn-outline btn-icon"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        onClick={() => {
+          setOpen((current) => !current);
+          setActiveIndex(0);
+        }}
+      >
+        ⋯
+      </button>
+      {open && createPortal(
+        <div ref={menuRef} className="row-menu-content row-menu-overlay" role="menu" style={{ left: position.left, top: position.top }}>
+          {items.map((item, index) => (
+            <button
+              key={item.label}
+              role="menuitem"
+              className={`btn btn-ghost row-menu-item ${item.danger ? 'btn-danger-text' : ''} ${activeIndex === index ? 'active' : ''}`}
+              onMouseEnter={() => setActiveIndex(index)}
+              onClick={() => {
+                item.onSelect();
+                setOpen(false);
+              }}
+            >
+              {item.label}
+            </button>
+          ))}
+        </div>,
+        document.body
+      )}
+    </>
   );
 }
 
@@ -200,7 +292,7 @@ function FloorplansPage({ path, navigate, onLogout, currentUser }: RouteProps) {
       <section className="card stack-sm">
         <div className="crud-toolbar"><div className="inline-between"><h3>Floorpläne</h3><Badge>{filtered.length}</Badge></div><div className="admin-search">🔎<input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Floorplan suchen" /></div></div>
         {state.error && <ErrorState text={state.error} onRetry={load} />}
-        <div className="table-wrap"><table className="admin-table"><thead><tr><th>Name</th><th>Bild URL</th><th>Erstellt</th><th className="align-right">Aktionen</th></tr></thead>{state.loading && !state.ready ? <SkeletonRows columns={4} /> : <tbody>{filtered.map((floorplan) => <tr key={floorplan.id}><td>{floorplan.name}</td><td className="truncate-cell" title={floorplan.imageUrl}>{floorplan.imageUrl}</td><td>{formatDate(floorplan.createdAt)}</td><td className="align-right"><RowMenu onEdit={() => setEditing(floorplan)} onDelete={() => setPendingDelete(floorplan)} /></td></tr>)}</tbody>}</table></div>
+        <div className="table-wrap"><table className="admin-table"><thead><tr><th>Name</th><th>Bild URL</th><th>Erstellt</th><th className="align-right">Aktionen</th></tr></thead>{state.loading && !state.ready ? <SkeletonRows columns={4} /> : <tbody>{filtered.map((floorplan) => <tr key={floorplan.id}><td>{floorplan.name}</td><td className="truncate-cell" title={floorplan.imageUrl}>{floorplan.imageUrl}</td><td>{formatDate(floorplan.createdAt)}</td><td className="align-right"><RowMenu items={[{ label: 'Bearbeiten', onSelect: () => setEditing(floorplan) }, { label: 'Löschen', onSelect: () => setPendingDelete(floorplan), danger: true }]} /></td></tr>)}</tbody>}</table></div>
         {!state.loading && filtered.length === 0 && <EmptyState text="Keine Floorpläne vorhanden." action={<button className="btn" onClick={() => setShowCreate(true)}>Neu anlegen</button>} />}
       </section>
       {(showCreate || editing) && <FloorplanEditor floorplan={editing} onClose={() => { setShowCreate(false); setEditing(null); navigate('/admin/floorplans'); }} onSaved={async () => { setShowCreate(false); setEditing(null); toasts.success('Floorplan gespeichert'); await load(); }} onError={toasts.error} />}
@@ -290,6 +382,9 @@ function DesksPage({ path, navigate, onLogout, currentUser }: RouteProps) {
   const [editingDesk, setEditingDesk] = useState<Desk | null>(null);
   const [createRequest, setCreateRequest] = useState<{ x: number; y: number } | null>(null);
   const [deleteDesk, setDeleteDesk] = useState<Desk | null>(null);
+  const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
+  const [selectedDeskIds, setSelectedDeskIds] = useState<string[]>([]);
+  const [isBulkDeleting, setIsBulkDeleting] = useState(false);
   const [selectedDeskId, setSelectedDeskId] = useState('');
   const [hoveredDeskId, setHoveredDeskId] = useState('');
   const [canvasMode, setCanvasMode] = useState<'idle' | 'create' | 'reposition'>('idle');
@@ -345,6 +440,7 @@ function DesksPage({ path, navigate, onLogout, currentUser }: RouteProps) {
   }, []);
 
   const filtered = useMemo(() => desks.filter((desk) => desk.name.toLowerCase().includes(query.toLowerCase())), [desks, query]);
+  const isAllVisibleSelected = filtered.length > 0 && filtered.every((desk) => selectedDeskIds.includes(desk.id));
 
   const startCreateMode = () => {
     setEditingDesk(null);
@@ -378,6 +474,36 @@ function DesksPage({ path, navigate, onLogout, currentUser }: RouteProps) {
     }
   };
 
+  const clearSelection = () => setSelectedDeskIds([]);
+
+  const toggleDeskSelection = (deskId: string) => {
+    setSelectedDeskIds((current) => current.includes(deskId) ? current.filter((id) => id !== deskId) : [...current, deskId]);
+  };
+
+  const toggleAllVisibleDesks = () => {
+    if (isAllVisibleSelected) {
+      setSelectedDeskIds((current) => current.filter((id) => !filtered.some((desk) => desk.id === id)));
+      return;
+    }
+    setSelectedDeskIds((current) => Array.from(new Set([...current, ...filtered.map((desk) => desk.id)])));
+  };
+
+  const runBulkDelete = async () => {
+    if (selectedDeskIds.length === 0 || isBulkDeleting) return;
+    setIsBulkDeleting(true);
+    try {
+      await del(`/admin/desks?ids=${encodeURIComponent(selectedDeskIds.join(','))}`);
+      toasts.success(`${selectedDeskIds.length} Desk(s) gelöscht`);
+      setBulkDeleteOpen(false);
+      clearSelection();
+      await loadDesks(floorplanId);
+    } catch (err) {
+      toasts.error(err instanceof Error ? err.message : 'Bulk-Delete fehlgeschlagen');
+    } finally {
+      setIsBulkDeleting(false);
+    }
+  };
+
   return (
     <AdminLayout path={path} navigate={navigate} onLogout={onLogout} title="Desks" currentUser={currentUser ?? null}>
       <section className="card stack-sm">
@@ -392,13 +518,15 @@ function DesksPage({ path, navigate, onLogout, currentUser }: RouteProps) {
           </section>
 
           <section className="desks-table card stack-sm">
-            <div className="table-wrap"><table className="admin-table"><thead><tr><th>Label</th><th>Aktualisiert</th><th className="align-right">Aktionen</th></tr></thead>{state.loading && !state.ready ? <SkeletonRows columns={3} /> : <tbody>{filtered.map((desk) => <tr key={desk.id} ref={(row) => { rowRefs.current[desk.id] = row; }} className={selectedDeskId === desk.id ? 'row-selected' : ''} onClick={() => setSelectedDeskId(desk.id)}><td>{desk.name}</td><td>{formatDate(desk.updatedAt ?? desk.createdAt)}</td><td className="align-right"><RowMenu onEdit={() => setEditingDesk(desk)} onExtra={() => { setSelectedDeskId(desk.id); setPendingRepositionDesk(desk); setCanvasMode('reposition'); }} extraLabel="Position ändern" onDelete={() => setDeleteDesk(desk)} /></td></tr>)}</tbody>}</table></div>
+            {selectedDeskIds.length > 0 && <div className="bulk-actions"><strong>{selectedDeskIds.length} ausgewählt</strong><div className="inline-end"><button className="btn btn-danger" disabled={isBulkDeleting} onClick={() => setBulkDeleteOpen(true)}>{isBulkDeleting ? 'Lösche…' : 'Auswahl löschen'}</button><button className="btn btn-outline" disabled={isBulkDeleting} onClick={clearSelection}>Abbrechen</button></div></div>}
+            <div className="table-wrap"><table className="admin-table"><thead><tr><th><input type="checkbox" checked={isAllVisibleSelected} onChange={toggleAllVisibleDesks} aria-label="Alle sichtbaren Desks auswählen" /></th><th>Label</th><th>Aktualisiert</th><th className="align-right">Aktionen</th></tr></thead>{state.loading && !state.ready ? <SkeletonRows columns={4} /> : <tbody>{filtered.map((desk) => <tr key={desk.id} ref={(row) => { rowRefs.current[desk.id] = row; }} className={selectedDeskId === desk.id ? 'row-selected' : ''} onClick={() => setSelectedDeskId(desk.id)}><td><input type="checkbox" checked={selectedDeskIds.includes(desk.id)} onClick={(e) => e.stopPropagation()} onChange={() => toggleDeskSelection(desk.id)} aria-label={`${desk.name} auswählen`} /></td><td>{desk.name}</td><td>{formatDate(desk.updatedAt ?? desk.createdAt)}</td><td className="align-right"><RowMenu items={[{ label: 'Position ändern', onSelect: () => { setSelectedDeskId(desk.id); setPendingRepositionDesk(desk); setCanvasMode('reposition'); } }, { label: 'Bearbeiten', onSelect: () => setEditingDesk(desk) }, { label: 'Löschen', onSelect: () => setDeleteDesk(desk), danger: true }]} /></td></tr>)}</tbody>}</table></div>
             {!state.loading && filtered.length === 0 && <EmptyState text="Keine Desks gefunden." action={<button className="btn" onClick={startCreateMode}>Neuen Desk platzieren</button>} />}
           </section>
         </div>
       </section>
       {(createRequest || editingDesk) && <DeskEditor desk={editingDesk} floorplans={floorplans} defaultFloorplanId={floorplanId} initialPosition={createRequest} lockFloorplan={Boolean(createRequest)} onRequestPositionMode={editingDesk ? () => { setPendingRepositionDesk(editingDesk); setCanvasMode('reposition'); } : undefined} onClose={() => { setCreateRequest(null); setEditingDesk(null); navigate('/admin/desks'); }} onSaved={async () => { setCreateRequest(null); setEditingDesk(null); toasts.success('Desk gespeichert'); await loadDesks(floorplanId); }} onError={toasts.error} />}
       {deleteDesk && <ConfirmDialog title="Desk löschen?" description={`Desk "${deleteDesk.name}" wird entfernt.`} onCancel={() => setDeleteDesk(null)} onConfirm={async () => { await del(`/admin/desks/${deleteDesk.id}`); setDeleteDesk(null); toasts.success('Desk gelöscht'); await loadDesks(floorplanId); }} />}
+      {bulkDeleteOpen && <ConfirmDialog title={`${selectedDeskIds.length} Einträge löschen?`} description="Dieser Vorgang ist irreversibel." onCancel={() => setBulkDeleteOpen(false)} onConfirm={() => void runBulkDelete()} confirmDisabled={isBulkDeleting} confirmLabel={isBulkDeleting ? 'Lösche…' : 'Löschen'} />}
       <ToastViewport toasts={toasts.toasts} />
     </AdminLayout>
   );
@@ -419,6 +547,9 @@ function BookingsPage({ path, navigate, onLogout, currentUser }: RouteProps) {
   const [editing, setEditing] = useState<Booking | null>(null);
   const [creating, setCreating] = useState(hasCreateFlag(path));
   const [deleteBooking, setDeleteBooking] = useState<Booking | null>(null);
+  const [selectedBookingIds, setSelectedBookingIds] = useState<string[]>([]);
+  const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
+  const [isBulkDeleting, setIsBulkDeleting] = useState(false);
 
   const load = async () => {
     setState((current) => ({ ...current, loading: true, error: '' }));
@@ -444,17 +575,48 @@ function BookingsPage({ path, navigate, onLogout, currentUser }: RouteProps) {
     const desk = desks.find((item) => item.id === booking.deskId);
     return person.includes(personQuery.toLowerCase()) && (!deskId || booking.deskId === deskId) && (!floorplanId || desk?.floorplanId === floorplanId);
   }), [bookings, desks, deskId, floorplanId, personQuery]);
+  const isAllVisibleSelected = filtered.length > 0 && filtered.every((booking) => selectedBookingIds.includes(booking.id));
+
+  const toggleBookingSelection = (bookingId: string) => {
+    setSelectedBookingIds((current) => current.includes(bookingId) ? current.filter((id) => id !== bookingId) : [...current, bookingId]);
+  };
+
+  const toggleAllVisibleBookings = () => {
+    if (isAllVisibleSelected) {
+      setSelectedBookingIds((current) => current.filter((id) => !filtered.some((booking) => booking.id === id)));
+      return;
+    }
+    setSelectedBookingIds((current) => Array.from(new Set([...current, ...filtered.map((booking) => booking.id)])));
+  };
+
+  const runBulkDelete = async () => {
+    if (selectedBookingIds.length === 0 || isBulkDeleting) return;
+    setIsBulkDeleting(true);
+    try {
+      await del(`/admin/bookings?ids=${encodeURIComponent(selectedBookingIds.join(','))}`);
+      toasts.success(`${selectedBookingIds.length} Buchung(en) gelöscht`);
+      setBulkDeleteOpen(false);
+      setSelectedBookingIds([]);
+      await load();
+    } catch (err) {
+      toasts.error(err instanceof Error ? err.message : 'Bulk-Delete fehlgeschlagen');
+    } finally {
+      setIsBulkDeleting(false);
+    }
+  };
 
   return (
     <AdminLayout path={path} navigate={navigate} onLogout={onLogout} title="Buchungen" actions={<button className="btn" onClick={() => setCreating(true)}>Neu</button>} currentUser={currentUser ?? null}>
       <section className="card stack-sm">
         <div className="crud-toolbar"><div className="inline-between"><h3>Buchungen</h3><Badge>{filtered.length}</Badge></div><div className="admin-toolbar admin-toolbar-wrap"><input type="date" value={from} onChange={(e) => setFrom(e.target.value)} /><input type="date" value={to} onChange={(e) => setTo(e.target.value)} /><select value={floorplanId} onChange={(e) => setFloorplanId(e.target.value)}><option value="">Alle Floorpläne</option>{floorplans.map((plan) => <option key={plan.id} value={plan.id}>{plan.name}</option>)}</select><select value={deskId} onChange={(e) => setDeskId(e.target.value)}><option value="">Alle Desks</option>{desks.filter((desk) => (floorplanId ? desk.floorplanId === floorplanId : true)).map((desk) => <option key={desk.id} value={desk.id}>{desk.name}</option>)}</select><div className="admin-search">🔎<input value={personQuery} onChange={(e) => setPersonQuery(e.target.value)} placeholder="Person suchen" /></div></div></div>
         {state.error && <ErrorState text={state.error} onRetry={load} />}
-        <div className="table-wrap"><table className="admin-table"><thead><tr><th>Datum</th><th>Person</th><th>Desk</th><th>Floorplan</th><th>Erstellt</th><th className="align-right">Aktionen</th></tr></thead>{state.loading && !state.ready ? <SkeletonRows columns={6} /> : <tbody>{filtered.map((booking) => { const desk = desks.find((item) => item.id === booking.deskId); const floorplan = floorplans.find((plan) => plan.id === desk?.floorplanId); return <tr key={booking.id}><td>{formatDateOnly(booking.date)}</td><td>{booking.userDisplayName || booking.userEmail}</td><td>{desk?.name ?? booking.deskId}</td><td>{floorplan?.name ?? '—'}</td><td>{formatDate(booking.createdAt)}</td><td className="align-right"><RowMenu onEdit={() => setEditing(booking)} onDelete={() => setDeleteBooking(booking)} /></td></tr>; })}</tbody>}</table></div>
+        {selectedBookingIds.length > 0 && <div className="bulk-actions"><strong>{selectedBookingIds.length} ausgewählt</strong><div className="inline-end"><button className="btn btn-danger" disabled={isBulkDeleting} onClick={() => setBulkDeleteOpen(true)}>{isBulkDeleting ? 'Lösche…' : 'Auswahl löschen'}</button><button className="btn btn-outline" disabled={isBulkDeleting} onClick={() => setSelectedBookingIds([])}>Abbrechen</button></div></div>}
+        <div className="table-wrap"><table className="admin-table"><thead><tr><th><input type="checkbox" checked={isAllVisibleSelected} onChange={toggleAllVisibleBookings} aria-label="Alle sichtbaren Buchungen auswählen" /></th><th>Datum</th><th>Person</th><th>Desk</th><th>Floorplan</th><th>Erstellt</th><th className="align-right">Aktionen</th></tr></thead>{state.loading && !state.ready ? <SkeletonRows columns={7} /> : <tbody>{filtered.map((booking) => { const desk = desks.find((item) => item.id === booking.deskId); const floorplan = floorplans.find((plan) => plan.id === desk?.floorplanId); return <tr key={booking.id}><td><input type="checkbox" checked={selectedBookingIds.includes(booking.id)} onChange={() => toggleBookingSelection(booking.id)} aria-label={`Buchung ${booking.id} auswählen`} /></td><td>{formatDateOnly(booking.date)}</td><td>{booking.userDisplayName || booking.userEmail}</td><td>{desk?.name ?? booking.deskId}</td><td>{floorplan?.name ?? '—'}</td><td>{formatDate(booking.createdAt)}</td><td className="align-right"><RowMenu items={[{ label: 'Bearbeiten', onSelect: () => setEditing(booking) }, { label: 'Löschen', onSelect: () => setDeleteBooking(booking), danger: true }]} /></td></tr>; })}</tbody>}</table></div>
         {!state.loading && filtered.length === 0 && <EmptyState text="Keine Buchungen im Zeitraum gefunden." action={<button className="btn" onClick={() => setCreating(true)}>Neu anlegen</button>} />}
       </section>
       {(creating || editing) && <BookingEditor booking={editing} desks={desks} employees={employees} onClose={() => { setCreating(false); setEditing(null); navigate('/admin/bookings'); }} onSaved={async (m) => { toasts.success(m); setCreating(false); setEditing(null); await load(); }} onError={toasts.error} />}
       {deleteBooking && <ConfirmDialog title="Buchung löschen?" description="Die ausgewählte Buchung wird entfernt." onCancel={() => setDeleteBooking(null)} onConfirm={async () => { await del(`/admin/bookings/${deleteBooking.id}`); setDeleteBooking(null); toasts.success('Buchung gelöscht'); await load(); }} />}
+      {bulkDeleteOpen && <ConfirmDialog title={`${selectedBookingIds.length} Einträge löschen?`} description="Dieser Vorgang ist irreversibel." onCancel={() => setBulkDeleteOpen(false)} onConfirm={() => void runBulkDelete()} confirmDisabled={isBulkDeleting} confirmLabel={isBulkDeleting ? 'Lösche…' : 'Löschen'} />}
       <ToastViewport toasts={toasts.toasts} />
     </AdminLayout>
   );
@@ -534,7 +696,7 @@ function EmployeesPage({ path, navigate, onRoleStateChanged, onLogout, currentAd
       <section className="card stack-sm">
         <div className="crud-toolbar"><div className="inline-between"><h3>Mitarbeiter</h3><Badge>{filtered.length}</Badge></div><div className="admin-search">🔎<input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Name oder E-Mail" /></div></div>
         {state.error && <ErrorState text={state.error} onRetry={load} />}
-        <div className="table-wrap"><table className="admin-table"><thead><tr><th>Name</th><th>E-Mail</th><th>Rolle</th><th>Status</th><th className="align-right">Aktionen</th></tr></thead>{state.loading && !state.ready ? <SkeletonRows columns={5} /> : <tbody>{filtered.map((employee) => <tr key={employee.id}><td>{employee.displayName}</td><td className="truncate-cell" title={employee.email}>{employee.email}</td><td><select value={employee.role} disabled={updatingRoleId === employee.id} onChange={(event) => { const nextRole = event.target.value as 'admin' | 'user'; if (nextRole !== employee.role) void updateRole(employee, nextRole); }}><option value="user">User</option><option value="admin">Admin</option></select>{updatingRoleId === employee.id && <span className="muted"> ⏳</span>}</td><td>{employee.isActive ? <Badge tone="ok">aktiv</Badge> : <Badge tone="warn">deaktiviert</Badge>}</td><td className="align-right"><RowMenu onEdit={() => setEditing(employee)} onDelete={() => setPendingDeactivate(employee)} /></td></tr>)}</tbody>}</table></div>
+        <div className="table-wrap"><table className="admin-table"><thead><tr><th>Name</th><th>E-Mail</th><th>Rolle</th><th>Status</th><th className="align-right">Aktionen</th></tr></thead>{state.loading && !state.ready ? <SkeletonRows columns={5} /> : <tbody>{filtered.map((employee) => <tr key={employee.id}><td>{employee.displayName}</td><td className="truncate-cell" title={employee.email}>{employee.email}</td><td><select value={employee.role} disabled={updatingRoleId === employee.id} onChange={(event) => { const nextRole = event.target.value as 'admin' | 'user'; if (nextRole !== employee.role) void updateRole(employee, nextRole); }}><option value="user">User</option><option value="admin">Admin</option></select>{updatingRoleId === employee.id && <span className="muted"> ⏳</span>}</td><td>{employee.isActive ? <Badge tone="ok">aktiv</Badge> : <Badge tone="warn">deaktiviert</Badge>}</td><td className="align-right"><RowMenu items={[{ label: 'Bearbeiten', onSelect: () => setEditing(employee) }, { label: 'Löschen', onSelect: () => setPendingDeactivate(employee), danger: true }]} /></td></tr>)}</tbody>}</table></div>
         {!state.loading && filtered.length === 0 && <EmptyState text="Keine Mitarbeitenden vorhanden." action={<button className="btn" onClick={() => setCreating(true)}>Neu anlegen</button>} />}
       </section>
       {(creating || editing) && <EmployeeEditor employee={editing} onClose={() => { setCreating(false); setEditing(null); navigate('/admin/employees'); }} onSaved={async () => { setCreating(false); setEditing(null); toasts.success('Mitarbeiter gespeichert'); await load(); await onRoleStateChanged(); }} onError={toasts.error} />}

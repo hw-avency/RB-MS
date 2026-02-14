@@ -383,6 +383,12 @@ const getRouteId = (value: string | string[] | undefined): string | null => {
   return Array.isArray(value) ? value[0] ?? null : value;
 };
 
+
+const getIdsFromQuery = (value: string | string[] | undefined): string[] => {
+  const raw = Array.isArray(value) ? value.join(',') : value ?? '';
+  return raw.split(',').map((entry) => entry.trim()).filter((entry) => entry.length > 0);
+};
+
 const sendConflict = (res: express.Response, message: string, details: Record<string, unknown>) => {
   res.status(409).json({
     error: 'conflict',
@@ -1673,6 +1679,17 @@ app.post('/admin/floorplans/:id/desks', requireAdmin, async (req, res) => {
   res.status(201).json(desk);
 });
 
+app.delete('/admin/desks', requireAdmin, async (req, res) => {
+  const ids = getIdsFromQuery(req.query.ids as string | string[] | undefined);
+  if (ids.length === 0) {
+    res.status(400).json({ error: 'validation', message: 'ids is required' });
+    return;
+  }
+
+  const result = await prisma.desk.deleteMany({ where: { id: { in: ids } } });
+  res.status(200).json({ deletedCount: result.count });
+});
+
 app.delete('/admin/desks/:id', requireAdmin, async (req, res) => {
   const id = getRouteId(req.params.id);
   if (!id) {
@@ -1774,6 +1791,17 @@ app.get('/admin/bookings', requireAdmin, async (req, res) => {
   });
 
   res.status(200).json(bookings);
+});
+
+app.delete('/admin/bookings', requireAdmin, async (req, res) => {
+  const ids = getIdsFromQuery(req.query.ids as string | string[] | undefined);
+  if (ids.length === 0) {
+    res.status(400).json({ error: 'validation', message: 'ids is required' });
+    return;
+  }
+
+  const result = await prisma.booking.deleteMany({ where: { id: { in: ids } } });
+  res.status(200).json({ deletedCount: result.count });
 });
 
 app.delete('/admin/bookings/:id', requireAdmin, async (req, res) => {
