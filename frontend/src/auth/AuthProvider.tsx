@@ -1,5 +1,5 @@
 import { createContext, ReactNode, useCallback, useContext, useEffect, useMemo, useState } from 'react';
-import { ApiError, ensureCsrfCookie, get, post, resetClientCaches } from '../api';
+import { ApiError, get, post, resetClientCaches } from '../api';
 
 export type AuthUser = { id: string; name: string; email: string; displayName?: string; role: 'admin' | 'user' };
 type AuthMeResponse = { user: AuthUser };
@@ -24,7 +24,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     try {
       const response = await get<AuthMeResponse>('/auth/me');
       setUser(response.user);
-      await ensureCsrfCookie();
       return response.user;
     } catch (error) {
       if (error instanceof ApiError && error.code === 'UNAUTHORIZED') {
@@ -55,7 +54,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     try {
       const meResponse = await get<AuthMeResponse>('/auth/me');
       setUser(meResponse.user);
-      await ensureCsrfCookie();
       return;
     } catch (error) {
       setUser(null);

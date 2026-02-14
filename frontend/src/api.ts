@@ -1,7 +1,7 @@
 const API_BASE = import.meta.env.VITE_API_BASE_URL || window.location.origin;
 const REQUEST_TIMEOUT_MS = 6000;
 
-export type ApiErrorCode = 'BACKEND_UNREACHABLE' | 'UNAUTHORIZED' | 'SERVER_ERROR' | 'CSRF_FAILED' | 'UNKNOWN';
+export type ApiErrorCode = 'BACKEND_UNREACHABLE' | 'UNAUTHORIZED' | 'SERVER_ERROR' | 'ORIGIN_BLOCKED' | 'UNKNOWN';
 export type ApiErrorKind = 'BACKEND_UNREACHABLE' | 'HTTP_ERROR';
 
 type ErrorPayload = {
@@ -44,8 +44,6 @@ export class ApiError extends Error {
 }
 
 type HttpMethod = 'GET' | 'HEAD' | 'POST' | 'PATCH' | 'DELETE' | 'PUT';
-const CSRF_COOKIE_NAME = 'rbms_csrf';
-
 let backendAvailable = true;
 type AuthFailureContext = {
   method: HttpMethod;
@@ -56,30 +54,7 @@ type AuthFailureContext = {
 
 let lastAuthMeFailure: AuthFailureContext | null = null;
 
-const readCookie = (name: string): string | null => {
-  const match = document.cookie
-    .split(';')
-    .map((part) => part.trim())
-    .find((part) => part.startsWith(`${name}=`));
-  return match ? decodeURIComponent(match.slice(name.length + 1)) : null;
-};
-
 const isMutationMethod = (method: HttpMethod): boolean => method !== 'GET' && method !== 'HEAD';
-
-const isCsrfFailure = (status: number, backendCode?: string): boolean => {
-  return status === 403 && (backendCode === 'CSRF_MISSING' || backendCode === 'CSRF_INVALID');
-};
-
-async function initCsrfCookie(): Promise<void> {
-  const response = await fetch(`${API_BASE}/auth/csrf`, {
-    method: 'GET',
-    credentials: 'include'
-  });
-
-  if (!response.ok) {
-    throw new Error('CSRF_INIT_FAILED');
-  }
-}
 
 const mapStatusToCode = (status: number): ApiErrorCode => {
   if (status === 401 || status === 403) return 'UNAUTHORIZED';
@@ -89,8 +64,8 @@ const mapStatusToCode = (status: number): ApiErrorCode => {
 
 const normalizeErrorMessage = (body: unknown, status: number): string => {
   const backendCode = toBackendCode(body);
-  if (status === 403 && (backendCode === 'CSRF_MISSING' || backendCode === 'CSRF_INVALID')) {
-    return 'Aktion fehlgeschlagen (CSRF). Bitte Seite neu laden.';
+  if (status === 403 && backendCode === 'ORIGIN_NOT_ALLOWED') {
+    return 'Request blocked (Origin)';
   }
 
   if (typeof body === 'object' && body !== null && 'message' in body && typeof body.message === 'string') {
@@ -117,18 +92,12 @@ const toBackendCode = (body: unknown): string | undefined => {
 };
 
 async function sendRequest(path: string, method: HttpMethod, payload?: unknown, signal?: AbortSignal): Promise<Response> {
-  if (isMutationMethod(method) && !readCookie(CSRF_COOKIE_NAME)) {
-    await initCsrfCookie();
-  }
-
-  const csrfToken = isMutationMethod(method) ? readCookie(CSRF_COOKIE_NAME) : null;
   return fetch(`${API_BASE}${path}`, {
     method,
     signal,
     credentials: 'include',
     headers: {
-      'Content-Type': 'application/json',
-      ...(csrfToken ? { 'X-CSRF-Token': csrfToken } : {})
+      'Content-Type': 'application/json'
     },
     ...(typeof payload === 'undefined' ? {} : { body: JSON.stringify(payload) })
   });
@@ -152,18 +121,6 @@ async function request<T>(path: string, method: HttpMethod, payload?: unknown): 
   let response: Response;
   try {
     response = await sendRequest(path, method, payload, controller.signal);
-
-    if (isMutationMethod(method)) {
-      const contentType = response.headers.get('content-type') ?? '';
-      const isJson = contentType.includes('application/json');
-      const body = isJson ? await response.clone().json() : await response.clone().text();
-      const backendCode = toBackendCode(body);
-
-      if (isCsrfFailure(response.status, backendCode)) {
-        await initCsrfCookie();
-        response = await sendRequest(path, method, payload, controller.signal);
-      }
-    }
   } catch {
     backendAvailable = false;
     throw new ApiError({
@@ -185,7 +142,9 @@ async function request<T>(path: string, method: HttpMethod, payload?: unknown): 
 
   if (!response.ok) {
     const backendCode = toBackendCode(body);
-    const code = isCsrfFailure(response.status, backendCode) ? 'CSRF_FAILED' : mapStatusToCode(response.status);
+    const code = response.status === 403 && backendCode === 'ORIGIN_NOT_ALLOWED'
+      ? 'ORIGIN_BLOCKED'
+      : mapStatusToCode(response.status);
 
     if (import.meta.env.DEV) {
       console.warn('API_HTTP_ERROR', {
@@ -225,11 +184,6 @@ async function request<T>(path: string, method: HttpMethod, payload?: unknown): 
   return body as T;
 }
 
-export async function ensureCsrfCookie(): Promise<void> {
-  if (!readCookie(CSRF_COOKIE_NAME)) {
-    await initCsrfCookie();
-  }
-}
 
 export async function checkBackendHealth(): Promise<boolean> {
   try {

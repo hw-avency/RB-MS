@@ -11,10 +11,9 @@ app.set('trust proxy', 1);
 
 const ADMIN_EMAIL = process.env.ADMIN_EMAIL?.trim().toLowerCase();
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD;
-const FRONTEND_ORIGINS = (process.env.CORS_ORIGIN ?? process.env.FRONTEND_ORIGIN ?? process.env.FRONTEND_URL ?? '')
-  .split(',')
-  .map((origin) => origin.trim())
-  .filter(Boolean);
+const FRONTEND_URL = (process.env.FRONTEND_URL ?? process.env.CORS_ORIGIN ?? process.env.FRONTEND_ORIGIN ?? '')
+  .split(',')[0]
+  ?.trim() ?? '';
 const DEFAULT_USER_PASSWORD = process.env.DEFAULT_USER_PASSWORD ?? 'ChangeMe123!';
 const PASSWORD_SALT_ROUNDS = Number(process.env.PASSWORD_SALT_ROUNDS ?? 12);
 const isProd = process.env.NODE_ENV === 'production';
@@ -30,24 +29,25 @@ const ENTRA_CLIENT_SECRET = process.env.ENTRA_CLIENT_SECRET;
 const ENTRA_REDIRECT_URI = process.env.ENTRA_REDIRECT_URI?.trim();
 const ENTRA_POST_LOGIN_REDIRECT = process.env.ENTRA_POST_LOGIN_REDIRECT?.trim() ?? `${process.env.FRONTEND_URL ?? ''}/#/`;
 
-app.use(
-  cors({
-    origin: (origin: string | undefined, callback: (error: Error | null, allow?: boolean) => void) => {
-      if (!origin) {
-        callback(null, true);
-        return;
-      }
+const corsOptions = {
+  origin: (origin: string | undefined, callback: (error: Error | null, allow?: boolean) => void) => {
+    if (!FRONTEND_URL) {
+      callback(null, true);
+      return;
+    }
 
-      if (FRONTEND_ORIGINS.length === 0) {
-        callback(null, true);
-        return;
-      }
+    if (!origin) {
+      callback(null, true);
+      return;
+    }
 
-      callback(null, FRONTEND_ORIGINS.includes(origin));
-    },
-    credentials: true
-  })
-);
+    callback(null, origin === FRONTEND_URL);
+  },
+  credentials: true
+};
+
+app.use(cors(corsOptions));
+app.options('*', cors(corsOptions));
 app.use(express.json());
 
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
@@ -56,7 +56,6 @@ type EmployeeRole = 'admin' | 'user';
 type SessionRecord = {
   id: string;
   userId: string;
-  csrfToken: string;
   expiresAt: number;
   graphAccessToken?: string;
   graphTokenExpiresAt?: number;
@@ -91,7 +90,6 @@ const attachRequestId: express.RequestHandler = (req, res, next) => {
 app.use(attachRequestId);
 
 const SESSION_COOKIE_NAME = 'rbms_session';
-const CSRF_COOKIE_NAME = 'rbms_csrf';
 const SESSION_TTL_MS = 1000 * 60 * 60 * 12;
 const sessions = new Map<string, SessionRecord>();
 type OidcFlowState = { nonce: string; createdAt: number };
@@ -114,20 +112,11 @@ const applySessionCookies = (res: express.Response, session: SessionRecord) => {
     maxAge: SESSION_TTL_MS,
     path: '/'
   });
-
-  res.cookie(CSRF_COOKIE_NAME, session.csrfToken, {
-    httpOnly: false,
-    secure: cookieSecure,
-    sameSite: cookieSameSite,
-    maxAge: SESSION_TTL_MS,
-    path: '/'
-  });
 };
 
 const clearSessionCookies = (res: express.Response) => {
   const options = { httpOnly: true, secure: cookieSecure, sameSite: cookieSameSite, path: '/' };
   res.clearCookie(SESSION_COOKIE_NAME, options);
-  res.clearCookie(CSRF_COOKIE_NAME, { ...options, httpOnly: false });
 };
 
 const createSession = (userId: string, options?: { graphAccessToken?: string; graphTokenExpiresInSeconds?: number }): SessionRecord => {
@@ -138,23 +127,12 @@ const createSession = (userId: string, options?: { graphAccessToken?: string; gr
   const session: SessionRecord = {
     id: crypto.randomUUID(),
     userId,
-    csrfToken: crypto.randomUUID(),
     expiresAt: now + SESSION_TTL_MS,
     ...(options?.graphAccessToken ? { graphAccessToken: options.graphAccessToken } : {}),
     ...(graphTokenExpiresAt ? { graphTokenExpiresAt } : {})
   };
   sessions.set(session.id, session);
   return session;
-};
-
-const refreshSessionCsrf = (session: SessionRecord): SessionRecord => {
-  const refreshed = {
-    ...session,
-    csrfToken: crypto.randomUUID(),
-    expiresAt: Date.now() + SESSION_TTL_MS
-  };
-  sessions.set(refreshed.id, refreshed);
-  return refreshed;
 };
 
 const destroySession = (sessionId?: string) => {
@@ -252,25 +230,36 @@ const verifyIdToken = async (idToken: string, expectedNonce: string): Promise<Id
   return claims;
 };
 
-const requireCsrf: express.RequestHandler = (req, res, next) => {
-  const isSafeMethod = req.method === 'GET' || req.method === 'HEAD' || req.method === 'OPTIONS';
-  if (isSafeMethod || req.path === '/auth/login') {
+const originGuardExcludedPaths = new Set(['/auth/login', '/auth/logout']);
+const requireAllowedMutationOrigin: express.RequestHandler = (req, res, next) => {
+  const isMutationMethod = req.method === 'POST' || req.method === 'PUT' || req.method === 'PATCH' || req.method === 'DELETE';
+  if (!isMutationMethod) {
     next();
     return;
   }
 
-  const csrfHeader = req.header('x-csrf-token');
-  const csrfCookie = parseCookies(req.headers.cookie)[CSRF_COOKIE_NAME];
-  const expected = req.authSession?.csrfToken;
-
-  if (!csrfHeader || !csrfCookie) {
-    res.status(403).json({ error: 'forbidden', code: 'CSRF_MISSING', message: 'CSRF token missing' });
+  if (originGuardExcludedPaths.has(req.path) || req.path.startsWith('/auth/entra/')) {
+    next();
     return;
   }
 
-  if (!expected || expected !== csrfHeader || csrfHeader !== csrfCookie) {
-    res.status(403).json({ error: 'forbidden', code: 'CSRF_INVALID', message: 'Invalid CSRF token' });
+  if (!FRONTEND_URL) {
+    next();
     return;
+  }
+
+  const origin = req.get('origin');
+  if (origin && origin !== FRONTEND_URL) {
+    res.status(403).json({ error: 'forbidden', code: 'ORIGIN_NOT_ALLOWED', message: 'Request blocked (Origin)' });
+    return;
+  }
+
+  if (!origin) {
+    const referer = req.get('referer');
+    if (!referer || !referer.startsWith(FRONTEND_URL)) {
+      res.status(403).json({ error: 'forbidden', code: 'ORIGIN_NOT_ALLOWED', message: 'Request blocked (Origin)' });
+      return;
+    }
   }
 
   next();
@@ -456,6 +445,7 @@ app.get('/api/health', async (_req, res) => {
 });
 
 app.use(attachAuthUser);
+app.use(requireAllowedMutationOrigin);
 
 const ensureBreakglassAdmin = async () => {
   const defaultHash = await hashPassword(DEFAULT_USER_PASSWORD);
@@ -743,14 +733,6 @@ app.get('/auth/me', (req, res) => {
 });
 
 app.get('/auth/csrf', (req, res) => {
-  if (!req.authSession) {
-    res.status(204).send();
-    return;
-  }
-
-  const refreshedSession = refreshSessionCsrf(req.authSession);
-  req.authSession = refreshedSession;
-  applySessionCookies(res, refreshedSession);
   res.status(204).send();
 });
 
@@ -788,7 +770,6 @@ app.get('/user/me/photo', requireAuthenticated, async (req, res) => {
 });
 
 app.use(requireAuthenticated);
-app.use(requireCsrf);
 
 app.get('/admin/employees', requireAdmin, async (_req, res) => {
   const employees = await prisma.employee.findMany({
