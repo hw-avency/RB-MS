@@ -47,7 +47,7 @@ const getApiErrorMessage = (error: unknown, fallback: string): string => {
   return fallback;
 };
 
-export function BookingApp() {
+export function BookingApp({ onOpenAdmin }: { onOpenAdmin: () => void }) {
   const [floorplans, setFloorplans] = useState<Floorplan[]>([]);
   const [selectedFloorplanId, setSelectedFloorplanId] = useState('');
   const [selectedDate, setSelectedDate] = useState(today);
@@ -436,7 +436,7 @@ export function BookingApp() {
           <input placeholder="Suche Person oder Desk" />
         </div>
         <div className="header-right">
-          <button className="btn btn-outline" onClick={() => { window.location.href = '/admin'; }}>Admin</button>
+          <button className="btn btn-outline" onClick={onOpenAdmin}>Admin</button>
           <button className="btn btn-ghost" onClick={() => setDetailsSheetOpen(true)}>≡ Details</button>
           <button className="avatar-btn">👤</button>
         </div>

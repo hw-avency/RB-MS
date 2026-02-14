@@ -2,12 +2,20 @@ import { useEffect, useState } from 'react';
 import { BookingApp } from './BookingApp';
 import { AdminRouter } from './admin/AdminRouter';
 
-const currentPath = () => `${window.location.pathname}${window.location.search}`;
+const toRoutePath = (hash: string) => {
+  if (!hash || hash === '#') return '/';
+
+  const raw = hash.startsWith('#') ? hash.slice(1) : hash;
+  if (!raw) return '/';
+  return raw.startsWith('/') ? raw : `/${raw}`;
+};
+
+const currentPath = () => toRoutePath(window.location.hash);
 
 const navigate = (to: string) => {
-  if (window.location.pathname === to) return;
-  window.history.pushState({}, '', to);
-  window.dispatchEvent(new PopStateEvent('popstate'));
+  const target = to.startsWith('/') ? to : `/${to}`;
+  if (currentPath() === target) return;
+  window.location.hash = target;
 };
 
 function NotFound() {
@@ -26,8 +34,8 @@ export function App() {
 
   useEffect(() => {
     const handler = () => setPath(currentPath());
-    window.addEventListener('popstate', handler);
-    return () => window.removeEventListener('popstate', handler);
+    window.addEventListener('hashchange', handler);
+    return () => window.removeEventListener('hashchange', handler);
   }, []);
 
   if (path.startsWith('/admin')) {
@@ -35,7 +43,7 @@ export function App() {
   }
 
   if (path === '/' || path.startsWith('/?')) {
-    return <BookingApp />;
+    return <BookingApp onOpenAdmin={() => navigate('/admin')} />;
   }
 
   return <NotFound />;
