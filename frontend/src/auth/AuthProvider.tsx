@@ -1,5 +1,5 @@
 import { createContext, ReactNode, useCallback, useContext, useEffect, useMemo, useState } from 'react';
-import { ApiError, get, post, setUnauthorizedHandler } from '../api';
+import { ApiError, get, post } from '../api';
 
 export type AuthUser = { id: string; email: string; displayName: string; role: 'admin' | 'user' };
 type AuthMeResponse = { user: AuthUser };
@@ -36,10 +36,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
-  useEffect(() => {
-    setUnauthorizedHandler(() => setUser(null));
-    return () => setUnauthorizedHandler(null);
-  }, []);
 
   useEffect(() => {
     void (async () => {
@@ -69,7 +65,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           kind: error.kind,
           details: error.details,
           backendCode: 'SESSION_MISSING',
-          requestId: error.requestId
+          requestId: error.requestId,
+          method: error.method,
+          path: error.path
         });
       }
 
@@ -78,7 +76,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         status: 401,
         code: 'UNAUTHORIZED',
         kind: 'HTTP_ERROR',
-        backendCode: 'SESSION_MISSING'
+        backendCode: 'SESSION_MISSING',
+        method: 'GET',
+        path: '/auth/me'
       });
     }
   }, []);

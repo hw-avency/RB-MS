@@ -16,6 +16,8 @@ export class ApiError extends Error {
   kind: ApiErrorKind;
   backendCode?: string;
   requestId?: string;
+  method: HttpMethod;
+  path: string;
 
   constructor(params: {
     message: string;
@@ -25,6 +27,8 @@ export class ApiError extends Error {
     details?: unknown;
     backendCode?: string;
     requestId?: string;
+    method: HttpMethod;
+    path: string;
   }) {
     super(params.message);
     this.name = 'ApiError';
@@ -34,13 +38,22 @@ export class ApiError extends Error {
     this.details = params.details;
     this.backendCode = params.backendCode;
     this.requestId = params.requestId;
+    this.method = params.method;
+    this.path = params.path;
   }
 }
 
 type HttpMethod = 'GET' | 'POST' | 'PATCH' | 'DELETE';
 
 let backendAvailable = true;
-let unauthorizedHandler: (() => void) | null = null;
+type AuthFailureContext = {
+  method: HttpMethod;
+  url: string;
+  status: number;
+  code?: string;
+};
+
+let lastAuthMeFailure: AuthFailureContext | null = null;
 
 const readCookie = (name: string): string | null => {
   const match = document.cookie
@@ -86,7 +99,9 @@ async function request<T>(path: string, method: HttpMethod, payload?: unknown): 
       message: 'Backend nicht erreichbar. Bitte prüfen, ob der Server läuft.',
       status: 0,
       code: 'BACKEND_UNREACHABLE',
-      kind: 'BACKEND_UNREACHABLE'
+      kind: 'BACKEND_UNREACHABLE',
+      method,
+      path
     });
   }
 
@@ -112,7 +127,9 @@ async function request<T>(path: string, method: HttpMethod, payload?: unknown): 
       message: 'Backend nicht erreichbar. Bitte prüfen, ob der Server läuft.',
       status: 0,
       code: 'BACKEND_UNREACHABLE',
-      kind: 'BACKEND_UNREACHABLE'
+      kind: 'BACKEND_UNREACHABLE',
+      method,
+      path
     });
   } finally {
     window.clearTimeout(timeout);
@@ -124,19 +141,39 @@ async function request<T>(path: string, method: HttpMethod, payload?: unknown): 
   const requestId = response.headers.get('x-request-id') ?? undefined;
 
   if (!response.ok) {
+    const backendCode = toBackendCode(body);
+
+    if (import.meta.env.DEV) {
+      console.warn('API_HTTP_ERROR', {
+        method,
+        url: `${API_BASE}${path}`,
+        status: response.status,
+        code: backendCode,
+        requestId
+      });
+    }
+
+    if (path === '/auth/me' && response.status === 401) {
+      lastAuthMeFailure = {
+        method,
+        url: `${API_BASE}${path}`,
+        status: response.status,
+        code: backendCode
+      };
+    }
+
     const error = new ApiError({
       message: normalizeErrorMessage(body, response.status),
       status: response.status,
       code: mapStatusToCode(response.status),
       kind: 'HTTP_ERROR',
       details: body,
-      backendCode: toBackendCode(body),
-      requestId
+      backendCode,
+      requestId,
+      method,
+      path
     });
 
-    if (error.code === 'UNAUTHORIZED') {
-      unauthorizedHandler?.();
-    }
     throw error;
   }
 
@@ -165,8 +202,10 @@ export function markBackendAvailable(value: boolean): void {
   backendAvailable = value;
 }
 
-export function setUnauthorizedHandler(handler: (() => void) | null): void {
-  unauthorizedHandler = handler;
+export function consumeLastAuthMeFailure(): AuthFailureContext | null {
+  const failure = lastAuthMeFailure;
+  lastAuthMeFailure = null;
+  return failure;
 }
 
 export function get<T>(path: string): Promise<T> {

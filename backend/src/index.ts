@@ -240,8 +240,14 @@ const requireCsrf: express.RequestHandler = (req, res, next) => {
   const csrfHeader = req.header('x-csrf-token');
   const csrfCookie = parseCookies(req.headers.cookie)[CSRF_COOKIE_NAME];
   const expected = req.authSession?.csrfToken;
-  if (!expected || !csrfHeader || !csrfCookie || expected !== csrfHeader || csrfHeader !== csrfCookie) {
-    res.status(403).json({ error: 'forbidden', message: 'Invalid CSRF token' });
+
+  if (!csrfHeader || !csrfCookie) {
+    res.status(403).json({ error: 'forbidden', code: 'CSRF_MISSING', message: 'CSRF token missing' });
+    return;
+  }
+
+  if (!expected || expected !== csrfHeader || csrfHeader !== csrfCookie) {
+    res.status(403).json({ error: 'forbidden', code: 'CSRF_INVALID', message: 'Invalid CSRF token' });
     return;
   }
 

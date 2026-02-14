@@ -1,5 +1,5 @@
 import { FormEvent, useEffect, useState } from 'react';
-import { API_BASE, ApiError } from './api';
+import { API_BASE, ApiError, consumeLastAuthMeFailure } from './api';
 import { BookingApp } from './BookingApp';
 import { AdminRouter } from './admin/AdminRouter';
 import { useAuth } from './auth/AuthProvider';
@@ -107,7 +107,13 @@ export function App() {
       return <BreakglassLoginPage />;
     }
 
-    if (path !== '/login') navigate('/login');
+    if (path !== '/login') {
+      const trigger = consumeLastAuthMeFailure();
+      if (import.meta.env.DEV && trigger) {
+        console.warn('AUTH_REDIRECT_TRIGGERED_BY', trigger);
+      }
+      navigate('/login');
+    }
     return <MicrosoftLoginPage />;
   }
 
