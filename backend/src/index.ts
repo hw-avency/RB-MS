@@ -1216,10 +1216,18 @@ app.post('/bookings', async (req, res) => {
 
 app.put('/bookings/:id', async (req, res) => {
   const id = getRouteId(req.params.id);
-  const { deskId } = req.body as { deskId?: string };
+  const { deskId, date } = req.body as { deskId?: string; date?: string };
   if (!id || !deskId) {
     res.status(400).json({ error: 'validation', message: 'id and deskId are required' });
     return;
+  }
+
+  if (date) {
+    const parsedDate = toDateOnly(date);
+    if (!parsedDate) {
+      res.status(400).json({ error: 'validation', message: 'date must be in YYYY-MM-DD format' });
+      return;
+    }
   }
 
   const existing = await prisma.booking.findUnique({ where: { id } });
@@ -1240,22 +1248,29 @@ app.put('/bookings/:id', async (req, res) => {
     return;
   }
 
-  const conflict = await prisma.booking.findUnique({ where: { deskId_date: { deskId, date: existing.date } } });
+  const bookingDate = date ? toDateOnly(date) ?? existing.date : existing.date;
+
+  if (date && bookingDate.getTime() !== existing.date.getTime()) {
+    res.status(400).json({ error: 'validation', message: 'date does not match existing booking date' });
+    return;
+  }
+
+  const conflict = await prisma.booking.findUnique({ where: { deskId_date: { deskId, date: bookingDate } } });
   if (conflict && conflict.id !== existing.id) {
-    sendConflict(res, 'Desk is already booked for this date', { deskId, date: toISODateOnly(existing.date), bookingId: conflict.id });
+    sendConflict(res, 'Desk is already booked for this date', { deskId, date: toISODateOnly(bookingDate), bookingId: conflict.id });
     return;
   }
 
   const recurringConflict = await prisma.recurringBooking.findFirst({
     where: {
       deskId,
-      weekday: existing.date.getUTCDay(),
-      validFrom: { lte: existing.date },
-      OR: [{ validTo: null }, { validTo: { gte: existing.date } }]
+      weekday: bookingDate.getUTCDay(),
+      validFrom: { lte: bookingDate },
+      OR: [{ validTo: null }, { validTo: { gte: bookingDate } }]
     }
   });
   if (recurringConflict) {
-    sendConflict(res, 'Desk has a recurring booking conflict for this date', { deskId, date: toISODateOnly(existing.date), recurringBookingId: recurringConflict.id });
+    sendConflict(res, 'Desk has a recurring booking conflict for this date', { deskId, date: toISODateOnly(bookingDate), recurringBookingId: recurringConflict.id });
     return;
   }
 

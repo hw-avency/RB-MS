@@ -19,7 +19,7 @@ type OccupancyResponse = { date: string; floorplanId: string; desks: OccupancyDe
 type BookingEmployee = { id: string; email: string; displayName: string; photoUrl?: string };
 type OccupantForDay = { deskId: string; deskLabel: string; userId: string; name: string; email: string; employeeId?: string; photoUrl?: string };
 type BookingMode = 'single' | 'range' | 'series';
-type OverrideDialogState = { existingBookingId: string; existingDeskName: string; nextDeskName: string; date: string };
+type OverrideDialogState = { existingBookingId: string; existingDeskName: string; nextDeskName: string; newDeskId: string; date: string };
 
 const today = new Date().toISOString().slice(0, 10);
 const weekdays = ['Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa', 'So'];
@@ -72,6 +72,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
 
   const [bookingDialogOpen, setBookingDialogOpen] = useState(false);
   const [overrideDialog, setOverrideDialog] = useState<OverrideDialogState | null>(null);
+  const [isOverrideSubmitting, setIsOverrideSubmitting] = useState(false);
 
   const [bookingMode, setBookingMode] = useState<BookingMode>('single');
   const [rangeStartDate, setRangeStartDate] = useState(selectedDate);
@@ -231,7 +232,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
     await loadOccupancy(selectedFloorplanId, selectedDate);
   };
 
-  const createSingleBooking = async () => {
+  const createSingleBooking = async (): Promise<'created' | 'pending_override' | 'unchanged'> => {
     if (!selectedDeskId) {
       throw new Error('Bitte Desk auswählen.');
     }
@@ -245,27 +246,39 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
         existingBookingId: existingBooking.id,
         existingDeskName: existingDesk.name,
         nextDeskName: nextDesk?.name ?? selectedDeskId,
+        newDeskId: selectedDeskId,
         date: selectedDate
       });
-      return;
+      return 'pending_override';
     }
 
     if (existingBooking && existingDesk?.id === selectedDeskId) {
       setToastMessage('Dieser Platz ist bereits gebucht.');
-      return;
+      return 'unchanged';
     }
 
     await post('/bookings', { deskId: selectedDeskId, userEmail: selectedEmployeeEmail, date: selectedDate });
     setToastMessage('Einzelbuchung erstellt.');
+    return 'created';
   };
 
-  const confirmOverrideBooking = async () => {
-    if (!overrideDialog || !selectedDeskId) return;
-    await put(`/bookings/${overrideDialog.existingBookingId}`, { deskId: selectedDeskId });
-    setOverrideDialog(null);
-    setToastMessage('Buchung aktualisiert.');
-    setBookingDialogOpen(false);
-    await refreshData();
+  const handleOverride = async () => {
+    if (!overrideDialog) return;
+
+    setIsOverrideSubmitting(true);
+    try {
+      await put(`/bookings/${overrideDialog.existingBookingId}`, { deskId: overrideDialog.newDeskId, date: overrideDialog.date });
+      setOverrideDialog(null);
+      setSelectedDeskId(overrideDialog.newDeskId);
+      setErrorMessage('');
+      await refreshData();
+      setBookingDialogOpen(false);
+      setToastMessage('Buchung überschrieben.');
+    } catch (error) {
+      setErrorMessage(getApiErrorMessage(error, 'Buchung überschreiben fehlgeschlagen.'));
+    } finally {
+      setIsOverrideSubmitting(false);
+    }
   };
 
   const createRangeBooking = async () => {
@@ -317,7 +330,11 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
       }
 
       if (bookingMode === 'single') {
-        await createSingleBooking();
+        const result = await createSingleBooking();
+        if (result !== 'created') {
+          setErrorMessage('');
+          return;
+        }
       } else if (bookingMode === 'range') {
         await createRangeBooking();
       } else {
@@ -649,8 +666,8 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
             <h3>Buchung überschreiben?</h3>
             <p>Du hast am {new Date(`${overrideDialog.date}T00:00:00.000Z`).toLocaleDateString('de-DE')} bereits {overrideDialog.existingDeskName} gebucht. Wenn du fortfährst, wird diese Buchung durch {overrideDialog.nextDeskName} ersetzt.</p>
             <div className="inline-end">
-              <button type="button" className="btn btn-outline" onClick={() => setOverrideDialog(null)}>Abbrechen</button>
-              <button type="button" className="btn btn-danger" onClick={() => void confirmOverrideBooking()}>Überschreiben</button>
+              <button type="button" className="btn btn-outline" onClick={() => setOverrideDialog(null)} disabled={isOverrideSubmitting}>Abbrechen</button>
+              <button type="button" className="btn btn-danger" onClick={() => void handleOverride()} disabled={isOverrideSubmitting}>{isOverrideSubmitting ? 'Überschreibe…' : 'Überschreiben'}</button>
             </div>
           </div>
         </div>,
