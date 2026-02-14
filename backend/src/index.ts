@@ -25,6 +25,7 @@ app.use(express.json());
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
 type AdminJwtPayload = { email: string; role: 'admin'; exp: number };
+type EmployeeRole = 'admin' | 'user';
 
 const toBase64Url = (value: string) => Buffer.from(value).toString('base64url');
 const fromBase64Url = (value: string) => Buffer.from(value, 'base64url').toString('utf8');
@@ -64,7 +65,7 @@ const verifyAdminToken = (token: string): AdminJwtPayload | null => {
   }
 };
 
-const requireAdmin: express.RequestHandler = (req, res, next) => {
+const requireAdmin: express.RequestHandler = async (req, res, next) => {
   const authorization = req.header('authorization');
   if (!authorization?.startsWith('Bearer ')) {
     res.status(401).json({ error: 'unauthorized', message: 'Missing bearer token' });
@@ -79,11 +80,23 @@ const requireAdmin: express.RequestHandler = (req, res, next) => {
     return;
   }
 
-  if (payload.role !== 'admin') {
+  if (payload.email === ADMIN_EMAIL) {
+    (req as express.Request & { adminEmail?: string }).adminEmail = payload.email;
+    next();
+    return;
+  }
+
+  const employee = await prisma.employee.findUnique({
+    where: { email: normalizeEmail(payload.email) },
+    select: { role: true, isActive: true }
+  });
+
+  if (!employee?.isActive || employee.role !== 'admin') {
     res.status(403).json({ error: 'forbidden', message: 'Admin role required' });
     return;
   }
 
+  (req as express.Request & { adminEmail?: string }).adminEmail = normalizeEmail(payload.email);
   next();
 };
 
@@ -148,10 +161,19 @@ const normalizeEmail = (value: string): string => value.trim().toLowerCase();
 
 const isValidEmailInput = (value: string): boolean => value.includes('@');
 
+const isValidEmployeeRole = (value: string): value is EmployeeRole => value === 'admin' || value === 'user';
+
+const getRequestUserEmail = (req: express.Request): string | null => {
+  const headerEmail = req.header('x-user-email');
+  if (!headerEmail) return null;
+  return normalizeEmail(headerEmail);
+};
+
 const employeeSelect = {
   id: true,
   email: true,
   displayName: true,
+  role: true,
   isActive: true
 } satisfies Prisma.EmployeeSelect;
 
@@ -193,20 +215,63 @@ app.get('/api/health', async (_req, res) => {
   }
 });
 
-app.post('/admin/login', (req, res) => {
+app.post('/admin/login', async (req, res) => {
   const { email, password } = req.body as { email?: string; password?: string };
   if (!email || !password) {
     res.status(400).json({ error: 'validation', message: 'email and password are required' });
     return;
   }
 
-  if (email !== ADMIN_EMAIL || password !== ADMIN_PASSWORD) {
+  if (password !== ADMIN_PASSWORD) {
     res.status(401).json({ error: 'unauthorized', message: 'Invalid credentials' });
     return;
   }
 
-  const token = createAdminToken(email);
+  const normalizedEmail = normalizeEmail(email);
+  if (normalizedEmail !== ADMIN_EMAIL) {
+    const employee = await prisma.employee.findUnique({
+      where: { email: normalizedEmail },
+      select: { role: true, isActive: true }
+    });
+
+    if (!employee?.isActive || employee.role !== 'admin') {
+      res.status(401).json({ error: 'unauthorized', message: 'Invalid credentials' });
+      return;
+    }
+  }
+
+  const token = createAdminToken(normalizedEmail);
   res.status(200).json({ token });
+});
+
+app.get('/admin/me', requireAdmin, async (req, res) => {
+  const adminEmail = (req as express.Request & { adminEmail?: string }).adminEmail ?? ADMIN_EMAIL;
+  if (adminEmail === ADMIN_EMAIL) {
+    res.status(200).json({
+      email: ADMIN_EMAIL,
+      displayName: 'Breakglass Admin',
+      role: 'admin'
+    });
+    return;
+  }
+
+  const employee = await prisma.employee.findUnique({
+    where: { email: adminEmail },
+    select: {
+      id: true,
+      email: true,
+      displayName: true,
+      role: true,
+      isActive: true
+    }
+  });
+
+  if (!employee || !employee.isActive || employee.role !== 'admin') {
+    res.status(403).json({ error: 'forbidden', message: 'Admin role required' });
+    return;
+  }
+
+  res.status(200).json(employee);
 });
 
 app.get('/admin/employees', requireAdmin, async (_req, res) => {
@@ -233,7 +298,7 @@ app.get('/employees', async (_req, res) => {
 });
 
 app.post('/admin/employees', requireAdmin, async (req, res) => {
-  const { email, displayName } = req.body as { email?: string; displayName?: string };
+  const { email, displayName, role } = req.body as { email?: string; displayName?: string; role?: string };
 
   if (!email || !displayName) {
     res.status(400).json({ error: 'validation', message: 'email and displayName are required' });
@@ -253,11 +318,17 @@ app.post('/admin/employees', requireAdmin, async (req, res) => {
     return;
   }
 
+  if (typeof role !== 'undefined' && !isValidEmployeeRole(role)) {
+    res.status(400).json({ error: 'validation', message: 'role must be admin or user' });
+    return;
+  }
+
   try {
     const employee = await prisma.employee.create({
       data: {
         email: normalizedEmail,
-        displayName: normalizedDisplayName
+        displayName: normalizedDisplayName,
+        role: role ?? 'user'
       },
       select: employeeSelect
     });
@@ -280,9 +351,9 @@ app.patch('/admin/employees/:id', requireAdmin, async (req, res) => {
     return;
   }
 
-  const { displayName, isActive } = req.body as { displayName?: string; isActive?: boolean };
-  if (typeof displayName === 'undefined' && typeof isActive === 'undefined') {
-    res.status(400).json({ error: 'validation', message: 'displayName or isActive must be provided' });
+  const { displayName, isActive, role } = req.body as { displayName?: string; isActive?: boolean; role?: string };
+  if (typeof displayName === 'undefined' && typeof isActive === 'undefined' && typeof role === 'undefined') {
+    res.status(400).json({ error: 'validation', message: 'displayName, isActive or role must be provided' });
     return;
   }
 
@@ -292,12 +363,39 @@ app.patch('/admin/employees/:id', requireAdmin, async (req, res) => {
     return;
   }
 
+  if (typeof role !== 'undefined' && !isValidEmployeeRole(role)) {
+    res.status(400).json({ error: 'validation', message: 'role must be admin or user' });
+    return;
+  }
+
+  const existing = await prisma.employee.findUnique({
+    where: { id },
+    select: { id: true, role: true, email: true, isActive: true }
+  });
+
+  if (!existing) {
+    res.status(404).json({ error: 'not_found', message: 'Employee not found' });
+    return;
+  }
+
+  const nextRole = role ?? existing.role;
+  const nextIsActive = typeof isActive === 'boolean' ? isActive : existing.isActive;
+
+  if (existing.role === 'admin' && (nextRole !== 'admin' || !nextIsActive)) {
+    const adminCount = await prisma.employee.count({ where: { role: 'admin', isActive: true } });
+    if (adminCount <= 1) {
+      res.status(409).json({ error: 'conflict', message: 'Mindestens ein Admin muss erhalten bleiben.' });
+      return;
+    }
+  }
+
   try {
     const updated = await prisma.employee.update({
       where: { id },
       data: {
         ...(typeof trimmedDisplayName === 'string' ? { displayName: trimmedDisplayName } : {}),
-        ...(typeof isActive === 'boolean' ? { isActive } : {})
+        ...(typeof isActive === 'boolean' ? { isActive } : {}),
+        ...(typeof role === 'string' ? { role } : {})
       },
       select: employeeSelect
     });
@@ -338,7 +436,32 @@ app.delete('/admin/employees/:id', requireAdmin, async (req, res) => {
   }
 });
 
-app.get('/me', (_req, res) => {
+app.get('/me', async (req, res) => {
+  const userEmail = getRequestUserEmail(req);
+
+  if (userEmail) {
+    const employee = await prisma.employee.findUnique({
+      where: { email: userEmail },
+      select: {
+        id: true,
+        email: true,
+        displayName: true,
+        role: true,
+        isActive: true
+      }
+    });
+
+    if (employee?.isActive) {
+      res.status(200).json({
+        id: employee.id,
+        email: employee.email,
+        displayName: employee.displayName,
+        role: employee.role
+      });
+      return;
+    }
+  }
+
   res.status(200).json({
     id: 'demo-user',
     email: 'demo@example.com',

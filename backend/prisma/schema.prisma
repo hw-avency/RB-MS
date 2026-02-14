@@ -21,6 +21,7 @@ model Employee {
   id          String   @id @default(cuid())
   email       String   @unique
   displayName String
+  role        String   @default("user")
   isActive    Boolean  @default(true)
   createdAt   DateTime @default(now())
 }

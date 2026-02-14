@@ -47,7 +47,7 @@ const getApiErrorMessage = (error: unknown, fallback: string): string => {
   return fallback;
 };
 
-export function BookingApp({ onOpenAdmin }: { onOpenAdmin: () => void }) {
+export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onUserContextChanged }: { onOpenAdmin: () => void; canOpenAdmin: boolean; currentUserEmail?: string; onUserContextChanged: () => Promise<void> }) {
   const [floorplans, setFloorplans] = useState<Floorplan[]>([]);
   const [selectedFloorplanId, setSelectedFloorplanId] = useState('');
   const [selectedDate, setSelectedDate] = useState(today);
@@ -138,7 +138,7 @@ export function BookingApp({ onOpenAdmin }: { onOpenAdmin: () => void }) {
       setFloorplans(nextFloorplans);
       setEmployees(nextEmployees);
       setSelectedFloorplanId((prev) => prev || nextFloorplans[0]?.id || '');
-      setSelectedEmployeeEmail((prev) => prev || nextEmployees[0]?.email || '');
+      setSelectedEmployeeEmail((prev) => prev || currentUserEmail || nextEmployees[0]?.email || '');
       setBackendDown(false);
     } catch (error) {
       if (error instanceof ApiError && error.code === 'BACKEND_UNREACHABLE') {
@@ -152,7 +152,7 @@ export function BookingApp({ onOpenAdmin }: { onOpenAdmin: () => void }) {
 
   useEffect(() => {
     loadInitial();
-  }, []);
+  }, [currentUserEmail]);
 
   useEffect(() => {
     if (selectedFloorplanId && !backendDown) {
@@ -165,6 +165,12 @@ export function BookingApp({ onOpenAdmin }: { onOpenAdmin: () => void }) {
     const timer = window.setTimeout(() => setToastMessage(''), 3500);
     return () => window.clearTimeout(timer);
   }, [toastMessage]);
+
+  useEffect(() => {
+    if (!selectedEmployeeEmail) return;
+    localStorage.setItem('rbms-user-email', selectedEmployeeEmail);
+    void onUserContextChanged();
+  }, [onUserContextChanged, selectedEmployeeEmail]);
 
   useEffect(() => {
     if (!bookingDialogOpen) return;
@@ -436,7 +442,7 @@ export function BookingApp({ onOpenAdmin }: { onOpenAdmin: () => void }) {
           <input placeholder="Suche Person oder Desk" />
         </div>
         <div className="header-right">
-          <button className="btn btn-outline" onClick={onOpenAdmin}>Admin</button>
+          {canOpenAdmin && <button className="btn btn-outline" onClick={onOpenAdmin}>Admin</button>}
           <button className="btn btn-ghost" onClick={() => setDetailsSheetOpen(true)}>≡ Details</button>
           <button className="avatar-btn">👤</button>
         </div>

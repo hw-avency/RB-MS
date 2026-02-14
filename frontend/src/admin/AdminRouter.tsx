@@ -3,10 +3,11 @@ import { del, get, patch, post } from '../api';
 
 type Floorplan = { id: string; name: string; imageUrl: string; createdAt?: string; updatedAt?: string };
 type Desk = { id: string; floorplanId: string; name: string; x: number; y: number; createdAt?: string; updatedAt?: string };
-type Employee = { id: string; email: string; displayName: string; isActive: boolean; createdAt?: string; updatedAt?: string };
+type Employee = { id: string; email: string; displayName: string; role: 'admin' | 'user'; isActive: boolean; createdAt?: string; updatedAt?: string };
 type Booking = { id: string; deskId: string; userEmail: string; userDisplayName?: string; date: string; createdAt?: string; updatedAt?: string };
 type Toast = { id: number; tone: 'success' | 'error'; message: string };
-type RouteProps = { path: string; navigate: (to: string) => void };
+type RouteProps = { path: string; navigate: (to: string) => void; onRoleStateChanged: () => Promise<void> };
+type AdminSession = { id?: string; email: string; displayName: string; role: 'admin' | 'user'; isActive?: boolean };
 type DataState = { loading: boolean; error: string; ready: boolean };
 
 type DeskFormState = {
@@ -94,7 +95,7 @@ function AdminLayout({ path, navigate, title, actions, children }: { path: strin
           <button className="btn btn-outline" onClick={() => { localStorage.removeItem('rbms-admin-token'); navigate('/admin/login'); }}>Logout</button>
         </aside>
         <section className="admin-content-v2 stack-sm">
-          <header className="card admin-topbar-v2"><div><p className="muted">Admin / {title}</p><strong>{title}</strong></div>{actions}</header>
+          <header className="card admin-topbar-v2"><div><p className="muted">Admin / {title}</p><strong>{title}</strong></div><div className="inline-end"><button className="btn btn-outline" onClick={() => navigate('/')}>Zurück zur App</button>{actions}</div></header>
           {children}
         </section>
       </div>
@@ -430,7 +431,7 @@ function BookingEditor({ booking, desks, employees, onClose, onSaved, onError }:
   return <div className="overlay"><section className="card dialog stack-sm"><h3>{booking ? 'Buchung bearbeiten' : 'Buchung anlegen'}</h3><form className="stack-sm" onSubmit={submit}><select required value={deskId} onChange={(e) => setDeskId(e.target.value)}>{desks.map((desk) => <option key={desk.id} value={desk.id}>{desk.name}</option>)}</select><input required type="date" value={date} onChange={(e) => setDate(e.target.value)} /><select required value={userEmail} onChange={(e) => setUserEmail(e.target.value)}>{employees.map((employee) => <option key={employee.id} value={employee.email}>{employee.displayName} ({employee.email})</option>)}</select><div className="inline-end"><button className="btn btn-outline" type="button" onClick={onClose}>Abbrechen</button><button className="btn">Speichern</button></div></form></section></div>;
 }
 
-function EmployeesPage({ path, navigate }: RouteProps) {
+function EmployeesPage({ path, navigate, onRoleStateChanged, currentAdminEmail }: RouteProps & { currentAdminEmail: string }) {
   const toasts = useToasts();
   const [state, setState] = useState<DataState>({ loading: true, error: '', ready: false });
   const [employees, setEmployees] = useState<Employee[]>([]);
@@ -438,6 +439,7 @@ function EmployeesPage({ path, navigate }: RouteProps) {
   const [editing, setEditing] = useState<Employee | null>(null);
   const [creating, setCreating] = useState(hasCreateFlag(path));
   const [pendingDeactivate, setPendingDeactivate] = useState<Employee | null>(null);
+  const [updatingRoleId, setUpdatingRoleId] = useState<string | null>(null);
 
   const load = async () => {
     setState((current) => ({ ...current, loading: true, error: '' }));
@@ -455,15 +457,38 @@ function EmployeesPage({ path, navigate }: RouteProps) {
 
   const filtered = useMemo(() => employees.filter((employee) => `${employee.displayName} ${employee.email}`.toLowerCase().includes(query.toLowerCase())), [employees, query]);
 
+  const updateRole = async (employee: Employee, role: 'admin' | 'user') => {
+    setUpdatingRoleId(employee.id);
+    try {
+      const updated = await patch<Employee>(`/admin/employees/${employee.id}`, { role }, authHeaders());
+      setEmployees((current) => current.map((row) => (row.id === employee.id ? updated : row)));
+      toasts.success('Rolle aktualisiert');
+
+      if (employee.email === currentAdminEmail && updated.role !== 'admin') {
+        localStorage.removeItem('rbms-admin-token');
+        await onRoleStateChanged();
+        navigate('/');
+        return;
+      }
+
+      await onRoleStateChanged();
+    } catch (err) {
+      toasts.error(err instanceof Error ? err.message : 'Rolle konnte nicht aktualisiert werden');
+    } finally {
+      setUpdatingRoleId(null);
+    }
+  };
+
+
   return (
     <AdminLayout path={path} navigate={navigate} title="Mitarbeiter" actions={<button className="btn" onClick={() => setCreating(true)}>Neu</button>}>
       <section className="card stack-sm">
         <div className="crud-toolbar"><div className="inline-between"><h3>Mitarbeiter</h3><Badge>{filtered.length}</Badge></div><div className="admin-search">🔎<input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Name oder E-Mail" /></div></div>
         {state.error && <ErrorState text={state.error} onRetry={load} />}
-        <div className="table-wrap"><table className="admin-table"><thead><tr><th>Name</th><th>E-Mail</th><th>Status</th><th className="align-right">Aktionen</th></tr></thead>{state.loading && !state.ready ? <SkeletonRows columns={4} /> : <tbody>{filtered.map((employee) => <tr key={employee.id}><td>{employee.displayName}</td><td className="truncate-cell" title={employee.email}>{employee.email}</td><td>{employee.isActive ? <Badge tone="ok">aktiv</Badge> : <Badge tone="warn">deaktiviert</Badge>}</td><td className="align-right"><RowMenu onEdit={() => setEditing(employee)} onDelete={() => setPendingDeactivate(employee)} /></td></tr>)}</tbody>}</table></div>
+        <div className="table-wrap"><table className="admin-table"><thead><tr><th>Name</th><th>E-Mail</th><th>Rolle</th><th>Status</th><th className="align-right">Aktionen</th></tr></thead>{state.loading && !state.ready ? <SkeletonRows columns={5} /> : <tbody>{filtered.map((employee) => <tr key={employee.id}><td>{employee.displayName}</td><td className="truncate-cell" title={employee.email}>{employee.email}</td><td><select value={employee.role} disabled={updatingRoleId === employee.id} onChange={(event) => { const nextRole = event.target.value as 'admin' | 'user'; if (nextRole !== employee.role) void updateRole(employee, nextRole); }}><option value="user">User</option><option value="admin">Admin</option></select>{updatingRoleId === employee.id && <span className="muted"> ⏳</span>}</td><td>{employee.isActive ? <Badge tone="ok">aktiv</Badge> : <Badge tone="warn">deaktiviert</Badge>}</td><td className="align-right"><RowMenu onEdit={() => setEditing(employee)} onDelete={() => setPendingDeactivate(employee)} /></td></tr>)}</tbody>}</table></div>
         {!state.loading && filtered.length === 0 && <EmptyState text="Keine Mitarbeitenden vorhanden." action={<button className="btn" onClick={() => setCreating(true)}>Neu anlegen</button>} />}
       </section>
-      {(creating || editing) && <EmployeeEditor employee={editing} onClose={() => { setCreating(false); setEditing(null); navigate('/admin/employees'); }} onSaved={async () => { setCreating(false); setEditing(null); toasts.success('Mitarbeiter gespeichert'); await load(); }} onError={toasts.error} />}
+      {(creating || editing) && <EmployeeEditor employee={editing} onClose={() => { setCreating(false); setEditing(null); navigate('/admin/employees'); }} onSaved={async () => { setCreating(false); setEditing(null); toasts.success('Mitarbeiter gespeichert'); await load(); await onRoleStateChanged(); }} onError={toasts.error} />}
       {pendingDeactivate && <ConfirmDialog title="Mitarbeiter deaktivieren?" description={`${pendingDeactivate.displayName} wird auf inaktiv gesetzt.`} onCancel={() => setPendingDeactivate(null)} onConfirm={async () => { await patch(`/admin/employees/${pendingDeactivate.id}`, { isActive: false }, authHeaders()); setPendingDeactivate(null); toasts.success('Mitarbeiter deaktiviert'); await load(); }} />}
       <ToastViewport toasts={toasts.toasts} />
     </AdminLayout>
@@ -474,21 +499,23 @@ function EmployeeEditor({ employee, onClose, onSaved, onError }: { employee: Emp
   const [displayName, setDisplayName] = useState(employee?.displayName ?? '');
   const [email, setEmail] = useState(employee?.email ?? '');
   const [isActive, setIsActive] = useState(employee?.isActive ?? true);
+  const [role, setRole] = useState<'admin' | 'user'>(employee?.role ?? 'user');
   const submit = async (event: FormEvent) => {
     event.preventDefault();
     try {
-      if (employee) await patch(`/admin/employees/${employee.id}`, { displayName, isActive }, authHeaders());
-      else await post('/admin/employees', { displayName, email }, authHeaders());
+      if (employee) await patch(`/admin/employees/${employee.id}`, { displayName, isActive, role }, authHeaders());
+      else await post('/admin/employees', { displayName, email, role }, authHeaders());
       await onSaved();
     } catch (err) {
       onError(err instanceof Error ? err.message : 'Speichern fehlgeschlagen');
     }
   };
-  return <div className="overlay"><section className="card dialog stack-sm"><h3>{employee ? 'Mitarbeiter bearbeiten' : 'Mitarbeiter anlegen'}</h3><form className="stack-sm" onSubmit={submit}><input required value={displayName} placeholder="Name" onChange={(e) => setDisplayName(e.target.value)} />{!employee && <input required type="email" value={email} placeholder="E-Mail" onChange={(e) => setEmail(e.target.value)} />}{employee && <label className="toggle"><input type="checkbox" checked={isActive} onChange={(e) => setIsActive(e.target.checked)} />Aktiv</label>}<div className="inline-end"><button className="btn btn-outline" type="button" onClick={onClose}>Abbrechen</button><button className="btn">Speichern</button></div></form></section></div>;
+  return <div className="overlay"><section className="card dialog stack-sm"><h3>{employee ? 'Mitarbeiter bearbeiten' : 'Mitarbeiter anlegen'}</h3><form className="stack-sm" onSubmit={submit}><input required value={displayName} placeholder="Name" onChange={(e) => setDisplayName(e.target.value)} />{!employee && <input required type="email" value={email} placeholder="E-Mail" onChange={(e) => setEmail(e.target.value)} />}<label className="field"><span>Rolle</span><select value={role} onChange={(e) => setRole(e.target.value as 'admin' | 'user')}><option value="user">User</option><option value="admin">Admin</option></select></label>{employee && <label className="toggle"><input type="checkbox" checked={isActive} onChange={(e) => setIsActive(e.target.checked)} />Aktiv</label>}<div className="inline-end"><button className="btn btn-outline" type="button" onClick={onClose}>Abbrechen</button><button className="btn">Speichern</button></div></form></section></div>;
 }
 
-export function AdminRouter({ path, navigate }: RouteProps) {
+export function AdminRouter({ path, navigate, onRoleStateChanged }: RouteProps) {
   const [allowed, setAllowed] = useState<boolean | null>(null);
+  const [adminSession, setAdminSession] = useState<AdminSession | null>(null);
   const route = basePath(path);
 
   useEffect(() => {
@@ -497,9 +524,17 @@ export function AdminRouter({ path, navigate }: RouteProps) {
       const token = localStorage.getItem('rbms-admin-token');
       if (!token) { setAllowed(false); return; }
       try {
-        await get('/admin/employees', authHeaders());
+        const session = await get<AdminSession>('/admin/me', authHeaders());
+        if (session.role !== 'admin') {
+          localStorage.removeItem('rbms-admin-token');
+          setAllowed(false);
+          return;
+        }
+
+        setAdminSession(session);
         setAllowed(true);
       } catch {
+        localStorage.removeItem('rbms-admin-token');
         setAllowed(false);
       }
     })();
@@ -507,13 +542,13 @@ export function AdminRouter({ path, navigate }: RouteProps) {
 
   if (route === '/admin/login') return <AdminLogin navigate={navigate} />;
   if (allowed === null) return <main className="app-shell"><section className="card">Prüfe Berechtigung…</section></main>;
-  if (!allowed) return <main className="app-shell"><section className="card stack-sm down-card"><h2>Keine Berechtigung</h2><button className="btn" onClick={() => navigate('/admin/login')}>Zum Login</button></section></main>;
+  if (!allowed) return <main className="app-shell"><section className="card stack-sm down-card"><h2>Keine Berechtigung</h2><button className="btn" onClick={() => navigate('/')}>Zurück zur App</button></section></main>;
 
-  if (route === '/admin') return <DashboardPage path={path} navigate={navigate} />;
-  if (route === '/admin/floorplans') return <FloorplansPage path={path} navigate={navigate} />;
-  if (route === '/admin/desks') return <DesksPage path={path} navigate={navigate} />;
-  if (route === '/admin/bookings') return <BookingsPage path={path} navigate={navigate} />;
-  if (route === '/admin/employees') return <EmployeesPage path={path} navigate={navigate} />;
+  if (route === '/admin') return <DashboardPage path={path} navigate={navigate} onRoleStateChanged={onRoleStateChanged} />;
+  if (route === '/admin/floorplans') return <FloorplansPage path={path} navigate={navigate} onRoleStateChanged={onRoleStateChanged} />;
+  if (route === '/admin/desks') return <DesksPage path={path} navigate={navigate} onRoleStateChanged={onRoleStateChanged} />;
+  if (route === '/admin/bookings') return <BookingsPage path={path} navigate={navigate} onRoleStateChanged={onRoleStateChanged} />;
+  if (route === '/admin/employees') return <EmployeesPage path={path} navigate={navigate} onRoleStateChanged={onRoleStateChanged} currentAdminEmail={adminSession?.email ?? ''} />;
 
   return <main className="app-shell"><section className="card stack-sm down-card"><h2>Admin-Seite nicht gefunden</h2><button className="btn" onClick={() => navigate('/admin')}>Zum Dashboard</button></section></main>;
 }
