@@ -56,6 +56,11 @@ const getInitials = (name?: string, email?: string): string => {
   return source.slice(0, 2).toUpperCase();
 };
 
+const getDeskLabel = (desk: Pick<FloorplanDesk, 'id' | 'name'>): string => {
+  const label = desk.name?.toString().trim();
+  return label || desk.id;
+};
+
 type FloorplanCanvasProps = {
   imageUrl: string;
   imageAlt: string;
@@ -96,10 +101,11 @@ const DeskOverlay = memo(function DeskOverlay({ desks, selectedDeskId, hoveredDe
       <div className="desk-overlay" style={{ left: overlayRect.left, top: overlayRect.top, width: overlayRect.width, height: overlayRect.height }}>
         {desks.map((desk) => {
           const point = toPixelPoint(desk, overlayRect);
+          const deskLabel = getDeskLabel(desk);
           const initials = getInitials(desk.booking?.userDisplayName, desk.booking?.userEmail);
           const hasPhoto = Boolean(desk.booking?.userPhotoUrl);
           const imgOk = hasPhoto && (imageStates[desk.id] ?? true);
-          const pinState: PinState = desk.status === 'free' || !desk.booking
+          const pinState: PinState = !desk.booking
             ? 'FREE'
             : desk.isCurrentUsersDesk
               ? 'MINE'
@@ -143,7 +149,7 @@ const DeskOverlay = memo(function DeskOverlay({ desks, selectedDeskId, hoveredDe
                   onDeskDoubleClick?.(desk.id);
                 }}
                 tabIndex={isClickable ? 0 : -1}
-                aria-label={`${desk.name} · ${desk.status === 'free' ? 'Frei' : desk.booking?.userDisplayName ?? desk.booking?.userEmail ?? 'Belegt'}`}
+                aria-label={`Tisch: ${deskLabel} · ${pinState === 'FREE' ? 'Frei' : pinState === 'MINE' ? 'Eigene Buchung' : desk.booking?.userDisplayName ?? desk.booking?.userEmail ?? 'Belegt'}`}
               >
                 <span className={`pin-ring ${showDebugCross ? 'debug-outline' : ''}`} aria-hidden="true" />
                 <span className={`pin-avatar-clip ${showDebugCross ? 'debug-outline' : ''}`}>
@@ -174,7 +180,7 @@ const DeskOverlay = memo(function DeskOverlay({ desks, selectedDeskId, hoveredDe
       {tooltip && tooltipDesk && createPortal(
         <div className="desk-tooltip" style={{ left: tooltip.left, top: tooltip.top }} role="tooltip">
           <strong>{tooltipDesk.booking?.userDisplayName ?? tooltipDesk.booking?.userEmail ?? 'Freier Platz'}</strong>
-          <span>Tisch: {tooltipDesk.name?.toString().trim() || tooltipDesk.id}</span>
+          <span>Tisch: {getDeskLabel(tooltipDesk)}</span>
           <span>{new Date(`${selectedDate ?? new Date().toISOString().slice(0, 10)}T00:00:00.000Z`).toLocaleDateString('de-DE')}</span>
         </div>,
         document.body

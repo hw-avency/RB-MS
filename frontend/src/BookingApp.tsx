@@ -97,6 +97,10 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
       : undefined;
     const employeePhotoUrl = resolveApiUrl(employee?.photoUrl);
     const bookingPhotoUrl = resolveApiUrl(desk.booking.userPhotoUrl);
+    const bookingEmail = desk.booking.userEmail.toLowerCase();
+    const isMineByEmail = Boolean(currentUserEmail && bookingEmail === currentUserEmail.toLowerCase());
+    const isMineByEmployeeId = Boolean(currentUser?.id && desk.booking.employeeId && desk.booking.employeeId === currentUser.id);
+
     return {
       ...desk,
       booking: {
@@ -105,9 +109,9 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
         userDisplayName: desk.booking.userDisplayName ?? employee?.displayName,
         userPhotoUrl: bookingPhotoUrl ?? employeePhotoUrl ?? fallbackPhotoUrl
       },
-      isCurrentUsersDesk: Boolean(currentUserEmail && desk.booking.userEmail.toLowerCase() === currentUserEmail.toLowerCase())
+      isCurrentUsersDesk: isMineByEmail || isMineByEmployeeId
     };
-  }), [occupancy?.desks, employeesByEmail, employeesById, currentUserEmail]);
+  }), [occupancy?.desks, employeesByEmail, employeesById, currentUserEmail, currentUser?.id]);
   const filteredDesks = useMemo(() => (onlyFree ? desks.filter((desk) => desk.status === 'free') : desks).map((desk) => ({ ...desk, isHighlighted: desk.id === highlightedDeskId })), [desks, onlyFree, highlightedDeskId]);
   const selectedDesk = useMemo(() => desks.find((desk) => desk.id === selectedDeskId) ?? null, [desks, selectedDeskId]);
   const occupantsForDay = useMemo<OccupantForDay[]>(
