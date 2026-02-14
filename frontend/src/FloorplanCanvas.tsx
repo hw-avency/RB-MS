@@ -13,6 +13,8 @@ type FloorplanDesk = {
   isSelected?: boolean;
 };
 
+type PinState = 'FREE' | 'MINE' | 'TAKEN';
+
 type OverlayRect = { left: number; top: number; width: number; height: number };
 type PixelPoint = { x: number; y: number };
 
@@ -97,6 +99,12 @@ const DeskOverlay = memo(function DeskOverlay({ desks, selectedDeskId, hoveredDe
           const initials = getInitials(desk.booking?.userDisplayName, desk.booking?.userEmail);
           const hasPhoto = Boolean(desk.booking?.userPhotoUrl);
           const imgOk = hasPhoto && (imageStates[desk.id] ?? true);
+          const pinState: PinState = desk.status === 'free' || !desk.booking
+            ? 'FREE'
+            : desk.isCurrentUsersDesk
+              ? 'MINE'
+              : 'TAKEN';
+          const isClickable = pinState !== 'TAKEN';
 
           if (import.meta.env.DEV && desk.status === 'booked') {
             console.log('pin employee', desk.booking?.employeeId, desk.booking?.userDisplayName, desk.booking?.userPhotoUrl);
@@ -106,7 +114,7 @@ const DeskOverlay = memo(function DeskOverlay({ desks, selectedDeskId, hoveredDe
             <Fragment key={desk.id}>
               <button
                 type="button"
-                className={`desk-pin ${desk.status} ${selectedDeskId === desk.id ? 'selected' : ''} ${hoveredDeskId === desk.id ? 'hovered' : ''} ${desk.isCurrentUsersDesk ? 'is-own-desk' : ''} ${desk.isHighlighted ? 'is-highlighted' : ''} ${desk.isSelected ? 'is-selected' : ''} ${showDebugCross ? 'debug-outline' : ''}`}
+                className={`desk-pin ${desk.status} ${selectedDeskId === desk.id ? 'selected' : ''} ${hoveredDeskId === desk.id ? 'hovered' : ''} ${desk.isCurrentUsersDesk ? 'is-own-desk' : ''} ${desk.isHighlighted ? 'is-highlighted' : ''} ${desk.isSelected ? 'is-selected' : ''} ${!isClickable ? 'is-click-disabled' : ''} ${showDebugCross ? 'debug-outline' : ''}`}
                 style={{
                   left: `${point.x - PIN_CONTAINER_SIZE / 2}px`,
                   top: `${point.y - PIN_CONTAINER_SIZE / 2}px`,
@@ -124,8 +132,17 @@ const DeskOverlay = memo(function DeskOverlay({ desks, selectedDeskId, hoveredDe
                   setTooltip(null);
                   onHoverDesk('');
                 }}
-                onClick={(event) => { event.stopPropagation(); onSelectDesk(desk.id); }}
-                onDoubleClick={(event) => { event.stopPropagation(); onDeskDoubleClick?.(desk.id); }}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  if (!isClickable) return;
+                  onSelectDesk(desk.id);
+                }}
+                onDoubleClick={(event) => {
+                  event.stopPropagation();
+                  if (!isClickable) return;
+                  onDeskDoubleClick?.(desk.id);
+                }}
+                tabIndex={isClickable ? 0 : -1}
                 aria-label={`${desk.name} · ${desk.status === 'free' ? 'Frei' : desk.booking?.userDisplayName ?? desk.booking?.userEmail ?? 'Belegt'}`}
               >
                 <span className={`pin-ring ${showDebugCross ? 'debug-outline' : ''}`} aria-hidden="true" />
@@ -157,7 +174,7 @@ const DeskOverlay = memo(function DeskOverlay({ desks, selectedDeskId, hoveredDe
       {tooltip && tooltipDesk && createPortal(
         <div className="desk-tooltip" style={{ left: tooltip.left, top: tooltip.top }} role="tooltip">
           <strong>{tooltipDesk.booking?.userDisplayName ?? tooltipDesk.booking?.userEmail ?? 'Freier Platz'}</strong>
-          <span>{tooltipDesk.name}</span>
+          <span>Tisch: {tooltipDesk.name?.toString().trim() || tooltipDesk.id}</span>
           <span>{new Date(`${selectedDate ?? new Date().toISOString().slice(0, 10)}T00:00:00.000Z`).toLocaleDateString('de-DE')}</span>
         </div>,
         document.body
