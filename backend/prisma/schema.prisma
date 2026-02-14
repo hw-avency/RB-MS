@@ -19,12 +19,15 @@ model User {
 }
 
 model Employee {
-  id          String   @id @default(cuid())
-  email       String   @unique
+  id          String    @id @default(cuid())
+  email       String    @unique
   displayName String
-  role        String   @default("user")
-  isActive    Boolean  @default(true)
-  createdAt   DateTime @default(now())
+  role        String    @default("user")
+  isActive    Boolean   @default(true)
+  entraOid    String?   @unique
+  tenantId    String?
+  lastLoginAt DateTime?
+  createdAt   DateTime  @default(now())
 }
 
 model Floorplan {

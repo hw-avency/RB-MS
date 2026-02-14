@@ -1,85 +1,105 @@
-# AVENCY Booking 
+# AVENCY Booking (RB-MS)
 
+## Architektur
+- `backend/`: Node.js + Express + Prisma (Postgres)
+- `frontend/`: Vite + React (Render Static Site)
 
-## Monorepo Struktur
+## Deployment auf Render
 
-- `backend/` – Node.js + TypeScript + Express + Prisma
-- `frontend/` – React + Vite Static Site
-- `docs/` – Dokumentation
-- `infra/` – Infrastrukturartefakte
+### Backend (Web Service)
+- Root: `backend`
+- Dockerfile: `backend/Dockerfile`
+- Start läuft über `docker-entrypoint.sh` und führt u. a. `prisma migrate deploy` aus.
 
-## Setup 
+### Frontend (Static Site)
+- Root: `frontend`
+- Build Command: `npm install && npm run build`
+- Publish Directory: `dist`
 
-### Backend als Web Service
+---
 
-- **Runtime:** Docker
-- **Root Directory:** `backend`
-- **Dockerfile Path:** `Dockerfile`
-- **Docker Build Context:** `.`
+## Microsoft Entra ID (Single Tenant) einrichten
 
- **Environment Variables**:
+1. Azure Portal → **App registrations** → **New registration**
+2. **Supported account types**: `Accounts in this organizational directory only` (Single tenant)
+3. Redirect URI (Web):
+   - `https://<BACKEND_HOST>/auth/entra/callback`
+4. Optional Front-channel/Post-logout Redirect:
+   - `https://<FRONTEND_HOST>/`
+5. **Certificates & secrets**:
+   - Client secret erzeugen, **Secret Value** sichern
+6. API Permissions:
+   - Für OIDC Login reichen Scopes `openid profile email`
+   - Optional Microsoft Graph `User.Read` (delegated), falls später benötigt
 
-- `DATABASE_URL`
-- `JWT_SECRET`
-- `ADMIN_PASSWORD`
-- `RUN_SEED` (optional)
-- `NODE_ENV=production`
+**Wichtig:** Das Backend akzeptiert nur Logins mit `tid === ENTRA_TENANT_ID`.
 
-Hinweis: Beim Container-Start werden automatisch `prisma migrate deploy` und optional `prisma db seed` (bei `RUN_SEED=true`) ausgeführt. `prisma generate` läuft bereits im Docker-Build.
+---
 
+## Auth Flows
 
-### Docker Build Caching (Backend)
+### Primärer Login (Microsoft)
+- Frontend Login-Seite zeigt nur **„Mit Microsoft anmelden“**
+- Redirect auf `GET /auth/entra/start`
+- Callback über `GET /auth/entra/callback`
+- Backend setzt Session-Cookie (HttpOnly) und redirectet zurück ins Frontend
 
-- Das Backend-Dockerfile nutzt Layering für schnelle Rebuilds: In der Dependency-Stage werden nur `package.json`, `package-lock.json` und `prisma/schema.prisma` kopiert.
-- `npm ci` verwendet einen BuildKit-Cache-Mount (`/root/.npm`).
-- `prisma generate` verwendet einen BuildKit-Cache-Mount (`/root/.cache/prisma`).
-- Bei Änderungen nur unter `backend/src/**` kann der Dependency-Layer in Render dadurch gecacht bleiben.
+### Breakglass Login (versteckt)
+- Nicht im UI verlinkt
+- Nur direkt über `/#/breakglass`
+- Nutzt `POST /auth/login` mit `ADMIN_EMAIL` / `ADMIN_PASSWORD`
 
-### Frontend als Static Site
+### Session & Frontend-Auth
+- Session ist die Single Source of Truth (Cookie-basiert)
+- Frontend prüft Login-Status über `GET /auth/me`
+- Logout über `POST /auth/logout`
 
-- **Root Directory:** `frontend`
-- **Build Command:** `npm install && npm run build`
-- **Publish Directory:** `dist`
+---
 
- **Environment Variable**:
+## Environment Variables
 
-- `VITE_API_BASE_URL` (auf die URL des Backend-Services, z. B. `https://rbms-backend.onrender.com`)
+### Backend (required)
+- `NODE_ENV=production|development`
+- `PORT=3000`
+- `DATABASE_URL=postgresql://...`
+- `SESSION_SECRET=<lange-zufällige-zeichenfolge>`
+- `FRONTEND_URL=https://rb-ms-1.onrender.com`
+- `CORS_ORIGIN=https://rb-ms-1.onrender.com` (oder identisch zu `FRONTEND_URL`)
+- `COOKIE_SAMESITE=none` (prod) / `lax` (dev)
+- `COOKIE_SECURE=true` (prod) / `false` (dev)
 
-## API Endpoints
+### Breakglass (required)
+- `ADMIN_EMAIL=admin@example.com`
+- `ADMIN_PASSWORD=<starkes-passwort>`
 
+### Entra (required)
+- `ENTRA_TENANT_ID=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx`
+- `ENTRA_CLIENT_ID=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx`
+- `ENTRA_CLIENT_SECRET=<secret-value>`
+- `ENTRA_REDIRECT_URI=https://rb-ms.onrender.com/auth/entra/callback`
+- `ENTRA_POST_LOGIN_REDIRECT=https://rb-ms-1.onrender.com/#/`
+
+### Entra (optional)
+- `ENTRA_LOGOUT_REDIRECT=https://rb-ms-1.onrender.com/#/login`
+
+### Frontend (required)
+- `VITE_API_BASE_URL=https://rb-ms.onrender.com`
+
+### Frontend (optional)
+- `VITE_BREAKGLASS_PATH=/#/breakglass`
+
+---
+
+## API (Auth-relevant)
 - `GET /health`
-- `GET /me` (Demo-User Response für Dev-Auth in Task 1)
-- `GET /floorplans`
-- `GET /floorplans/:id`
-- `GET /floorplans/:id/desks`
-- `POST /bookings`
-- `GET /bookings?from=YYYY-MM-DD&to=YYYY-MM-DD&floorplanId=<optional>`
-- `GET /occupancy?floorplanId=<id>&date=YYYY-MM-DD`
-- `POST /recurring-bookings`
-- `GET /recurring-bookings?floorplanId=<optional>`
+- `GET /auth/entra/start`
+- `GET /auth/entra/callback`
+- `POST /auth/login` (Breakglass)
+- `POST /auth/logout`
+- `GET /auth/me`
 
-## Breakglass Admin
-
-- `POST /admin/login` mit `ADMIN_EMAIL` (Default `admin@example.com`) und `ADMIN_PASSWORD` liefert ein Bearer-Token.
-- Alle `/admin/*` Endpoints benötigen `Authorization: Bearer <token>`.
-- `JWT_SECRET` und `ADMIN_PASSWORD` sind Pflicht-Variablen.
-
-### Admin Endpoints
-
-- `POST /admin/floorplans`
-- `PATCH /admin/floorplans/:id`
-- `DELETE /admin/floorplans/:id`
-- `POST /admin/floorplans/:id/desks`
-- `PATCH /admin/desks/:id`
-- `DELETE /admin/desks/:id`
-- `GET /admin/bookings?date=YYYY-MM-DD&floorplanId=<optional>`
-- `PATCH /admin/bookings/:id`
-- `DELETE /admin/bookings/:id`
-- `GET /admin/recurring-bookings?floorplanId=<optional>`
-- `PATCH /admin/recurring-bookings/:id`
-- `DELETE /admin/recurring-bookings/:id`
-
-## Admin UI
-
-- Der Admin-Bereich ist unter `/#/admin` erreichbar (`/#/admin/floorplans`, `/#/admin/desks`, `/#/admin/bookings`, `/#/admin/employees`).
-- Der Hash-Router sorgt dafür, dass Deep-Links wie `/#/admin/employees` inklusive Browser-Refresh ohne Server-Rewrite funktionieren.
+## Qualitätschecks
+- Frontend: `npm run build`
+- Backend: `npm run build`
+- Health: `GET /health` liefert `{ status: "ok" }`
+- CORS + Cookie-Credentials für Frontend ↔ Backend aktiviert

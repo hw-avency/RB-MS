@@ -11,15 +11,24 @@ app.set('trust proxy', 1);
 
 const ADMIN_EMAIL = process.env.ADMIN_EMAIL?.trim().toLowerCase();
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD;
-const FRONTEND_ORIGINS = (process.env.FRONTEND_ORIGIN ?? process.env.FRONTEND_URL ?? '')
+const FRONTEND_ORIGINS = (process.env.CORS_ORIGIN ?? process.env.FRONTEND_ORIGIN ?? process.env.FRONTEND_URL ?? '')
   .split(',')
   .map((origin) => origin.trim())
   .filter(Boolean);
 const DEFAULT_USER_PASSWORD = process.env.DEFAULT_USER_PASSWORD ?? 'ChangeMe123!';
 const PASSWORD_SALT_ROUNDS = Number(process.env.PASSWORD_SALT_ROUNDS ?? 12);
 const isProd = process.env.NODE_ENV === 'production';
-const cookieSameSite: 'lax' | 'none' = isProd ? 'none' : 'lax';
-const cookieSecure = isProd ? true : false;
+const cookieSameSite: 'none' | 'lax' = (process.env.COOKIE_SAMESITE === 'none' || process.env.COOKIE_SAMESITE === 'lax')
+  ? process.env.COOKIE_SAMESITE
+  : (isProd ? 'none' : 'lax');
+const cookieSecure = typeof process.env.COOKIE_SECURE === 'string'
+  ? process.env.COOKIE_SECURE === 'true'
+  : isProd;
+const ENTRA_TENANT_ID = process.env.ENTRA_TENANT_ID?.trim();
+const ENTRA_CLIENT_ID = process.env.ENTRA_CLIENT_ID?.trim();
+const ENTRA_CLIENT_SECRET = process.env.ENTRA_CLIENT_SECRET;
+const ENTRA_REDIRECT_URI = process.env.ENTRA_REDIRECT_URI?.trim();
+const ENTRA_POST_LOGIN_REDIRECT = process.env.ENTRA_POST_LOGIN_REDIRECT?.trim() ?? `${process.env.FRONTEND_URL ?? ''}/#/`;
 
 app.use(
   cors({
@@ -78,7 +87,8 @@ const SESSION_COOKIE_NAME = 'rbms_session';
 const CSRF_COOKIE_NAME = 'rbms_csrf';
 const SESSION_TTL_MS = 1000 * 60 * 60 * 12;
 const sessions = new Map<string, SessionRecord>();
-
+type OidcFlowState = { nonce: string; createdAt: number };
+const OIDC_STATE_TTL_MS = 1000 * 60 * 10;
 const parseCookies = (cookieHeader?: string): Record<string, string> => {
   if (!cookieHeader) return {};
   return cookieHeader.split(';').reduce<Record<string, string>>((acc, part) => {
@@ -128,6 +138,96 @@ const createSession = (userId: string): SessionRecord => {
 const destroySession = (sessionId?: string) => {
   if (!sessionId) return;
   sessions.delete(sessionId);
+};
+
+const oidcStates = new Map<string, OidcFlowState>();
+const ENTRA_AUTHORITY = `https://login.microsoftonline.com/${ENTRA_TENANT_ID}/v2.0`;
+const ENTRA_DISCOVERY_URL = `${ENTRA_AUTHORITY}/.well-known/openid-configuration`;
+type OidcMetadata = { authorization_endpoint: string; token_endpoint: string; jwks_uri: string; issuer: string };
+type Jwk = { kid?: string; kty?: string; use?: string; alg?: string; n?: string; e?: string };
+type IdTokenClaims = {
+  iss?: string;
+  aud?: string | string[];
+  exp?: number;
+  iat?: number;
+  nonce?: string;
+  tid?: string;
+  oid?: string;
+  email?: string;
+  preferred_username?: string;
+  name?: string;
+};
+let oidcMetadataCache: OidcMetadata | null = null;
+let jwksCache: { keys: Jwk[] } | null = null;
+
+const parseBase64UrlJson = <T>(value: string): T => {
+  const padded = value.padEnd(value.length + ((4 - (value.length % 4)) % 4), '=');
+  const normalized = padded.replace(/-/g, '+').replace(/_/g, '/');
+  return JSON.parse(Buffer.from(normalized, 'base64').toString('utf8')) as T;
+};
+
+const createOidcState = (): { state: string; nonce: string } => {
+  const state = crypto.randomBytes(16).toString('hex');
+  const nonce = crypto.randomBytes(16).toString('hex');
+  oidcStates.set(state, { nonce, createdAt: Date.now() });
+  return { state, nonce };
+};
+
+const consumeOidcState = (state: string): OidcFlowState | null => {
+  const current = oidcStates.get(state) ?? null;
+  oidcStates.delete(state);
+
+  if (!current) return null;
+  if (Date.now() - current.createdAt > OIDC_STATE_TTL_MS) return null;
+  return current;
+};
+
+const isEntraConfigured = (): boolean => Boolean(ENTRA_TENANT_ID && ENTRA_CLIENT_ID && ENTRA_CLIENT_SECRET && ENTRA_REDIRECT_URI);
+
+const loadOidcMetadata = async (): Promise<OidcMetadata> => {
+  if (oidcMetadataCache) return oidcMetadataCache;
+  const response = await fetch(ENTRA_DISCOVERY_URL);
+  if (!response.ok) throw new Error('OIDC_DISCOVERY_FAILED');
+  oidcMetadataCache = await response.json() as OidcMetadata;
+  return oidcMetadataCache;
+};
+
+const loadJwks = async (jwksUri: string): Promise<{ keys: Jwk[] }> => {
+  if (jwksCache) return jwksCache;
+  const response = await fetch(jwksUri);
+  if (!response.ok) throw new Error('JWKS_FETCH_FAILED');
+  jwksCache = await response.json() as { keys: Jwk[] };
+  return jwksCache;
+};
+
+const verifyIdToken = async (idToken: string, expectedNonce: string): Promise<IdTokenClaims> => {
+  const [encodedHeader, encodedPayload, encodedSignature] = idToken.split('.');
+  if (!encodedHeader || !encodedPayload || !encodedSignature) {
+    throw new Error('INVALID_ID_TOKEN_FORMAT');
+  }
+
+  const header = parseBase64UrlJson<{ kid?: string; alg?: string }>(encodedHeader);
+  const claims = parseBase64UrlJson<IdTokenClaims>(encodedPayload);
+  const metadata = await loadOidcMetadata();
+  const jwks = await loadJwks(metadata.jwks_uri);
+  const key = jwks.keys.find((candidate) => candidate.kid === header.kid);
+  if (!key) throw new Error('JWKS_KEY_NOT_FOUND');
+
+  const verifier = crypto.createPublicKey({ key, format: 'jwk' });
+  const signedContent = `${encodedHeader}.${encodedPayload}`;
+  const signature = Buffer.from(encodedSignature.replace(/-/g, '+').replace(/_/g, '/'), 'base64');
+  const signatureValid = crypto.verify('RSA-SHA256', Buffer.from(signedContent), verifier, signature);
+  if (!signatureValid) throw new Error('INVALID_ID_TOKEN_SIGNATURE');
+
+  const now = Math.floor(Date.now() / 1000);
+  const audience = Array.isArray(claims.aud) ? claims.aud : [claims.aud];
+
+  if (claims.iss !== metadata.issuer) throw new Error('INVALID_ISSUER');
+  if (!audience.includes(ENTRA_CLIENT_ID as string)) throw new Error('INVALID_AUDIENCE');
+  if (!claims.exp || claims.exp <= now) throw new Error('ID_TOKEN_EXPIRED');
+  if (claims.nonce !== expectedNonce) throw new Error('INVALID_NONCE');
+
+  return claims;
 };
 
 const requireCsrf: express.RequestHandler = (req, res, next) => {
@@ -382,6 +482,154 @@ const ensureBreakglassAdmin = async () => {
     });
   }
 };
+
+const upsertEmployeeFromEntraLogin = async (claims: { oid: string; tid: string; email: string; name: string }) => {
+  const normalizedEmail = normalizeEmail(claims.email);
+
+  return prisma.$transaction(async (tx) => {
+    let employee = await tx.employee.findFirst({
+      where: { OR: [{ entraOid: claims.oid }, { email: normalizedEmail }] }
+    });
+
+    if (!employee) {
+      employee = await tx.employee.create({
+        data: {
+          email: normalizedEmail,
+          displayName: claims.name,
+          role: 'user',
+          isActive: true,
+          entraOid: claims.oid,
+          tenantId: claims.tid,
+          lastLoginAt: new Date()
+        }
+      });
+    } else {
+      employee = await tx.employee.update({
+        where: { id: employee.id },
+        data: {
+          email: normalizedEmail,
+          displayName: claims.name,
+          entraOid: claims.oid,
+          tenantId: claims.tid,
+          lastLoginAt: new Date(),
+          isActive: true
+        }
+      });
+    }
+
+    const existingUser = await tx.user.findUnique({ where: { email: normalizedEmail } });
+    const fallbackPasswordHash = existingUser?.passwordHash ?? await hashPassword(crypto.randomUUID());
+    const user = await tx.user.upsert({
+      where: { email: normalizedEmail },
+      update: {
+        displayName: claims.name,
+        role: employee.role,
+        isActive: employee.isActive
+      },
+      create: {
+        email: normalizedEmail,
+        displayName: claims.name,
+        role: employee.role,
+        isActive: true,
+        passwordHash: fallbackPasswordHash
+      },
+      select: {
+        id: true,
+        email: true,
+        displayName: true,
+        role: true
+      }
+    });
+
+    return user;
+  });
+};
+
+app.get('/auth/entra/start', async (_req, res) => {
+  if (!isEntraConfigured()) {
+    res.status(500).json({ code: 'ENTRA_NOT_CONFIGURED', message: 'Microsoft Entra login is not configured' });
+    return;
+  }
+
+  const metadata = await loadOidcMetadata();
+  const { state, nonce } = createOidcState();
+  const query = new URLSearchParams({
+    client_id: ENTRA_CLIENT_ID as string,
+    response_type: 'code',
+    redirect_uri: ENTRA_REDIRECT_URI as string,
+    response_mode: 'query',
+    scope: 'openid profile email',
+    state,
+    nonce
+  });
+
+  res.redirect(302, `${metadata.authorization_endpoint}?${query.toString()}`);
+});
+
+app.get('/auth/entra/callback', async (req, res) => {
+  try {
+    const code = typeof req.query.code === 'string' ? req.query.code : null;
+    const stateParam = typeof req.query.state === 'string' ? req.query.state : '';
+    const oidcState = consumeOidcState(stateParam);
+    if (!code || !oidcState) {
+      res.status(401).json({ code: 'OIDC_VALIDATION_FAILED', message: 'Invalid callback parameters' });
+      return;
+    }
+
+    const metadata = await loadOidcMetadata();
+    const tokenResponse = await fetch(metadata.token_endpoint, {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        client_id: ENTRA_CLIENT_ID as string,
+        client_secret: ENTRA_CLIENT_SECRET as string,
+        code,
+        grant_type: 'authorization_code',
+        redirect_uri: ENTRA_REDIRECT_URI as string,
+        scope: 'openid profile email'
+      })
+    });
+
+    if (!tokenResponse.ok) {
+      res.status(401).json({ code: 'OIDC_VALIDATION_FAILED', message: 'Token exchange failed' });
+      return;
+    }
+
+    const tokenPayload = await tokenResponse.json() as { id_token?: string };
+    if (!tokenPayload.id_token) {
+      res.status(401).json({ code: 'OIDC_VALIDATION_FAILED', message: 'id_token is missing' });
+      return;
+    }
+
+    const claims = await verifyIdToken(tokenPayload.id_token, oidcState.nonce);
+    const tid = typeof claims.tid === 'string' ? claims.tid : null;
+    const oid = typeof claims.oid === 'string' ? claims.oid : null;
+
+    if (!tid || tid !== ENTRA_TENANT_ID) {
+      res.status(403).json({ code: 'TENANT_NOT_ALLOWED', message: 'Tenant not allowed' });
+      return;
+    }
+
+    const emailClaim = claims.email ?? claims.preferred_username;
+    const email = typeof emailClaim === 'string' ? normalizeEmail(emailClaim) : null;
+    const name = typeof claims.name === 'string' ? claims.name.trim() : '';
+
+    if (!oid || !email || !name) {
+      res.status(401).json({ code: 'OIDC_VALIDATION_FAILED', message: 'Required claims are missing' });
+      return;
+    }
+
+    const user = await upsertEmployeeFromEntraLogin({ oid, tid, email, name });
+    const session = createSession(user.id);
+    applySessionCookies(res, session);
+
+    res.redirect(302, ENTRA_POST_LOGIN_REDIRECT);
+  } catch (error) {
+    const requestId = req.requestId ?? 'unknown';
+    console.error('ENTRA_CALLBACK_ERROR', { requestId, errorName: error instanceof Error ? error.name : 'UnknownError' });
+    res.status(401).json({ code: 'OIDC_VALIDATION_FAILED', message: 'Entra callback validation failed' });
+  }
+});
 
 app.post('/auth/login', async (req, res) => {
   const requestId = req.requestId ?? 'unknown';

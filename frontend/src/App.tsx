@@ -1,10 +1,10 @@
 import { FormEvent, useEffect, useState } from 'react';
-import { ApiError } from './api';
+import { API_BASE, ApiError } from './api';
 import { BookingApp } from './BookingApp';
 import { AdminRouter } from './admin/AdminRouter';
 import { useAuth } from './auth/AuthProvider';
 
-type Route = '/' | '/admin' | '/login' | string;
+type Route = '/' | '/admin' | '/login' | '/breakglass' | string;
 
 type LoginDebugInfo = {
   status?: number;
@@ -27,7 +27,15 @@ const navigate = (to: string) => {
   }
 };
 
-function LoginPage() {
+function MicrosoftLoginPage() {
+  const startMicrosoftLogin = () => {
+    window.location.href = `${API_BASE}/auth/entra/start`;
+  };
+
+  return <main className="app-shell"><section className="card stack-sm down-card"><h2>Anmelden</h2><p className="muted">Bitte mit Ihrem Microsoft-Konto anmelden.</p><button className="btn" onClick={startMicrosoftLogin}>Mit Microsoft anmelden</button></section></main>;
+}
+
+function BreakglassLoginPage() {
   const { login } = useAuth();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -51,13 +59,7 @@ function LoginPage() {
         } else if (err.backendCode === 'SESSION_MISSING') {
           setError('Login ok, aber Session fehlt');
         } else if (err.status === 401) {
-          if (err.backendCode === 'USER_NOT_FOUND') {
-            setError('User nicht gefunden');
-          } else if (err.backendCode === 'PASSWORD_MISMATCH') {
-            setError('Passwort falsch');
-          } else {
-            setError('Ungültige Zugangsdaten');
-          }
+          setError('Ungültige Zugangsdaten');
         } else if (err.status >= 500) {
           setError('Serverfehler beim Login');
         } else {
@@ -77,7 +79,7 @@ function LoginPage() {
     }
   };
 
-  return <main className="app-shell"><section className="card stack-sm down-card"><h2>Anmelden</h2><form className="stack-sm" onSubmit={onSubmit}><input required type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="E-Mail" /><input required type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Passwort" />{error && <p className="error-banner">{error}</p>}{isDev && debugInfo && <p className="muted">debug: status={debugInfo.status ?? '-'} code={debugInfo.code ?? '-'} requestId={debugInfo.requestId ?? '-'}</p>}<button className="btn" disabled={busy}>{busy ? 'Anmelden…' : 'Anmelden'}</button></form></section></main>;
+  return <main className="app-shell"><section className="card stack-sm down-card"><h2>Breakglass Login</h2><form className="stack-sm" onSubmit={onSubmit}><input required type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="E-Mail" /><input required type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Passwort" />{error && <p className="error-banner">{error}</p>}{isDev && debugInfo && <p className="muted">debug: status={debugInfo.status ?? '-'} code={debugInfo.code ?? '-'} requestId={debugInfo.requestId ?? '-'}</p>}<button className="btn" disabled={busy}>{busy ? 'Anmelden…' : 'Anmelden'}</button></form></section></main>;
 }
 
 function LoadingGate() {
@@ -101,11 +103,15 @@ export function App() {
   if (loadingAuth) return <LoadingGate />;
 
   if (!isAuthenticated) {
+    if (path === '/breakglass') {
+      return <BreakglassLoginPage />;
+    }
+
     if (path !== '/login') navigate('/login');
-    return <LoginPage />;
+    return <MicrosoftLoginPage />;
   }
 
-  if (path === '/login') {
+  if (path === '/login' || path === '/breakglass') {
     navigate('/');
     return <LoadingGate />;
   }
