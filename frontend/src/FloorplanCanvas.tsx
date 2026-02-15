@@ -231,6 +231,7 @@ const DeskOverlay = memo(function DeskOverlay({ desks, selectedDeskId, hoveredDe
               type="button"
               data-desk-id={desk.id}
               className={`desk-pin ${selectedDeskId === desk.id ? 'selected' : ''} ${hoveredDeskId === desk.id ? 'hovered' : ''} ${desk.isCurrentUsersDesk ? 'is-own-desk' : ''} ${desk.isHighlighted ? 'is-highlighted' : ''} ${desk.isSelected ? 'is-selected' : ''} ${!isClickable ? 'is-click-disabled' : ''}`}
+              data-free={shouldShowPulse ? 'true' : 'false'}
               style={{ left: `${point.x - PIN_HITBOX_SIZE / 2}px`, top: `${point.y - PIN_HITBOX_SIZE / 2}px` }}
               onMouseEnter={(event) => {
                 const rect = event.currentTarget.getBoundingClientRect();
@@ -253,7 +254,7 @@ const DeskOverlay = memo(function DeskOverlay({ desks, selectedDeskId, hoveredDe
               title={bookings.length === 2 && !fullBooking ? '2 Buchungen' : undefined}
               aria-label={`${resourceKindLabel(desk.kind)}: ${getDeskLabel(desk)}`}
             >
-              {shouldShowPulse && <span className="resource-pulse-ring pulse-halo is-free" aria-hidden="true" />}
+              {shouldShowPulse && <div className="pulseHalo" aria-hidden="true" />}
               <svg className="pin-ring-svg" viewBox={`0 0 ${PIN_VISUAL_SIZE} ${PIN_VISUAL_SIZE}`} shapeRendering="geometricPrecision" aria-hidden="true">
                 {isRoom ? (
                   <>
