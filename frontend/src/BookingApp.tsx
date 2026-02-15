@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { API_BASE, ApiError, checkBackendHealth, del, get, markBackendAvailable, post, resolveApiUrl } from './api';
 import { Avatar } from './components/Avatar';
@@ -42,7 +42,7 @@ type RebookConfirmState = {
   existingSlotLabel?: string;
   date: string;
   retryPayload: BookingSubmitPayload;
-  anchorEl: HTMLElement;
+  anchorRect: DOMRect;
 };
 type CancelFlowState = 'NONE' | 'DESK_POPOVER_OPEN' | 'CANCEL_CONFIRM_OPEN';
 type BulkBookingResponse = {
@@ -51,7 +51,7 @@ type BulkBookingResponse = {
   skippedCount?: number;
   skippedDates?: string[];
 };
-type DeskPopupState = { deskId: string; anchorEl: HTMLElement };
+type DeskPopupState = { deskId: string; anchorRect: DOMRect; openedAt: number };
 type CancelConfirmContext = DeskPopupState & { bookingId: string; bookingLabel: string; isRecurring: boolean; keepPopoverOpen: boolean };
 type OccupancyBooking = NonNullable<OccupancyDesk['booking']>;
 type RoomBookingListEntry = { id: string; start: number; end: number; label: string; person: string; bookingId?: string; isCurrentUser: boolean; isRecurring: boolean };
@@ -170,6 +170,8 @@ const getApiErrorMessage = (error: unknown, fallback: string): string => {
   }
   return fallback;
 };
+
+const cloneRect = (rect: DOMRect | DOMRectReadOnly): DOMRect => new DOMRect(rect.x, rect.y, rect.width, rect.height);
 
 const getFirstName = ({ firstName, displayName, email }: { firstName?: string; displayName?: string; email?: string }): string => {
   if (firstName?.trim()) return firstName.trim();
@@ -456,7 +458,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
   const [loadingRequestCount, setLoadingRequestCount] = useState(0);
   const [backendDown, setBackendDown] = useState(false);
   const toast = useToast();
-  const { registerDeskAnchor } = toast;
+  const { registerDeskAnchor: registerToastDeskAnchor } = toast;
 
   const [deskPopup, setDeskPopup] = useState<DeskPopupState | null>(null);
   const [bookingDialogState, setBookingDialogState] = useState<BookingDialogState>('IDLE');
@@ -478,6 +480,35 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
   const highlightTimerRef = useRef<number | null>(null);
   const popupRef = useRef<HTMLElement | null>(null);
   const availabilityCacheRef = useRef<Map<string, Map<string, DayAvailabilityTone>>>(new Map());
+  const deskAnchorElementsRef = useRef<Map<string, HTMLElement>>(new Map());
+
+  const refreshDeskPopupAnchorRect = useCallback((deskId: string) => {
+    const anchorElement = deskAnchorElementsRef.current.get(deskId);
+    if (!anchorElement) return;
+    const nextAnchorRect = cloneRect(anchorElement.getBoundingClientRect());
+    setDeskPopup((current) => {
+      if (!current || current.deskId !== deskId) return current;
+      const sameRect = current.anchorRect.left === nextAnchorRect.left
+        && current.anchorRect.top === nextAnchorRect.top
+        && current.anchorRect.width === nextAnchorRect.width
+        && current.anchorRect.height === nextAnchorRect.height;
+      if (sameRect) return current;
+      return { ...current, anchorRect: nextAnchorRect };
+    });
+  }, []);
+
+  const registerDeskAnchor = useCallback((deskId: string, element: HTMLElement | null) => {
+    registerToastDeskAnchor(deskId, element);
+    if (!element) {
+      deskAnchorElementsRef.current.delete(deskId);
+      return;
+    }
+
+    deskAnchorElementsRef.current.set(deskId, element);
+    window.requestAnimationFrame(() => {
+      refreshDeskPopupAnchorRect(deskId);
+    });
+  }, [refreshDeskPopupAnchorRect, registerToastDeskAnchor]);
 
   const selectedFloorplan = useMemo(() => floorplans.find((f) => f.id === selectedFloorplanId) ?? null, [floorplans, selectedFloorplanId]);
   const employeesByEmail = useMemo(() => new Map(employees.map((employee) => [employee.email.toLowerCase(), employee])), [employees]);
@@ -749,10 +780,22 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
       return;
     }
 
-    const anchorRect = deskPopup.anchorEl.getBoundingClientRect();
     const popupRect = popupRef.current.getBoundingClientRect();
-    setDeskPopupCoords(calculatePopupCoordinates(anchorRect, popupRect));
+    setDeskPopupCoords(calculatePopupCoordinates(deskPopup.anchorRect, popupRect));
   }, [deskPopup, bookingDialogState, popupDeskState, dialogErrorMessage]);
+
+
+  useEffect(() => {
+    if (!deskPopup) return;
+
+    const frame = window.requestAnimationFrame(() => {
+      refreshDeskPopupAnchorRect(deskPopup.deskId);
+    });
+
+    return () => {
+      window.cancelAnimationFrame(frame);
+    };
+  }, [bookingVersion, deskPopup, refreshDeskPopupAnchorRect]);
 
   useEffect(() => {
     if (!deskPopup) return;
@@ -771,7 +814,8 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
       const target = event.target;
       if (!(target instanceof Node)) return;
       if (popupRef.current?.contains(target)) return;
-      if (deskPopup.anchorEl.contains(target)) return;
+      const anchorElement = deskAnchorElementsRef.current.get(deskPopup.deskId);
+      if (anchorElement?.contains(target)) return;
       closePopup();
     };
 
@@ -807,6 +851,8 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
     const desk = desks.find((entry) => entry.id === deskId);
     if (!desk || !anchorEl) return;
 
+    const anchorRect = cloneRect(anchorEl.getBoundingClientRect());
+
     if (deskPopup?.deskId === deskId) {
       closeBookingFlow();
       return;
@@ -814,7 +860,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
 
     setSelectedDeskId(deskId);
     triggerDeskHighlight(deskId);
-    setDeskPopup({ deskId, anchorEl });
+    setDeskPopup({ deskId, anchorRect, openedAt: Date.now() });
     setRebookConfirm(null);
     setIsRebooking(false);
     setCancelFlowState('DESK_POPOVER_OPEN');
@@ -888,8 +934,6 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
       isRecurring: ownBooking.type === 'recurring',
       keepPopoverOpen: false
     });
-    setDeskPopup(null);
-    setDeskPopupCoords(null);
     setCancelDialogError('');
     setIsCancellingBooking(false);
     setCancelFlowState('CANCEL_CONFIRM_OPEN');
@@ -903,7 +947,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
 
     setCancelDialogError('');
     setIsCancellingBooking(false);
-    setDeskPopup({ deskId: cancelConfirmContext.deskId, anchorEl: cancelConfirmContext.anchorEl });
+    setCancelConfirmContext(null);
     setCancelFlowState('DESK_POPOVER_OPEN');
   };
 
@@ -977,7 +1021,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
           existingSlotLabel: getConflictExistingSlotLabel(error),
           date: payload.type === 'single' ? payload.date : selectedDate,
           retryPayload: payload,
-          anchorEl: deskPopup.anchorEl
+          anchorRect: deskPopup.anchorRect
         });
         return;
       }
@@ -1016,7 +1060,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
     if (!rebookConfirm) return;
 
     setIsRebooking(false);
-    setDeskPopup({ deskId: rebookConfirm.deskId, anchorEl: rebookConfirm.anchorEl });
+    setDeskPopup({ deskId: rebookConfirm.deskId, anchorRect: rebookConfirm.anchorRect, openedAt: Date.now() });
     setCancelFlowState('DESK_POPOVER_OPEN');
     setBookingDialogState('BOOKING_OPEN');
     setRebookConfirm(null);
@@ -1034,8 +1078,6 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
       isRecurring: selectedBooking.isRecurring,
       keepPopoverOpen: true
     });
-    setDeskPopup(null);
-    setDeskPopupCoords(null);
     setCancelDialogError('');
     setIsCancellingBooking(false);
     setCancelFlowState('CANCEL_CONFIRM_OPEN');
@@ -1061,7 +1103,9 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
       setIsCancellingBooking(false);
       if (cancelConfirmContext.keepPopoverOpen) {
         setCancelFlowState('DESK_POPOVER_OPEN');
-        setDeskPopup({ deskId: cancelConfirmContext.deskId, anchorEl: cancelConfirmContext.anchorEl });
+        window.requestAnimationFrame(() => {
+          refreshDeskPopupAnchorRect(cancelConfirmContext.deskId);
+        });
       } else {
         setCancelFlowState('NONE');
         setDeskPopup(null);
@@ -1311,7 +1355,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
         <section
           ref={popupRef}
           className="card desk-popup"
-          style={{ left: deskPopupCoords?.left ?? POPUP_PADDING, top: deskPopupCoords?.top ?? POPUP_PADDING, visibility: deskPopupCoords ? 'visible' : 'hidden' }}
+          style={{ left: deskPopupCoords?.left ?? deskPopup.anchorRect.left, top: deskPopupCoords?.top ?? deskPopup.anchorRect.top, visibility: deskPopupCoords ? 'visible' : 'hidden' }}
           role="menu"
           data-placement={deskPopupCoords?.placement ?? 'right'}
         >
