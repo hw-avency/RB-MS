@@ -1,5 +1,6 @@
 import { MouseEvent, RefObject, memo, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { normalizeDaySlotBookings } from './daySlotBookings';
 import { resourceKindLabel } from './resourceKinds';
 
 type FloorplanBooking = {
@@ -39,7 +40,7 @@ type TimeInterval = { start: number; end: number };
 const PIN_HITBOX_SIZE = 44;
 const PIN_VISUAL_SIZE = 36;
 const RING_RADIUS = 14.5;
-const RING_WIDTH = 4;
+const RING_WIDTH = 5;
 const CENTER_SIZE = 28;
 const START_ANGLE = -90;
 const MAX_ROOM_MARKER_LABEL_LENGTH = 4;
@@ -90,8 +91,8 @@ const getResourceMarkerIcon = (kind?: string): string => {
 const getBookingPersonLabel = (booking?: FloorplanBooking): string => booking?.userDisplayName ?? booking?.userEmail ?? 'Unbekannt';
 
 const normalizeBookings = (desk: FloorplanDesk): FloorplanBooking[] => {
-  if (desk.bookings && desk.bookings.length > 0) return desk.bookings;
-  return desk.booking ? [desk.booking] : [];
+  const bookings = desk.bookings && desk.bookings.length > 0 ? desk.bookings : desk.booking ? [desk.booking] : [];
+  return normalizeDaySlotBookings(bookings);
 };
 
 const slotFromBooking = (booking: FloorplanBooking): 'AM' | 'PM' | 'FULL' | null => {
@@ -252,7 +253,7 @@ const DeskOverlay = memo(function DeskOverlay({ desks, selectedDeskId, hoveredDe
               title={bookings.length === 2 && !fullBooking ? '2 Buchungen' : undefined}
               aria-label={`${resourceKindLabel(desk.kind)}: ${getDeskLabel(desk)}`}
             >
-              {shouldShowPulse && <span className="resource-pulse-ring" aria-hidden="true" />}
+              {shouldShowPulse && <span className="resource-pulse-ring pulse-halo is-free" aria-hidden="true" />}
               <svg className="pin-ring-svg" viewBox={`0 0 ${PIN_VISUAL_SIZE} ${PIN_VISUAL_SIZE}`} shapeRendering="geometricPrecision" aria-hidden="true">
                 {isRoom ? (
                   <>
