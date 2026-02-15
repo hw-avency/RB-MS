@@ -58,6 +58,7 @@ type DeskSlotAvailability = 'FREE' | 'AM_BOOKED' | 'PM_BOOKED' | 'FULL_BOOKED';
 type PopupPlacement = 'top' | 'right' | 'bottom' | 'left';
 type PopupCoordinates = { left: number; top: number; placement: PopupPlacement };
 type TimeInterval = { start: number; end: number };
+type CalendarBooking = { date: string };
 
 const POPUP_OFFSET = 12;
 const POPUP_PADDING = 8;
@@ -135,6 +136,7 @@ const today = toLocalDateKey(new Date());
 const weekdays = ['Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa', 'So'];
 
 const toDateKey = (value: Date): string => value.toISOString().slice(0, 10);
+const toBookingDateKey = (value: string): string => value.slice(0, 10);
 const startOfMonth = (dateString: string): Date => {
   const date = new Date(`${dateString}T00:00:00.000Z`);
   return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), 1));
@@ -416,6 +418,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
   const [cancelConfirmContext, setCancelConfirmContext] = useState<CancelConfirmContext | null>(null);
   const [isCancellingBooking, setIsCancellingBooking] = useState(false);
   const [cancelDialogError, setCancelDialogError] = useState('');
+  const [bookedCalendarDays, setBookedCalendarDays] = useState<string[]>([]);
 
   const [highlightedDeskId, setHighlightedDeskId] = useState('');
   const [deskPopupCoords, setDeskPopupCoords] = useState<PopupCoordinates | null>(null);
@@ -492,6 +495,11 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
   const cancelConfirmDesk = useMemo(() => (cancelConfirmContext ? desks.find((desk) => desk.id === cancelConfirmContext.deskId) ?? null : null), [desks, cancelConfirmContext]);
   const cancelConfirmBookingLabel = cancelConfirmContext?.bookingLabel ?? bookingSlotLabel(cancelConfirmDesk?.booking);
   const calendarDays = useMemo(() => buildCalendarDays(visibleMonth), [visibleMonth]);
+  const calendarRange = useMemo(() => ({
+    from: toDateKey(calendarDays[0]),
+    to: toDateKey(calendarDays[calendarDays.length - 1])
+  }), [calendarDays]);
+  const bookedCalendarDaysSet = useMemo(() => new Set(bookedCalendarDays), [bookedCalendarDays]);
 
   const loadOccupancy = async (floorplanId: string, date: string) => {
     if (!floorplanId) return;
@@ -556,6 +564,32 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
       loadOccupancy(selectedFloorplanId, selectedDate);
     }
   }, [selectedFloorplanId, selectedDate, backendDown]);
+
+  useEffect(() => {
+    if (backendDown) {
+      setBookedCalendarDays([]);
+      return;
+    }
+
+    let cancelled = false;
+
+    const loadCalendarBookings = async () => {
+      try {
+        const calendarBookings = await get<CalendarBooking[]>(`/bookings?from=${calendarRange.from}&to=${calendarRange.to}`);
+        if (cancelled) return;
+        setBookedCalendarDays(Array.from(new Set(calendarBookings.map((booking) => toBookingDateKey(booking.date)))));
+      } catch {
+        if (cancelled) return;
+        setBookedCalendarDays([]);
+      }
+    };
+
+    loadCalendarBookings();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [backendDown, calendarRange.from, calendarRange.to]);
 
 
   useEffect(() => {
@@ -927,8 +961,9 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
             const inVisibleMonth = day.getUTCMonth() === visibleMonth.getUTCMonth();
             const isSelected = dayKey === selectedDate;
             const isToday = dayKey === today;
+            const hasBookingsForDay = bookedCalendarDaysSet.has(dayKey);
             return (
-              <button key={dayKey} className={`day-btn ${inVisibleMonth ? '' : 'outside'} ${isSelected ? 'selected' : ''} ${isToday ? 'today' : ''}`} onClick={() => selectDay(day)}>
+              <button key={dayKey} className={`day-btn ${inVisibleMonth ? '' : 'outside'} ${isSelected ? 'selected' : ''} ${isToday ? 'today' : ''} ${!isSelected && hasBookingsForDay ? 'has-bookings' : ''}`} onClick={() => selectDay(day)}>
                 {day.getUTCDate()}
               </button>
             );
@@ -944,12 +979,6 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
           <span><i className="dot free" /> Grün = frei</span>
           <span><i className="dot booked" /> Rot = belegt</span>
           <span><i className="dot selected" /> Blau = dein Platz</span>
-        </div>
-        <div className="legend room-legend">
-          <strong>Räume</strong>
-          <span><i className="dot room-free" /> Grün = frei (07–18 Uhr)</span>
-          <span><i className="dot room-booked" /> Dunkles Segment = belegt</span>
-          <p className="muted">Ring zeigt Zeitbelegung.</p>
         </div>
       </section>
   );

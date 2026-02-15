@@ -216,6 +216,8 @@ const DeskOverlay = memo(function DeskOverlay({ desks, selectedDeskId, hoveredDe
             if (endInWindow <= startInWindow) return [];
             return [{ start: startInWindow, end: endInWindow }];
           }));
+          const roomCoverage = roomIntervals.reduce((total, interval) => total + (interval.end - interval.start), 0);
+          const isRoomFullyBooked = roomCoverage >= WORK_SPAN - 1;
 
           return (
             <button
@@ -251,7 +253,9 @@ const DeskOverlay = memo(function DeskOverlay({ desks, selectedDeskId, hoveredDe
                 {isRoom ? (
                   <>
                     <circle cx={PIN_VISUAL_SIZE / 2} cy={PIN_VISUAL_SIZE / 2} r={RING_RADIUS} className="pin-ring-track" />
-                    {roomIntervals.map((interval, index) => <path key={`${desk.id}-${interval.start}-${interval.end}-${index}`} d={arcPath(minuteToAngle(interval.start), minuteToAngle(interval.end), RING_RADIUS)} className="pin-ring-arc" style={{ stroke: '#334155', strokeWidth: RING_WIDTH }} />)}
+                    {isRoomFullyBooked
+                      ? <circle cx={PIN_VISUAL_SIZE / 2} cy={PIN_VISUAL_SIZE / 2} r={RING_RADIUS} className="pin-ring-arc" style={{ stroke: 'var(--resource-booked)', strokeWidth: RING_WIDTH, strokeLinecap: 'butt' }} />
+                      : roomIntervals.map((interval, index) => <path key={`${desk.id}-${interval.start}-${interval.end}-${index}`} d={arcPath(minuteToAngle(interval.start), minuteToAngle(interval.end), RING_RADIUS)} className="pin-ring-arc" style={{ stroke: 'var(--resource-booked)', strokeWidth: RING_WIDTH }} />)}
                   </>
                 ) : (
                   <>
