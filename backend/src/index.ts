@@ -434,6 +434,7 @@ type DbDelegate = {
   create: (args: { data: Record<string, unknown> }) => Promise<unknown>;
   update: (args: { where: { id: string }; data: Record<string, unknown> }) => Promise<unknown>;
   delete: (args: { where: { id: string } }) => Promise<unknown>;
+  deleteMany: (args?: { where?: Record<string, unknown> }) => Promise<{ count: number }>;
 };
 
 const toRouteName = (modelName: string): string => modelName.replace(/([A-Z])/g, '-$1').toLowerCase().replace(/^-/, '');
@@ -1206,6 +1207,29 @@ app.post('/admin/db/:table/rows', requireAdmin, async (req, res) => {
     res.status(201).json(created);
   } catch (error) {
     res.status(400).json({ error: 'validation', message: error instanceof Error ? error.message : 'Ungültige Daten' });
+  }
+});
+
+app.delete('/admin/db/:table/rows', requireAdmin, async (req, res) => {
+  const tableName = getRouteId(req.params.table);
+  const table = tableName ? getDbTableMeta(tableName) : null;
+
+  if (!table) {
+    res.status(404).json({ error: 'not_found', message: 'Tabelle nicht gefunden' });
+    return;
+  }
+
+  const delegate = getDbDelegate(table);
+  if (!delegate) {
+    res.status(500).json({ error: 'config_error', message: 'Delegate nicht verfügbar' });
+    return;
+  }
+
+  try {
+    const result = await delegate.deleteMany({});
+    res.status(200).json({ deleted: result.count });
+  } catch (error) {
+    res.status(400).json({ error: 'validation', message: error instanceof Error ? error.message : 'Tabelle leeren fehlgeschlagen' });
   }
 });
 

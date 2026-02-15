@@ -770,6 +770,8 @@ function DbAdminPage({ path, navigate, onLogout, currentUser }: RouteProps) {
   const [editorOpen, setEditorOpen] = useState(false);
   const [editingRowId, setEditingRowId] = useState<string | null>(null);
   const [editorValue, setEditorValue] = useState('{}');
+  const [clearTableOpen, setClearTableOpen] = useState(false);
+  const [clearingTable, setClearingTable] = useState(false);
 
   const selectedTable = useMemo(() => tables.find((item) => item.name === tableName) ?? null, [tables, tableName]);
 
@@ -861,8 +863,25 @@ function DbAdminPage({ path, navigate, onLogout, currentUser }: RouteProps) {
     }
   };
 
+  const clearTable = async () => {
+    if (!selectedTable) return;
+
+    setClearingTable(true);
+    try {
+      const response = await del<{ deleted?: number }>(`/admin/db/${selectedTable.name}/rows`);
+      setClearTableOpen(false);
+      const deletedCount = typeof response?.deleted === 'number' ? response.deleted : rows.length;
+      toasts.success(`Tabelle geleert (${deletedCount} Datensätze gelöscht)`);
+      await loadRows(selectedTable.name);
+    } catch (err) {
+      toasts.error(err instanceof Error ? err.message : 'Tabelle leeren fehlgeschlagen');
+    } finally {
+      setClearingTable(false);
+    }
+  };
+
   return (
-    <AdminLayout path={path} navigate={navigate} onLogout={onLogout} title="DB Admin" actions={<button className="btn" onClick={openCreate} disabled={!selectedTable}>Neu</button>} currentUser={currentUser ?? null}>
+    <AdminLayout path={path} navigate={navigate} onLogout={onLogout} title="DB Admin" actions={<div className="inline-end"><button className="btn btn-danger-text" onClick={() => setClearTableOpen(true)} disabled={!selectedTable || rows.length === 0}>Tabelle leeren</button><button className="btn" onClick={openCreate} disabled={!selectedTable}>Neu</button></div>} currentUser={currentUser ?? null}>
       <section className="card stack-sm">
         <div className="crud-toolbar">
           <div className="inline-between"><h3>Datenbank Editor</h3><Badge>{selectedTable?.model ?? '—'}</Badge></div>
@@ -873,6 +892,7 @@ function DbAdminPage({ path, navigate, onLogout, currentUser }: RouteProps) {
         {selectedTable && !rowLoading && <div className="table-wrap"><table className="admin-table"><thead><tr>{selectedTable.columns.map((column) => <th key={column.name}>{column.name}</th>)}<th className="align-right">Aktionen</th></tr></thead><tbody>{rows.map((row, index) => <tr key={`${String(row.id ?? 'row')}-${index}`}>{selectedTable.columns.map((column) => <td key={column.name} className="truncate-cell" title={String(row[column.name] ?? '')}>{typeof row[column.name] === 'object' ? JSON.stringify(row[column.name]) : String(row[column.name] ?? '—')}</td>)}<td className="align-right"><div className="admin-row-actions"><button className="btn btn-outline" onClick={() => openEdit(row)}>Bearbeiten</button>{typeof row.id === 'string' && <button className="btn btn-danger-text" onClick={() => void removeRow(row.id as string)}>Löschen</button>}</div></td></tr>)}</tbody></table></div>}
       </section>
       {editorOpen && <div className="overlay"><section className="card dialog stack-sm"><h3>{editingRowId ? 'Datensatz bearbeiten' : 'Datensatz erstellen'}</h3><form className="stack-sm" onSubmit={submitEditor}><textarea className="db-editor-textarea" rows={16} value={editorValue} onChange={(event) => setEditorValue(event.target.value)} /><p className="muted">JSON Objekt mit Feldwerten eingeben.</p><div className="inline-end"><button className="btn btn-outline" type="button" onClick={() => setEditorOpen(false)}>Abbrechen</button><button className="btn">Speichern</button></div></form></section></div>}
+      {clearTableOpen && selectedTable && <ConfirmDialog title="Tabelle wirklich leeren?" description={`Alle Datensätze in "${selectedTable.model}" werden dauerhaft gelöscht.`} onCancel={() => setClearTableOpen(false)} onConfirm={() => void clearTable()} confirmDisabled={clearingTable} confirmLabel={clearingTable ? 'Lösche…' : 'Tabelle leeren'} />}
       <ToastViewport toasts={toasts.toasts} />
     </AdminLayout>
   );
