@@ -39,6 +39,7 @@ model Floorplan {
   id                  String       @id @default(cuid())
   name                String
   imageUrl            String
+  isDefault           Boolean      @default(false)
   defaultResourceKind ResourceKind @default(TISCH)
   defaultAllowSeries  Boolean      @default(true)
   createdAt           DateTime     @default(now())

@@ -8,7 +8,7 @@ import { useToast } from '../components/toast';
 import { RESOURCE_KIND_OPTIONS, resourceKindLabel, type ResourceKind } from '../resourceKinds';
 
 type SeriesPolicy = 'DEFAULT' | 'ALLOW' | 'DISALLOW';
-type Floorplan = { id: string; name: string; imageUrl: string; defaultResourceKind?: ResourceKind; defaultAllowSeries?: boolean; createdAt?: string; updatedAt?: string };
+type Floorplan = { id: string; name: string; imageUrl: string; isDefault?: boolean; defaultResourceKind?: ResourceKind; defaultAllowSeries?: boolean; createdAt?: string; updatedAt?: string };
 type Desk = { id: string; floorplanId: string; name: string; kind?: ResourceKind; allowSeriesOverride?: boolean | null; effectiveAllowSeries?: boolean; x: number; y: number; createdAt?: string; updatedAt?: string };
 type Employee = { id: string; email: string; displayName: string; role: 'admin' | 'user'; isActive: boolean; photoUrl?: string | null; createdAt?: string; updatedAt?: string };
 type Booking = { id: string; deskId: string; userEmail: string; userDisplayName?: string; employeeId?: string; date: string; createdAt?: string; updatedAt?: string };
@@ -457,7 +457,7 @@ function FloorplansPage({ path, navigate, onLogout, currentUser }: RouteProps) {
           actions={<button className="btn" onClick={() => setShowCreate(true)}>Neu</button>}
         />
         {state.error && <ErrorState text={state.error} onRetry={load} />}
-        <div className="table-wrap"><table className="admin-table"><thead><tr><th>Vorschau</th><th>Name</th><th>Bild URL</th><th>Erstellt</th><th className="align-right">Aktionen</th></tr></thead>{state.loading && !state.ready ? <SkeletonRows columns={5} /> : <tbody>{filtered.map((floorplan) => <tr key={floorplan.id}><td><button className="floor-thumb-btn" onClick={() => setEditing(floorplan)} aria-label={`Floorplan ${floorplan.name} öffnen`}><img className="floor-thumb" src={resolveApiUrl(floorplan.imageUrl)} alt={floorplan.name} loading="lazy" /></button></td><td><button className="btn btn-ghost" onClick={() => setEditing(floorplan)}>{floorplan.name}</button></td><td className="truncate-cell" title={floorplan.imageUrl}>{floorplan.imageUrl}</td><td>{formatDate(floorplan.createdAt)}</td><td className="align-right"><RowMenu items={[{ label: 'Bearbeiten', onSelect: () => setEditing(floorplan) }, { label: 'Löschen', onSelect: () => setPendingDelete(floorplan), danger: true }]} /></td></tr>)}</tbody>}</table></div>
+        <div className="table-wrap"><table className="admin-table"><thead><tr><th>Vorschau</th><th>Name</th><th>Bild URL</th><th>Erstellt</th><th className="align-right">Aktionen</th></tr></thead>{state.loading && !state.ready ? <SkeletonRows columns={5} /> : <tbody>{filtered.map((floorplan) => <tr key={floorplan.id}><td><button className="floor-thumb-btn" onClick={() => setEditing(floorplan)} aria-label={`Floorplan ${floorplan.name} öffnen`}><img className="floor-thumb" src={resolveApiUrl(floorplan.imageUrl)} alt={floorplan.name} loading="lazy" /></button></td><td><div className="stack-xs"><button className="btn btn-ghost" onClick={() => setEditing(floorplan)}>{floorplan.name}</button>{floorplan.isDefault && <Badge tone="ok">Standard</Badge>}</div></td><td className="truncate-cell" title={floorplan.imageUrl}>{floorplan.imageUrl}</td><td>{formatDate(floorplan.createdAt)}</td><td className="align-right"><RowMenu items={[{ label: 'Bearbeiten', onSelect: () => setEditing(floorplan) }, { label: 'Löschen', onSelect: () => setPendingDelete(floorplan), danger: true }]} /></td></tr>)}</tbody>}</table></div>
         {!state.loading && filtered.length === 0 && <EmptyState text="Keine Floorpläne vorhanden." action={<button className="btn" onClick={() => setShowCreate(true)}>Neu anlegen</button>} />}
       </section>
       {(showCreate || editing) && <FloorplanEditor floorplan={editing} onClose={() => { setShowCreate(false); setEditing(null); navigate('/admin/floorplans'); }} onSaved={async () => { setShowCreate(false); setEditing(null); toasts.success('Floorplan gespeichert'); await load(); }} onError={toasts.error} />}
@@ -471,17 +471,18 @@ function FloorplanEditor({ floorplan, onClose, onSaved, onError }: { floorplan: 
   const [imageUrl, setImageUrl] = useState(floorplan?.imageUrl ?? '');
   const [defaultResourceKind, setDefaultResourceKind] = useState<ResourceKind>(floorplan?.defaultResourceKind ?? 'TISCH');
   const [defaultAllowSeries, setDefaultAllowSeries] = useState<boolean>(floorplan?.defaultAllowSeries ?? true);
+  const [isDefault, setIsDefault] = useState<boolean>(floorplan?.isDefault ?? false);
   const submit = async (event: FormEvent) => {
     event.preventDefault();
     try {
-      if (floorplan) await patch(`/admin/floorplans/${floorplan.id}`, { name, imageUrl, defaultResourceKind, defaultAllowSeries });
-      else await post('/admin/floorplans', { name, imageUrl, defaultResourceKind, defaultAllowSeries });
+      if (floorplan) await patch(`/admin/floorplans/${floorplan.id}`, { name, imageUrl, defaultResourceKind, defaultAllowSeries, isDefault });
+      else await post('/admin/floorplans', { name, imageUrl, defaultResourceKind, defaultAllowSeries, isDefault });
       await onSaved();
     } catch (err) {
       onError(err instanceof Error ? err.message : 'Speichern fehlgeschlagen');
     }
   };
-  return <div className="overlay"><section className="card dialog stack-sm"><h3>{floorplan ? 'Floorplan bearbeiten' : 'Floorplan anlegen'}</h3><form className="stack-sm" onSubmit={submit}><input required placeholder="Name" value={name} onChange={(e) => setName(e.target.value)} /><input required placeholder="Asset URL" value={imageUrl} onChange={(e) => setImageUrl(e.target.value)} /><div className="stack-xs"><strong>Defaults</strong><label className="field"><span>Standard-Ressourcenart</span><select value={defaultResourceKind} onChange={(event) => setDefaultResourceKind(event.target.value as ResourceKind)}>{RESOURCE_KIND_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label><label className="field"><span>Serientermine standardmäßig erlauben</span><input type="checkbox" checked={defaultAllowSeries} onChange={(event) => setDefaultAllowSeries(event.target.checked)} /></label></div><div className="inline-end"><button type="button" className="btn btn-outline" onClick={onClose}>Abbrechen</button><button className="btn">Speichern</button></div></form></section></div>;
+  return <div className="overlay"><section className="card dialog stack-sm"><h3>{floorplan ? 'Floorplan bearbeiten' : 'Floorplan anlegen'}</h3><form className="stack-sm" onSubmit={submit}><input required placeholder="Name" value={name} onChange={(e) => setName(e.target.value)} /><input required placeholder="Asset URL" value={imageUrl} onChange={(e) => setImageUrl(e.target.value)} /><div className="stack-xs"><strong>Defaults</strong><label className="field"><span>Standard-Ressourcenart</span><select value={defaultResourceKind} onChange={(event) => setDefaultResourceKind(event.target.value as ResourceKind)}>{RESOURCE_KIND_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label><label className="field"><span>Serientermine standardmäßig erlauben</span><input type="checkbox" checked={defaultAllowSeries} onChange={(event) => setDefaultAllowSeries(event.target.checked)} /></label><label className="field"><span>Beim Login als Standard-Floorplan nutzen</span><input type="checkbox" checked={isDefault} onChange={(event) => setIsDefault(event.target.checked)} /></label></div><div className="inline-end"><button type="button" className="btn btn-outline" onClick={onClose}>Abbrechen</button><button className="btn">Speichern</button></div></form></section></div>;
 }
 
 function PositionPickerDialog({ floorplan, x, y, onClose, onPick }: { floorplan: Floorplan | null; x: number | null; y: number | null; onClose: () => void; onPick: (x: number, y: number) => void }) {

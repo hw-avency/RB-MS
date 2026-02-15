@@ -1622,7 +1622,7 @@ app.get('/me', (req, res) => {
 });
 
 app.get('/floorplans', async (_req, res) => {
-  const floorplans = await prisma.floorplan.findMany({ orderBy: { createdAt: 'desc' } });
+  const floorplans = await prisma.floorplan.findMany({ orderBy: [{ isDefault: 'desc' }, { createdAt: 'desc' }] });
   res.status(200).json(floorplans);
 });
 
@@ -2628,7 +2628,7 @@ app.get('/recurring-bookings', async (req, res) => {
 });
 
 app.post('/admin/floorplans', requireAdmin, async (req, res) => {
-  const { name, imageUrl, defaultResourceKind, defaultAllowSeries } = req.body as { name?: string; imageUrl?: string; defaultResourceKind?: ResourceKind; defaultAllowSeries?: boolean };
+  const { name, imageUrl, defaultResourceKind, defaultAllowSeries, isDefault } = req.body as { name?: string; imageUrl?: string; defaultResourceKind?: ResourceKind; defaultAllowSeries?: boolean; isDefault?: boolean };
 
   if (!name || !imageUrl) {
     res.status(400).json({ error: 'validation', message: 'name and imageUrl are required' });
@@ -2646,13 +2646,25 @@ app.post('/admin/floorplans', requireAdmin, async (req, res) => {
     return;
   }
 
-  const floorplan = await prisma.floorplan.create({
-    data: {
-      name,
-      imageUrl,
-      defaultResourceKind: parsedDefaultKind,
-      ...(typeof defaultAllowSeries === 'boolean' ? { defaultAllowSeries } : {})
+  if (typeof isDefault !== 'undefined' && typeof isDefault !== 'boolean') {
+    res.status(400).json({ error: 'validation', message: 'isDefault must be a boolean' });
+    return;
+  }
+
+  const floorplan = await prisma.$transaction(async (tx) => {
+    if (isDefault) {
+      await tx.floorplan.updateMany({ data: { isDefault: false } });
     }
+
+    return tx.floorplan.create({
+      data: {
+        name,
+        imageUrl,
+        defaultResourceKind: parsedDefaultKind,
+        ...(typeof defaultAllowSeries === 'boolean' ? { defaultAllowSeries } : {}),
+        ...(typeof isDefault === 'boolean' ? { isDefault } : {})
+      }
+    });
   });
   res.status(201).json(floorplan);
 });
@@ -2664,9 +2676,9 @@ app.patch('/admin/floorplans/:id', requireAdmin, async (req, res) => {
     return;
   }
 
-  const { name, imageUrl, defaultResourceKind, defaultAllowSeries } = req.body as { name?: string; imageUrl?: string; defaultResourceKind?: ResourceKind; defaultAllowSeries?: boolean };
-  if (typeof name === 'undefined' && typeof imageUrl === 'undefined' && typeof defaultResourceKind === 'undefined' && typeof defaultAllowSeries === 'undefined') {
-    res.status(400).json({ error: 'validation', message: 'name, imageUrl, defaultResourceKind or defaultAllowSeries must be provided' });
+  const { name, imageUrl, defaultResourceKind, defaultAllowSeries, isDefault } = req.body as { name?: string; imageUrl?: string; defaultResourceKind?: ResourceKind; defaultAllowSeries?: boolean; isDefault?: boolean };
+  if (typeof name === 'undefined' && typeof imageUrl === 'undefined' && typeof defaultResourceKind === 'undefined' && typeof defaultAllowSeries === 'undefined' && typeof isDefault === 'undefined') {
+    res.status(400).json({ error: 'validation', message: 'name, imageUrl, defaultResourceKind, defaultAllowSeries or isDefault must be provided' });
     return;
   }
 
@@ -2681,20 +2693,31 @@ app.patch('/admin/floorplans/:id', requireAdmin, async (req, res) => {
     res.status(400).json({ error: 'validation', message: 'defaultAllowSeries must be a boolean' });
     return;
   }
+  if (typeof isDefault !== 'undefined' && typeof isDefault !== 'boolean') {
+    res.status(400).json({ error: 'validation', message: 'isDefault must be a boolean' });
+    return;
+  }
   if (typeof name === 'string' && name.trim().length === 0) {
     res.status(400).json({ error: 'validation', message: 'name must not be empty' });
     return;
   }
 
   try {
-    const updatedFloorplan = await prisma.floorplan.update({
-      where: { id },
-      data: {
-        ...(typeof name === 'string' ? { name: name.trim() } : {}),
-        ...(typeof imageUrl === 'string' ? { imageUrl } : {}),
-        ...(parsedDefaultKind ? { defaultResourceKind: parsedDefaultKind } : {}),
-        ...(typeof defaultAllowSeries === 'boolean' ? { defaultAllowSeries } : {})
+    const updatedFloorplan = await prisma.$transaction(async (tx) => {
+      if (isDefault === true) {
+        await tx.floorplan.updateMany({ where: { id: { not: id } }, data: { isDefault: false } });
       }
+
+      return tx.floorplan.update({
+        where: { id },
+        data: {
+          ...(typeof name === 'string' ? { name: name.trim() } : {}),
+          ...(typeof imageUrl === 'string' ? { imageUrl } : {}),
+          ...(parsedDefaultKind ? { defaultResourceKind: parsedDefaultKind } : {}),
+          ...(typeof defaultAllowSeries === 'boolean' ? { defaultAllowSeries } : {}),
+          ...(typeof isDefault === 'boolean' ? { isDefault } : {})
+        }
+      });
     });
     res.status(200).json(updatedFloorplan);
   } catch (error) {

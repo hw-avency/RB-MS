@@ -11,7 +11,7 @@ import type { AuthUser } from './auth/AuthProvider';
 import { useToast } from './components/toast';
 import { resourceKindLabel } from './resourceKinds';
 
-type Floorplan = { id: string; name: string; imageUrl: string };
+type Floorplan = { id: string; name: string; imageUrl: string; isDefault?: boolean };
 type OccupancyDesk = {
   id: string;
   name: string;
@@ -355,7 +355,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
       const [nextFloorplans, nextEmployees] = await Promise.all([get<Floorplan[]>('/floorplans'), get<BookingEmployee[]>('/employees')]);
       setFloorplans(nextFloorplans);
       setEmployees(nextEmployees);
-      setSelectedFloorplanId((prev) => prev || nextFloorplans[0]?.id || '');
+      setSelectedFloorplanId((prev) => prev || nextFloorplans.find((plan) => plan.isDefault)?.id || nextFloorplans[0]?.id || '');
       setSelectedEmployeeEmail((prev) => prev || currentUserEmail || nextEmployees[0]?.email || '');
       setBackendDown(false);
     } catch (error) {
@@ -773,7 +773,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
               }}
               title={person.name}
             >
-              <Avatar displayName={person.name} email={person.email} photoUrl={person.photoUrl} size={34} />
+              <Avatar displayName={person.name} email={person.email} photoUrl={person.photoUrl} size={50} />
               <span>{person.firstName}</span>
             </button>
           ))}
