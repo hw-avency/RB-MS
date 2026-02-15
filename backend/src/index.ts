@@ -414,6 +414,127 @@ const getIdsFromQuery = (value: string | string[] | undefined): string[] => {
   return raw.split(',').map((entry) => entry.trim()).filter((entry) => entry.length > 0);
 };
 
+type PrismaScalarType = 'String' | 'Int' | 'Float' | 'Boolean' | 'DateTime' | 'Json' | 'Bytes' | 'BigInt';
+type DbScalarField = {
+  name: string;
+  type: PrismaScalarType;
+  isRequired: boolean;
+  isId: boolean;
+  hasDefaultValue: boolean;
+  isUpdatedAt: boolean;
+};
+type DbTableMeta = {
+  modelName: string;
+  routeName: string;
+  delegateKey: string;
+  scalarFields: DbScalarField[];
+};
+
+type DbDelegate = {
+  findMany: (args: { take: number; skip: number; orderBy: { createdAt: 'desc' } | { id: 'desc' } }) => Promise<unknown[]>;
+  count: () => Promise<number>;
+  create: (args: { data: Record<string, unknown> }) => Promise<unknown>;
+  update: (args: { where: { id: string }; data: Record<string, unknown> }) => Promise<unknown>;
+  delete: (args: { where: { id: string } }) => Promise<unknown>;
+};
+
+const toRouteName = (modelName: string): string => modelName.replace(/([A-Z])/g, '-$1').toLowerCase().replace(/^-/, '');
+const toDelegateKey = (modelName: string): string => `${modelName.charAt(0).toLowerCase()}${modelName.slice(1)}`;
+
+const DB_TABLES: DbTableMeta[] = Prisma.dmmf.datamodel.models.map((model) => ({
+  modelName: model.name,
+  routeName: toRouteName(model.name),
+  delegateKey: toDelegateKey(model.name),
+  scalarFields: model.fields
+    .filter((field): field is typeof field & { type: PrismaScalarType } => field.kind === 'scalar')
+    .map((field) => ({
+      name: field.name,
+      type: field.type,
+      isRequired: Boolean(field.isRequired),
+      isId: Boolean(field.isId),
+      hasDefaultValue: Boolean(field.hasDefaultValue),
+      isUpdatedAt: Boolean(field.isUpdatedAt)
+    }))
+}));
+
+const DB_TABLES_BY_ROUTE = new Map(DB_TABLES.map((table) => [table.routeName, table]));
+
+const getDbTableMeta = (table: string): DbTableMeta | null => DB_TABLES_BY_ROUTE.get(table) ?? null;
+
+const getDbDelegate = (meta: DbTableMeta): DbDelegate | null => {
+  const delegates = prisma as unknown as Record<string, DbDelegate | undefined>;
+  return delegates[meta.delegateKey] ?? null;
+};
+
+const parseDbFieldValue = (field: DbScalarField, raw: unknown): unknown => {
+  if (raw === null) {
+    if (field.isRequired) {
+      throw new Error(`Field \"${field.name}\" ist erforderlich.`);
+    }
+    return null;
+  }
+
+  switch (field.type) {
+    case 'String':
+      if (typeof raw !== 'string') throw new Error(`Field \"${field.name}\" muss ein String sein.`);
+      return raw;
+    case 'Boolean':
+      if (typeof raw !== 'boolean') throw new Error(`Field \"${field.name}\" muss true/false sein.`);
+      return raw;
+    case 'Int': {
+      if (typeof raw !== 'number' || !Number.isInteger(raw)) throw new Error(`Field \"${field.name}\" muss eine ganze Zahl sein.`);
+      return raw;
+    }
+    case 'Float':
+      if (typeof raw !== 'number') throw new Error(`Field \"${field.name}\" muss eine Zahl sein.`);
+      return raw;
+    case 'DateTime': {
+      if (typeof raw !== 'string') throw new Error(`Field \"${field.name}\" muss ein ISO-Datum sein.`);
+      const parsed = new Date(raw);
+      if (Number.isNaN(parsed.getTime())) throw new Error(`Field \"${field.name}\" enthält kein gültiges Datum.`);
+      return parsed;
+    }
+    case 'Json':
+      return raw;
+    case 'BigInt': {
+      if (typeof raw === 'number' && Number.isInteger(raw)) return BigInt(raw);
+      if (typeof raw === 'string' && /^-?\d+$/.test(raw)) return BigInt(raw);
+      throw new Error(`Field \"${field.name}\" muss eine BigInt-kompatible Zahl sein.`);
+    }
+    case 'Bytes': {
+      if (typeof raw !== 'string') throw new Error(`Field \"${field.name}\" muss als Base64-String gesendet werden.`);
+      return Buffer.from(raw, 'base64');
+    }
+    default:
+      return raw;
+  }
+};
+
+const parseDbPayload = (meta: DbTableMeta, payload: unknown, mode: 'create' | 'update'): Record<string, unknown> => {
+  if (typeof payload !== 'object' || payload === null || Array.isArray(payload)) {
+    throw new Error('Payload muss ein Objekt sein.');
+  }
+
+  const record = payload as Record<string, unknown>;
+  const editableFields = meta.scalarFields.filter((field) => !field.isId && !field.isUpdatedAt);
+  const parsedData: Record<string, unknown> = {};
+
+  for (const field of editableFields) {
+    if (!(field.name in record)) continue;
+    parsedData[field.name] = parseDbFieldValue(field, record[field.name]);
+  }
+
+  if (mode === 'create') {
+    for (const field of editableFields) {
+      if (field.name in parsedData) continue;
+      if (!field.isRequired || field.hasDefaultValue) continue;
+      throw new Error(`Field \"${field.name}\" ist erforderlich.`);
+    }
+  }
+
+  return parsedData;
+};
+
 const sendConflict = (res: express.Response, message: string, details: Record<string, unknown>) => {
   res.status(409).json({
     error: 'conflict',
@@ -980,6 +1101,131 @@ app.get('/user/me/photo', requireAuthenticated, async (req, res) => {
 });
 
 app.use(requireAuthenticated);
+
+
+app.get('/admin/db/tables', requireAdmin, (_req, res) => {
+  res.json(DB_TABLES.map((table) => ({
+    name: table.routeName,
+    model: table.modelName,
+    columns: table.scalarFields.map((field) => ({
+      name: field.name,
+      type: field.type,
+      required: field.isRequired,
+      id: field.isId,
+      hasDefaultValue: field.hasDefaultValue
+    }))
+  })));
+});
+
+app.get('/admin/db/:table/rows', requireAdmin, async (req, res) => {
+  const tableName = getRouteId(req.params.table);
+  const table = tableName ? getDbTableMeta(tableName) : null;
+  if (!table) {
+    res.status(404).json({ error: 'not_found', message: 'Tabelle nicht gefunden' });
+    return;
+  }
+
+  const delegate = getDbDelegate(table);
+  if (!delegate) {
+    res.status(500).json({ error: 'config_error', message: 'Delegate nicht verfügbar' });
+    return;
+  }
+
+  const rawLimit = Number.parseInt(String(req.query.limit ?? '100'), 10);
+  const rawOffset = Number.parseInt(String(req.query.offset ?? '0'), 10);
+  const limit = Number.isNaN(rawLimit) ? 100 : Math.max(1, Math.min(250, rawLimit));
+  const offset = Number.isNaN(rawOffset) ? 0 : Math.max(0, rawOffset);
+  const orderBy = table.scalarFields.some((field) => field.name === 'createdAt') ? { createdAt: 'desc' as const } : { id: 'desc' as const };
+
+  const [rows, total] = await Promise.all([
+    delegate.findMany({ take: limit, skip: offset, orderBy }),
+    delegate.count()
+  ]);
+
+  res.json({ rows, total, limit, offset });
+});
+
+app.post('/admin/db/:table/rows', requireAdmin, async (req, res) => {
+  const tableName = getRouteId(req.params.table);
+  const table = tableName ? getDbTableMeta(tableName) : null;
+  if (!table) {
+    res.status(404).json({ error: 'not_found', message: 'Tabelle nicht gefunden' });
+    return;
+  }
+
+  const delegate = getDbDelegate(table);
+  if (!delegate) {
+    res.status(500).json({ error: 'config_error', message: 'Delegate nicht verfügbar' });
+    return;
+  }
+
+  try {
+    const data = parseDbPayload(table, req.body?.data ?? {}, 'create');
+    const created = await delegate.create({ data });
+    res.status(201).json(created);
+  } catch (error) {
+    res.status(400).json({ error: 'validation', message: error instanceof Error ? error.message : 'Ungültige Daten' });
+  }
+});
+
+app.patch('/admin/db/:table/rows/:id', requireAdmin, async (req, res) => {
+  const tableName = getRouteId(req.params.table);
+  const table = tableName ? getDbTableMeta(tableName) : null;
+  const id = getRouteId(req.params.id);
+
+  if (!table || !id) {
+    res.status(404).json({ error: 'not_found', message: 'Datensatz nicht gefunden' });
+    return;
+  }
+
+  const delegate = getDbDelegate(table);
+  if (!delegate) {
+    res.status(500).json({ error: 'config_error', message: 'Delegate nicht verfügbar' });
+    return;
+  }
+
+  try {
+    const data = parseDbPayload(table, req.body?.data ?? {}, 'update');
+    const updated = await delegate.update({ where: { id }, data });
+    res.json(updated);
+  } catch (error) {
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2025') {
+      res.status(404).json({ error: 'not_found', message: 'Datensatz nicht gefunden' });
+      return;
+    }
+
+    res.status(400).json({ error: 'validation', message: error instanceof Error ? error.message : 'Ungültige Daten' });
+  }
+});
+
+app.delete('/admin/db/:table/rows/:id', requireAdmin, async (req, res) => {
+  const tableName = getRouteId(req.params.table);
+  const table = tableName ? getDbTableMeta(tableName) : null;
+  const id = getRouteId(req.params.id);
+
+  if (!table || !id) {
+    res.status(404).json({ error: 'not_found', message: 'Datensatz nicht gefunden' });
+    return;
+  }
+
+  const delegate = getDbDelegate(table);
+  if (!delegate) {
+    res.status(500).json({ error: 'config_error', message: 'Delegate nicht verfügbar' });
+    return;
+  }
+
+  try {
+    await delegate.delete({ where: { id } });
+    res.status(204).end();
+  } catch (error) {
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2025') {
+      res.status(404).json({ error: 'not_found', message: 'Datensatz nicht gefunden' });
+      return;
+    }
+
+    res.status(400).json({ error: 'validation', message: error instanceof Error ? error.message : 'Löschen fehlgeschlagen' });
+  }
+});
 
 app.get('/admin/employees', requireAdmin, async (_req, res) => {
   const employees = await prisma.employee.findMany({

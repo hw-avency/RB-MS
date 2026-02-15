@@ -9,6 +9,8 @@ type Floorplan = { id: string; name: string; imageUrl: string; createdAt?: strin
 type Desk = { id: string; floorplanId: string; name: string; x: number; y: number; createdAt?: string; updatedAt?: string };
 type Employee = { id: string; email: string; displayName: string; role: 'admin' | 'user'; isActive: boolean; photoUrl?: string | null; createdAt?: string; updatedAt?: string };
 type Booking = { id: string; deskId: string; userEmail: string; userDisplayName?: string; employeeId?: string; date: string; createdAt?: string; updatedAt?: string };
+type DbColumn = { name: string; type: string; required: boolean; id: boolean; hasDefaultValue: boolean };
+type DbTable = { name: string; model: string; columns: DbColumn[] };
 type Toast = { id: number; tone: 'success' | 'error'; message: string };
 type RouteProps = { path: string; navigate: (to: string) => void; onRoleStateChanged: () => Promise<void>; onLogout: () => Promise<void>; currentUser?: AdminSession | null };
 type AdminSession = { id?: string; email: string; name?: string; displayName?: string; role: 'admin' | 'user'; isActive?: boolean };
@@ -26,7 +28,8 @@ const navItems = [
   { to: '/admin/floorplans', label: 'Floorpläne' },
   { to: '/admin/desks', label: 'Tische' },
   { to: '/admin/bookings', label: 'Buchungen' },
-  { to: '/admin/employees', label: 'Mitarbeiter' }
+  { to: '/admin/employees', label: 'Mitarbeiter' },
+  { to: '/admin/db-admin', label: 'DB Admin' }
 ];
 
 const today = new Date().toISOString().slice(0, 10);
@@ -755,6 +758,126 @@ function EmployeesPage({ path, navigate, onRoleStateChanged, onLogout, currentAd
   );
 }
 
+
+function DbAdminPage({ path, navigate, onLogout, currentUser }: RouteProps) {
+  const toasts = useToasts();
+  const [tables, setTables] = useState<DbTable[]>([]);
+  const [tableName, setTableName] = useState('');
+  const [rows, setRows] = useState<Record<string, unknown>[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [rowLoading, setRowLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [editorOpen, setEditorOpen] = useState(false);
+  const [editingRowId, setEditingRowId] = useState<string | null>(null);
+  const [editorValue, setEditorValue] = useState('{}');
+
+  const selectedTable = useMemo(() => tables.find((item) => item.name === tableName) ?? null, [tables, tableName]);
+
+  const loadTables = async () => {
+    setLoading(true);
+    setError('');
+    try {
+      const list = await get<DbTable[]>('/admin/db/tables');
+      setTables(list);
+      setTableName((current) => current || list[0]?.name || '');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Tabellen konnten nicht geladen werden');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const loadRows = async (name: string) => {
+    if (!name) return;
+    setRowLoading(true);
+    setError('');
+    try {
+      const response = await get<{ rows: Record<string, unknown>[] }>(`/admin/db/${name}/rows?limit=100`);
+      setRows(response.rows);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Zeilen konnten nicht geladen werden');
+    } finally {
+      setRowLoading(false);
+    }
+  };
+
+  useEffect(() => { void loadTables(); }, []);
+  useEffect(() => { if (tableName) void loadRows(tableName); }, [tableName]);
+
+  const openCreate = () => {
+    if (!selectedTable) return;
+    const initial = selectedTable.columns
+      .filter((column) => !column.id)
+      .reduce<Record<string, unknown>>((acc, column) => {
+        if (!column.required || column.hasDefaultValue) return acc;
+        acc[column.name] = column.type === 'Boolean' ? false : '';
+        return acc;
+      }, {});
+    setEditingRowId(null);
+    setEditorValue(JSON.stringify(initial, null, 2));
+    setEditorOpen(true);
+  };
+
+  const openEdit = (row: Record<string, unknown>) => {
+    if (!selectedTable) return;
+    const data = selectedTable.columns
+      .filter((column) => !column.id)
+      .reduce<Record<string, unknown>>((acc, column) => {
+        const value = row[column.name];
+        if (value instanceof Date) acc[column.name] = value.toISOString();
+        else acc[column.name] = value ?? null;
+        return acc;
+      }, {});
+    setEditingRowId(typeof row.id === 'string' ? row.id : null);
+    setEditorValue(JSON.stringify(data, null, 2));
+    setEditorOpen(true);
+  };
+
+  const submitEditor = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!selectedTable) return;
+
+    try {
+      const data = JSON.parse(editorValue) as Record<string, unknown>;
+      if (editingRowId) await patch(`/admin/db/${selectedTable.name}/rows/${editingRowId}`, { data });
+      else await post(`/admin/db/${selectedTable.name}/rows`, { data });
+      setEditorOpen(false);
+      toasts.success(editingRowId ? 'Datensatz aktualisiert' : 'Datensatz angelegt');
+      await loadRows(selectedTable.name);
+    } catch (err) {
+      toasts.error(err instanceof Error ? err.message : 'Speichern fehlgeschlagen');
+    }
+  };
+
+  const removeRow = async (rowId: string) => {
+    if (!selectedTable) return;
+    if (!window.confirm('Datensatz wirklich löschen?')) return;
+    try {
+      await del(`/admin/db/${selectedTable.name}/rows/${rowId}`);
+      toasts.success('Datensatz gelöscht');
+      await loadRows(selectedTable.name);
+    } catch (err) {
+      toasts.error(err instanceof Error ? err.message : 'Löschen fehlgeschlagen');
+    }
+  };
+
+  return (
+    <AdminLayout path={path} navigate={navigate} onLogout={onLogout} title="DB Admin" actions={<button className="btn" onClick={openCreate} disabled={!selectedTable}>Neu</button>} currentUser={currentUser ?? null}>
+      <section className="card stack-sm">
+        <div className="crud-toolbar">
+          <div className="inline-between"><h3>Datenbank Editor</h3><Badge>{selectedTable?.model ?? '—'}</Badge></div>
+          <label className="field"><span>Tabelle</span><select value={tableName} onChange={(event) => setTableName(event.target.value)}>{tables.map((table) => <option key={table.name} value={table.name}>{table.model}</option>)}</select></label>
+        </div>
+        {(loading || rowLoading) && <p className="muted">Lade Daten…</p>}
+        {error && <ErrorState text={error} onRetry={() => { if (tableName) void loadRows(tableName); else void loadTables(); }} />}
+        {selectedTable && !rowLoading && <div className="table-wrap"><table className="admin-table"><thead><tr>{selectedTable.columns.map((column) => <th key={column.name}>{column.name}</th>)}<th className="align-right">Aktionen</th></tr></thead><tbody>{rows.map((row, index) => <tr key={`${String(row.id ?? 'row')}-${index}`}>{selectedTable.columns.map((column) => <td key={column.name} className="truncate-cell" title={String(row[column.name] ?? '')}>{typeof row[column.name] === 'object' ? JSON.stringify(row[column.name]) : String(row[column.name] ?? '—')}</td>)}<td className="align-right"><div className="admin-row-actions"><button className="btn btn-outline" onClick={() => openEdit(row)}>Bearbeiten</button>{typeof row.id === 'string' && <button className="btn btn-danger-text" onClick={() => void removeRow(row.id as string)}>Löschen</button>}</div></td></tr>)}</tbody></table></div>}
+      </section>
+      {editorOpen && <div className="overlay"><section className="card dialog stack-sm"><h3>{editingRowId ? 'Datensatz bearbeiten' : 'Datensatz erstellen'}</h3><form className="stack-sm" onSubmit={submitEditor}><textarea className="db-editor-textarea" rows={16} value={editorValue} onChange={(event) => setEditorValue(event.target.value)} /><p className="muted">JSON Objekt mit Feldwerten eingeben.</p><div className="inline-end"><button className="btn btn-outline" type="button" onClick={() => setEditorOpen(false)}>Abbrechen</button><button className="btn">Speichern</button></div></form></section></div>}
+      <ToastViewport toasts={toasts.toasts} />
+    </AdminLayout>
+  );
+}
+
 function EmployeeEditor({ employee, onClose, onSaved, onError }: { employee: Employee | null; onClose: () => void; onSaved: () => Promise<void>; onError: (m: string) => void }) {
   const [displayName, setDisplayName] = useState(employee?.displayName ?? '');
   const [email, setEmail] = useState(employee?.email ?? '');
@@ -793,6 +916,7 @@ export function AdminRouter({ path, navigate, onRoleStateChanged, onLogout }: Ro
   if (route === '/admin/desks') return <DesksPage path={path} navigate={navigate} onRoleStateChanged={onRoleStateChanged} onLogout={onLogout} currentUser={adminSession} />;
   if (route === '/admin/bookings') return <BookingsPage path={path} navigate={navigate} onRoleStateChanged={onRoleStateChanged} onLogout={onLogout} currentUser={adminSession} />;
   if (route === '/admin/employees') return <EmployeesPage path={path} navigate={navigate} onRoleStateChanged={onRoleStateChanged} onLogout={onLogout} currentAdminEmail={adminSession?.email ?? ''} currentUser={adminSession} />;
+  if (route === '/admin/db-admin') return <DbAdminPage path={path} navigate={navigate} onRoleStateChanged={onRoleStateChanged} onLogout={onLogout} currentUser={adminSession} />;
 
   return <main className="app-shell"><section className="card stack-sm down-card"><h2>Admin-Seite nicht gefunden</h2><button className="btn" onClick={() => navigate('/admin')}>Zum Dashboard</button></section></main>;
 }

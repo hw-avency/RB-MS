@@ -270,3 +270,5 @@ tr{cursor:pointer}.row-selected{background:hsl(var(--muted))}
 .booking-editor-layout{display:grid;grid-template-columns:minmax(260px,340px) minmax(0,1fr);gap:12px;align-items:start}
 .booking-editor-plan .canvas-body{min-height:320px}
 @media (max-width: 1024px){.admin-split-layout,.booking-editor-layout{grid-template-columns:1fr}.admin-floor-canvas{min-height:360px}}
+
+.db-editor-textarea{width:100%;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;border:1px solid hsl(var(--border));border-radius:12px;padding:10px;resize:vertical}
