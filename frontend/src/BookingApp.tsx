@@ -779,7 +779,14 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
         >
             {(popupDeskState === 'FREE' && (!conflictReview || bookingDialogState === 'BOOKING_OPEN' || (bookingDialogState === 'SUBMITTING' && !conflictReview))) ? (
               <>
-                <h3>Tisch: {popupDesk.name} buchen</h3>
+                <div className="desk-popup-header">
+                  <div className="stack-xxs">
+                    <h3>Tisch: {popupDesk.name}</h3>
+                    <p className="muted">Buchung anlegen</p>
+                  </div>
+                  <button type="button" className="btn btn-ghost desk-popup-close" aria-label="Popover schließen" onClick={closeBookingFlow}>✕</button>
+                </div>
+                <hr className="separator" />
                 <BookingForm
                   values={bookingFormValues}
                   onChange={setBookingFormValues}

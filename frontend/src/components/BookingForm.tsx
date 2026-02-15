@@ -1,4 +1,4 @@
-import { FormEvent, useState } from 'react';
+import { FormEvent, KeyboardEvent, useEffect, useMemo, useRef, useState } from 'react';
 
 type BookingType = 'single' | 'range' | 'recurring';
 
@@ -48,6 +48,38 @@ export function BookingForm({ values, onChange, onSubmit, onCancel, isSubmitting
   errorMessage?: string;
 }) {
   const [localError, setLocalError] = useState('');
+  const typeSelectRef = useRef<HTMLSelectElement | null>(null);
+
+  useEffect(() => {
+    typeSelectRef.current?.focus();
+  }, []);
+
+  const fieldErrors = useMemo(() => {
+    const nextErrors: { date?: string; dateFrom?: string; dateTo?: string; weekdays?: string } = {};
+
+    if (values.type === 'single' && !values.date) {
+      nextErrors.date = 'Datum ist erforderlich.';
+    }
+
+    if (values.type === 'recurring') {
+      if (!values.dateFrom) {
+        nextErrors.dateFrom = 'Startdatum ist erforderlich.';
+      }
+      if (!values.dateTo) {
+        nextErrors.dateTo = 'Enddatum ist erforderlich.';
+      }
+      if (values.dateFrom && values.dateTo && values.dateFrom > values.dateTo) {
+        nextErrors.dateTo = 'Enddatum muss nach dem Startdatum liegen.';
+      }
+      if (values.weekdays.length === 0) {
+        nextErrors.weekdays = 'Bitte mindestens einen Wochentag auswählen.';
+      }
+    }
+
+    return nextErrors;
+  }, [values]);
+
+  const isFormInvalid = Object.values(fieldErrors).some(Boolean);
 
   const toggleWeekday = (weekday: number) => {
     if (values.weekdays.includes(weekday)) {
@@ -62,86 +94,64 @@ export function BookingForm({ values, onChange, onSubmit, onCancel, isSubmitting
     event.preventDefault();
     setLocalError('');
 
-    if (values.type !== 'single' && (!values.dateFrom || !values.dateTo || values.dateFrom > values.dateTo)) {
-      setLocalError('Startdatum muss vor oder gleich Enddatum liegen.');
-      return;
-    }
-
-    if (values.type === 'recurring' && values.weekdays.length === 0) {
-      setLocalError('Bitte mindestens einen Wochentag für die Serienbuchung auswählen.');
+    if (isFormInvalid) {
+      setLocalError('Bitte prüfe die markierten Felder.');
       return;
     }
 
     const payload: BookingFormSubmitPayload = values.type === 'single'
       ? { type: 'single', date: values.date }
-      : values.type === 'range'
-        ? { type: 'range', dateFrom: values.dateFrom, dateTo: values.dateTo, onlyWeekdays: values.onlyWeekdays }
-        : { type: 'recurring', dateFrom: values.dateFrom, dateTo: values.dateTo, weekdays: values.weekdays };
+      : { type: 'recurring', dateFrom: values.dateFrom, dateTo: values.dateTo, weekdays: values.weekdays };
 
     await onSubmit(payload);
   };
 
+  const handleKeyDown = (event: KeyboardEvent<HTMLFormElement>) => {
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      onCancel();
+    }
+  };
+
   return (
-    <form className="stack-sm" onSubmit={handleSubmit}>
+    <form className="desk-booking-form" onSubmit={handleSubmit} onKeyDown={handleKeyDown}>
       <div className="stack-xs">
-        <label>Typ</label>
+        <label htmlFor="booking-type">Typ</label>
         <select
+          id="booking-type"
+          ref={typeSelectRef}
           value={values.type}
           disabled={disabled}
           onChange={(event) => {
-            const nextType = event.target.value === 'range' ? 'range' : event.target.value === 'recurring' ? 'recurring' : 'single';
+            const nextType = event.target.value === 'recurring' ? 'recurring' : 'single';
             onChange({ ...values, type: nextType });
           }}
         >
           <option value="single">Einzelbuchung ganzer Tag</option>
-          <option value="range">Zeitraum (Von–Bis)</option>
           <option value="recurring">Serienbuchung</option>
         </select>
       </div>
 
       {values.type === 'single' && (
         <div className="stack-xs">
-          <label>Datum</label>
-          <input type="date" value={values.date} readOnly disabled />
+          <label htmlFor="booking-date">Datum</label>
+          <input id="booking-date" type="date" value={values.date} disabled={disabled} onChange={(event) => onChange({ ...values, date: event.target.value })} />
+          {fieldErrors.date && <p className="field-error" role="alert">{fieldErrors.date}</p>}
         </div>
-      )}
-
-      {values.type === 'range' && (
-        <>
-          <div className="inline-grid-two">
-            <div className="stack-xs">
-              <label>Von</label>
-              <input type="date" value={values.dateFrom} autoFocus disabled={disabled} onChange={(event) => onChange({ ...values, dateFrom: event.target.value })} />
-            </div>
-            <div className="stack-xs">
-              <label>Bis</label>
-              <input type="date" value={values.dateTo} disabled={disabled} onChange={(event) => onChange({ ...values, dateTo: event.target.value })} />
-            </div>
-          </div>
-          <label className="checkbox-label">
-            <input
-              type="checkbox"
-              checked={values.onlyWeekdays}
-              disabled={disabled}
-              onChange={(event) => onChange({ ...values, onlyWeekdays: event.target.checked })}
-            />
-            Nur Werktage (Mo–Fr)
-          </label>
-        </>
       )}
 
       {values.type === 'recurring' && (
         <>
-          <div className="inline-grid-two">
-            <div className="stack-xs">
-              <label>Start</label>
-              <input type="date" value={values.dateFrom} autoFocus disabled={disabled} onChange={(event) => onChange({ ...values, dateFrom: event.target.value })} />
+          <div className="stack-xs">
+              <label htmlFor="booking-date-from">Startdatum</label>
+              <input id="booking-date-from" type="date" value={values.dateFrom} disabled={disabled} onChange={(event) => onChange({ ...values, dateFrom: event.target.value })} />
+              {fieldErrors.dateFrom && <p className="field-error" role="alert">{fieldErrors.dateFrom}</p>}
             </div>
             <div className="stack-xs">
-              <label>Ende</label>
-              <input type="date" value={values.dateTo} disabled={disabled} onChange={(event) => onChange({ ...values, dateTo: event.target.value })} />
+              <label htmlFor="booking-date-to">Enddatum</label>
+              <input id="booking-date-to" type="date" value={values.dateTo} disabled={disabled} onChange={(event) => onChange({ ...values, dateTo: event.target.value })} />
+              {fieldErrors.dateTo && <p className="field-error" role="alert">{fieldErrors.dateTo}</p>}
             </div>
-          </div>
           <div className="stack-xs">
             <label>Wochentage</label>
             <div className="weekday-toggle-group" role="group" aria-label="Wochentage">
@@ -157,15 +167,18 @@ export function BookingForm({ values, onChange, onSubmit, onCancel, isSubmitting
                 </button>
               ))}
             </div>
+            {fieldErrors.weekdays && <p className="field-error" role="alert">{fieldErrors.weekdays}</p>}
           </div>
         </>
       )}
 
       {(errorMessage || localError) && <div className="error-banner" role="alert">{errorMessage || localError}</div>}
 
-      <div className="inline-between">
-        <button type="button" className="btn btn-outline" onClick={onCancel} disabled={disabled}>Abbrechen</button>
-        <button className="btn" type="submit" disabled={disabled || isSubmitting}>{isSubmitting ? 'Buchen…' : 'Buchen'}</button>
+      <div className="desk-booking-form-footer">
+        <button type="button" className="btn btn-outline" onClick={onCancel} disabled={disabled || isSubmitting}>Abbrechen</button>
+        <button className="btn" type="submit" disabled={disabled || isSubmitting || isFormInvalid}>
+          {isSubmitting ? <><span className="btn-spinner" aria-hidden />Buchen…</> : 'Buchen'}
+        </button>
       </div>
     </form>
   );
