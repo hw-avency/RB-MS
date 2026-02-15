@@ -579,7 +579,7 @@ const hashPassword = async (value: string): Promise<string> => bcrypt.hash(value
 
 type BookingTx = Prisma.TransactionClient;
 type BookingIdentity = { normalizedEmail: string; userKey: string; entraOid: string | null; emailAliases: string[] };
-type BookingWithDeskName = Prisma.BookingGetPayload<{ include: { desk: { select: { name: true } } } }>;
+type BookingWithDeskContext = Prisma.BookingGetPayload<{ include: { desk: { select: { name: true; kind: true } } } }>;
 
 const bookingUserKeyForDate = (userKey: string, date: Date): string => `booking:user:${userKey}:date:${toISODateOnly(date)}`;
 const bookingDeskKeyForDate = (deskId: string, date: Date): string => `booking:desk:${deskId}:date:${toISODateOnly(date)}`;
@@ -604,17 +604,18 @@ const findBookingIdentity = async (userEmail: string): Promise<BookingIdentity> 
   };
 };
 
-const buildUserBookingWhere = (identity: BookingIdentity, date: Date): Prisma.BookingWhereInput => {
+const buildUserBookingWhere = (identity: BookingIdentity, date: Date, targetKind?: ResourceKind): Prisma.BookingWhereInput => {
   return {
     date,
-    userEmail: { in: identity.emailAliases }
+    userEmail: { in: identity.emailAliases },
+    ...(targetKind ? { desk: { kind: targetKind } } : {})
   };
 };
 
-const dedupeAndPickActiveBooking = async (tx: BookingTx, where: Prisma.BookingWhereInput): Promise<BookingWithDeskName | null> => {
+const dedupeAndPickActiveBooking = async (tx: BookingTx, where: Prisma.BookingWhereInput): Promise<BookingWithDeskContext | null> => {
   const matches = await tx.booking.findMany({
     where,
-    include: { desk: { select: { name: true } } },
+    include: { desk: { select: { name: true, kind: true } } },
     orderBy: [{ createdAt: 'desc' }, { id: 'desc' }]
   });
 
@@ -627,10 +628,10 @@ const dedupeAndPickActiveBooking = async (tx: BookingTx, where: Prisma.BookingWh
   return keep;
 };
 
-const findDuplicateUserDateGroups = (bookings: Array<{ id: string; userEmail: string; date: Date }>) => {
+const findDuplicateUserDateGroups = (bookings: Array<{ id: string; userEmail: string; date: Date; desk: { kind: ResourceKind } }>) => {
   const counts = new Map<string, number>();
   for (const booking of bookings) {
-    const key = `${normalizeEmail(booking.userEmail)}|${toISODateOnly(booking.date)}`;
+    const key = `${normalizeEmail(booking.userEmail)}|${toISODateOnly(booking.date)}|${booking.desk.kind}`;
     counts.set(key, (counts.get(key) ?? 0) + 1);
   }
   return Array.from(counts.entries()).filter(([, count]) => count > 1);
@@ -802,7 +803,7 @@ const getActiveEmployeesByEmail = async (emails: string[]) => {
 
 const getDeskContext = async (deskId: string) => prisma.desk.findUnique({
   where: { id: deskId },
-  select: { id: true, name: true, floorplanId: true }
+  select: { id: true, name: true, floorplanId: true, kind: true }
 });
 
 
@@ -1666,13 +1667,14 @@ app.post('/bookings', async (req, res) => {
     await acquireBookingLock(tx, bookingUserKeyForDate(identity.userKey, parsedDate));
     await acquireBookingLock(tx, bookingDeskKeyForDate(deskId, parsedDate));
 
-    const existingUserBooking = await dedupeAndPickActiveBooking(tx, buildUserBookingWhere(identity, parsedDate));
+    const existingUserBooking = await dedupeAndPickActiveBooking(tx, buildUserBookingWhere(identity, parsedDate, desk.kind));
 
     if (existingUserBooking && existingUserBooking.deskId !== deskId && !shouldReplaceExisting) {
       return {
         kind: 'conflict' as const,
-        message: 'User already has a booking for this date',
+        message: 'User already has a booking for this date and resource kind',
         details: {
+          conflictKind: desk.kind,
           existingBooking: {
             id: existingUserBooking.id,
             deskId: existingUserBooking.deskId,
@@ -1712,6 +1714,42 @@ app.post('/bookings', async (req, res) => {
     if (existingUserBooking) {
       if (existingUserBooking.deskId === deskId && existingUserBooking.userEmail === identity.normalizedEmail) {
         return { kind: 'ok' as const, status: 200, booking: existingUserBooking };
+      }
+
+      if (existingUserBooking.desk.kind !== desk.kind) {
+        return {
+          kind: 'conflict' as const,
+          message: 'Overwrite is only allowed for matching resource kinds',
+          details: {
+            code: 'OVERWRITE_KIND_MISMATCH',
+            conflictKind: existingUserBooking.desk.kind,
+            requestedKind: desk.kind,
+            date
+          }
+        };
+      }
+
+      const conflictingSameKindBookings = await tx.booking.findMany({
+        where: {
+          id: { not: existingUserBooking.id },
+          date: parsedDate,
+          userEmail: { in: identity.emailAliases },
+          desk: { kind: desk.kind }
+        },
+        select: { id: true }
+      });
+
+      if (conflictingSameKindBookings.length > 0) {
+        return {
+          kind: 'conflict' as const,
+          message: 'Multiple same-kind bookings found for user and date',
+          details: {
+            code: 'MULTIPLE_KIND_CONFLICTS',
+            date,
+            conflictKind: desk.kind,
+            conflictBookingIds: [existingUserBooking.id, ...conflictingSameKindBookings.map((booking) => booking.id)]
+          }
+        };
       }
 
       const updated = await tx.booking.update({
@@ -1860,6 +1898,12 @@ app.post('/bookings/check-conflicts', async (req, res) => {
     }
   }
 
+  const desk = await getDeskContext(deskId);
+  if (!desk) {
+    res.status(404).json({ error: 'not_found', message: 'Desk not found' });
+    return;
+  }
+
   const targetDates = datesInRange(parsedStart, parsedEnd).filter((date) => {
     if (type === 'single') {
       return toISODateOnly(date) === toISODateOnly(parsedStart);
@@ -1873,40 +1917,41 @@ app.post('/bookings/check-conflicts', async (req, res) => {
   });
 
   if (targetDates.length === 0) {
-    res.status(200).json({ hasConflicts: false, conflictDates: [] });
+    res.status(200).json({ hasConflicts: false, conflictDates: [], conflictBookingIds: [], conflictResourceLabels: [] });
     return;
   }
 
   const identity = await findBookingIdentity(userEmail);
-  const existingUserBookings = await prisma.booking.findMany({
+  const conflicts = await prisma.booking.findMany({
     where: {
       date: { in: targetDates },
-      userEmail: { in: identity.emailAliases }
+      userEmail: { in: identity.emailAliases },
+      desk: { kind: desk.kind }
     },
+    include: { desk: { select: { name: true, kind: true } } },
     orderBy: [{ date: 'asc' }, { createdAt: 'desc' }, { id: 'desc' }]
   });
 
-  const existingByDate = new Map<string, string>();
-  for (const booking of existingUserBookings) {
-    const key = toISODateOnly(booking.date);
-    if (!existingByDate.has(key)) {
-      existingByDate.set(key, booking.id);
+  const uniqueByDate = new Map<string, { id: string; deskName: string }>();
+  for (const booking of conflicts) {
+    const dateKey = toISODateOnly(booking.date);
+    if (!uniqueByDate.has(dateKey)) {
+      uniqueByDate.set(dateKey, { id: booking.id, deskName: booking.desk?.name ?? booking.deskId });
     }
   }
 
-  const conflicts = await prisma.booking.findMany({
-    where: {
-      deskId,
-      date: { in: targetDates },
-      id: { notIn: Array.from(existingByDate.values()) },
-      userEmail: { notIn: identity.emailAliases }
-    },
-    select: { date: true },
-    orderBy: { date: 'asc' }
-  });
+  const conflictDates = Array.from(uniqueByDate.keys());
+  const conflictBookingIds = Array.from(uniqueByDate.values()).map((value) => value.id);
+  const conflictResourceLabels = Array.from(uniqueByDate.values()).map((value) => value.deskName);
 
-  const conflictDates = conflicts.map((booking) => toISODateOnly(booking.date));
-  res.status(200).json({ hasConflicts: conflictDates.length > 0, conflictDates, userId });
+  res.status(200).json({
+    hasConflicts: conflictDates.length > 0,
+    conflictDates,
+    conflictBookingIds,
+    conflictResourceLabels,
+    conflictKind: desk.kind,
+    userId
+  });
 });
 
 app.post('/bookings/range', async (req, res) => {
@@ -1937,7 +1982,7 @@ app.post('/bookings/range', async (req, res) => {
     return;
   }
 
-  const desk = await prisma.desk.findUnique({ where: { id: deskId }, select: { id: true, name: true } });
+  const desk = await prisma.desk.findUnique({ where: { id: deskId }, select: { id: true, name: true, kind: true } });
   if (!desk) {
     res.status(404).json({ error: 'not_found', message: 'Desk not found' });
     return;
@@ -1974,13 +2019,14 @@ app.post('/bookings/range', async (req, res) => {
     const existingUserBookings = await tx.booking.findMany({
       where: {
         date: { in: targetDates },
-        userEmail: { in: identity.emailAliases }
+        userEmail: { in: identity.emailAliases },
+        desk: { kind: desk.kind }
       },
-      include: { desk: { select: { name: true } } },
+      include: { desk: { select: { name: true, kind: true } } },
       orderBy: [{ date: 'asc' }, { createdAt: 'desc' }, { id: 'desc' }]
     });
 
-    const existingByDate = new Map<string, BookingWithDeskName>();
+    const existingByDate = new Map<string, BookingWithDeskContext>();
     const duplicateIdsToDelete: string[] = [];
     for (const booking of existingUserBookings) {
       const key = toISODateOnly(booking.date);
@@ -2127,7 +2173,8 @@ app.get('/bookings', async (req, res) => {
       deskId: true,
       userEmail: true,
       date: true,
-      createdAt: true
+      createdAt: true,
+      desk: { select: { kind: true } }
     },
     orderBy: [{ date: 'asc' }, { createdAt: 'asc' }]
   });
@@ -2141,7 +2188,11 @@ app.get('/bookings', async (req, res) => {
 
   const employeesByEmail = await getActiveEmployeesByEmail(bookings.map((booking) => booking.userEmail));
   const enrichedBookings = bookings.map((booking) => ({
-    ...booking,
+    id: booking.id,
+    deskId: booking.deskId,
+    userEmail: booking.userEmail,
+    date: booking.date,
+    createdAt: booking.createdAt,
     employeeId: employeesByEmail.get(normalizeEmail(booking.userEmail))?.id,
     userDisplayName: employeesByEmail.get(normalizeEmail(booking.userEmail))?.displayName,
     userPhotoUrl: employeesByEmail.get(normalizeEmail(booking.userEmail))?.photoUrl ?? undefined
@@ -2303,7 +2354,7 @@ app.post('/recurring-bookings', async (req, res) => {
     let createdCount = 0;
     let updatedCount = 0;
     for (const targetDate of targetDates) {
-      const existingUserBooking = await dedupeAndPickActiveBooking(tx, buildUserBookingWhere(identity, targetDate));
+      const existingUserBooking = await dedupeAndPickActiveBooking(tx, buildUserBookingWhere(identity, targetDate, desk.kind));
       const existingDeskBooking = await tx.booking.findUnique({ where: { deskId_date: { deskId, date: targetDate } } });
 
       if (existingUserBooking) {
@@ -2392,7 +2443,7 @@ app.post('/recurring-bookings/bulk', async (req, res) => {
     return;
   }
 
-  const desk = await prisma.desk.findUnique({ where: { id: deskId }, select: { id: true } });
+  const desk = await prisma.desk.findUnique({ where: { id: deskId }, select: { id: true, kind: true } });
   if (!desk) {
     res.status(404).json({ error: 'not_found', message: 'Desk not found' });
     return;
@@ -2414,13 +2465,14 @@ app.post('/recurring-bookings/bulk', async (req, res) => {
     const bookingsForTargets = await tx.booking.findMany({
       where: {
         date: { in: targetDates },
-        userEmail: { in: identity.emailAliases }
+        userEmail: { in: identity.emailAliases },
+        desk: { kind: desk.kind }
       },
-      include: { desk: { select: { name: true } } },
+      include: { desk: { select: { name: true, kind: true } } },
       orderBy: [{ date: 'asc' }, { createdAt: 'desc' }, { id: 'desc' }]
     });
 
-    const existingByDate = new Map<string, BookingWithDeskName>();
+    const existingByDate = new Map<string, BookingWithDeskContext>();
     const duplicateIdsToDelete: string[] = [];
     for (const booking of bookingsForTargets) {
       const key = toISODateOnly(booking.date);
@@ -2809,6 +2861,7 @@ app.get('/admin/bookings', requireAdmin, async (req, res) => {
 
   const bookings = await prisma.booking.findMany({
     where,
+    include: { desk: { select: { kind: true } } },
     orderBy: [{ date: 'asc' }, { createdAt: 'asc' }]
   });
 
@@ -2821,7 +2874,11 @@ app.get('/admin/bookings', requireAdmin, async (req, res) => {
 
   const employeesByEmail = await getActiveEmployeesByEmail(bookings.map((booking) => booking.userEmail));
   const enrichedBookings = bookings.map((booking) => ({
-    ...booking,
+    id: booking.id,
+    deskId: booking.deskId,
+    userEmail: booking.userEmail,
+    date: booking.date,
+    createdAt: booking.createdAt,
     employeeId: employeesByEmail.get(normalizeEmail(booking.userEmail))?.id,
     userDisplayName: employeesByEmail.get(normalizeEmail(booking.userEmail))?.displayName
   }));
@@ -2843,7 +2900,7 @@ app.delete('/admin/bookings', requireAdmin, async (req, res) => {
 app.post('/admin/bookings/cleanup-duplicates', requireAdmin, async (_req, res) => {
   const result = await prisma.$transaction(async (tx) => {
     const bookings = await tx.booking.findMany({
-      select: { id: true, userEmail: true, date: true, createdAt: true },
+      select: { id: true, userEmail: true, date: true, createdAt: true, desk: { select: { kind: true } } },
       orderBy: [{ date: 'asc' }, { createdAt: 'desc' }, { id: 'desc' }]
     });
 
@@ -2858,7 +2915,7 @@ app.post('/admin/bookings/cleanup-duplicates', requireAdmin, async (_req, res) =
 
     for (const booking of bookings) {
       const normalizedEmail = normalizeEmail(booking.userEmail);
-      const key = `${entraByEmail.get(normalizedEmail) ?? normalizedEmail}|${toISODateOnly(booking.date)}`;
+      const key = `${entraByEmail.get(normalizedEmail) ?? normalizedEmail}|${toISODateOnly(booking.date)}|${booking.desk.kind}`;
       if (!keepByKey.has(key)) {
         keepByKey.set(key, booking.id);
       } else {
@@ -2952,13 +3009,15 @@ app.patch('/admin/bookings/:id', requireAdmin, async (req, res) => {
     where: {
       id: { not: existing.id },
       userEmail: nextUserEmail,
-      date: nextDate
+      date: nextDate,
+      desk: { kind: nextDesk.kind }
     },
     include: { desk: { select: { id: true, name: true } } }
   });
 
   if (userDateConflict) {
-    sendConflict(res, 'User already has a booking for this date', {
+    sendConflict(res, 'User already has a booking for this date and resource kind', {
+      conflictKind: nextDesk.kind,
       existingBooking: {
         id: userDateConflict.id,
         deskId: userDateConflict.deskId,
