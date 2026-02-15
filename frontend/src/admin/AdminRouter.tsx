@@ -4,6 +4,7 @@ import { del, get, patch, post, resolveApiUrl } from '../api';
 import { Avatar } from '../components/Avatar';
 import { UserMenu } from '../components/UserMenu';
 import { FloorplanCanvas } from '../FloorplanCanvas';
+import { useToast } from '../components/toast';
 
 type Floorplan = { id: string; name: string; imageUrl: string; createdAt?: string; updatedAt?: string };
 type Desk = { id: string; floorplanId: string; name: string; x: number; y: number; createdAt?: string; updatedAt?: string };
@@ -11,7 +12,6 @@ type Employee = { id: string; email: string; displayName: string; role: 'admin' 
 type Booking = { id: string; deskId: string; userEmail: string; userDisplayName?: string; employeeId?: string; date: string; createdAt?: string; updatedAt?: string };
 type DbColumn = { name: string; type: string; required: boolean; id: boolean; hasDefaultValue: boolean };
 type DbTable = { name: string; model: string; columns: DbColumn[] };
-type Toast = { id: number; tone: 'success' | 'error'; message: string };
 type RouteProps = { path: string; navigate: (to: string) => void; onRoleStateChanged: () => Promise<void>; onLogout: () => Promise<void>; currentUser?: AdminSession | null };
 type AdminSession = { id?: string; email: string; name?: string; displayName?: string; role: 'admin' | 'user'; isActive?: boolean };
 type DataState = { loading: boolean; error: string; ready: boolean };
@@ -53,20 +53,6 @@ const formatCellValue = (columnName: string, value: unknown) => {
   if (typeof value === 'object') return JSON.stringify(value);
   return String(value);
 };
-
-function useToasts() {
-  const [toasts, setToasts] = useState<Toast[]>([]);
-  const push = (tone: Toast['tone'], message: string) => {
-    const id = Date.now() + Math.floor(Math.random() * 1000);
-    setToasts((current) => [...current, { id, tone, message }]);
-    window.setTimeout(() => setToasts((current) => current.filter((toast) => toast.id !== id)), 3200);
-  };
-  return { toasts, success: (message: string) => push('success', message), error: (message: string) => push('error', message) };
-}
-
-function ToastViewport({ toasts }: { toasts: Toast[] }) {
-  return <div className="toast-stack" aria-live="polite">{toasts.map((toast) => <div key={toast.id} className={`toast toast-${toast.tone}`}>{toast.message}</div>)}</div>;
-}
 
 function Badge({ children, tone = 'default' }: { children: ReactNode; tone?: 'default' | 'ok' | 'warn' }) {
   return <span className={`admin-badge admin-badge-${tone}`}>{children}</span>;
@@ -421,7 +407,7 @@ function DashboardPage({ path, navigate, onLogout, currentUser }: RouteProps) {
 }
 
 function FloorplansPage({ path, navigate, onLogout, currentUser }: RouteProps) {
-  const toasts = useToasts();
+  const toasts = useToast();
   const [state, setState] = useState<DataState>({ loading: true, error: '', ready: false });
   const [floorplans, setFloorplans] = useState<Floorplan[]>([]);
   const [query, setQuery] = useState('');
@@ -460,7 +446,6 @@ function FloorplansPage({ path, navigate, onLogout, currentUser }: RouteProps) {
       </section>
       {(showCreate || editing) && <FloorplanEditor floorplan={editing} onClose={() => { setShowCreate(false); setEditing(null); navigate('/admin/floorplans'); }} onSaved={async () => { setShowCreate(false); setEditing(null); toasts.success('Floorplan gespeichert'); await load(); }} onError={toasts.error} />}
       {pendingDelete && <ConfirmDialog title="Floorplan löschen?" description={`"${pendingDelete.name}" wird dauerhaft entfernt.`} onCancel={() => setPendingDelete(null)} onConfirm={async () => { await del(`/admin/floorplans/${pendingDelete.id}`); setPendingDelete(null); toasts.success('Floorplan gelöscht'); await load(); }} />}
-      <ToastViewport toasts={toasts.toasts} />
     </AdminLayout>
   );
 }
@@ -620,7 +605,7 @@ const formatDateTimeShort = (value?: string) => {
 };
 
 function DesksPage({ path, navigate, onLogout, currentUser }: RouteProps) {
-  const toasts = useToasts();
+  const toasts = useToast();
   const [state, setState] = useState<DataState>({ loading: true, error: '', ready: false });
   const [floorplans, setFloorplans] = useState<Floorplan[]>([]);
   const [floorplanId, setFloorplanId] = useState('');
@@ -995,13 +980,12 @@ function DesksPage({ path, navigate, onLogout, currentUser }: RouteProps) {
           confirmVariant="primary"
         />
       )}
-      <ToastViewport toasts={toasts.toasts} />
     </AdminLayout>
   );
 }
 
 function BookingsPage({ path, navigate, onLogout, currentUser }: RouteProps) {
-  const toasts = useToasts();
+  const toasts = useToast();
   const [state, setState] = useState<DataState>({ loading: true, error: '', ready: false });
   const [bookings, setBookings] = useState<Booking[]>([]);
   const [floorplans, setFloorplans] = useState<Floorplan[]>([]);
@@ -1089,7 +1073,6 @@ function BookingsPage({ path, navigate, onLogout, currentUser }: RouteProps) {
     {(creating || editing) && <BookingEditor booking={editing} desks={desks} employees={employees} floorplans={floorplans} onClose={() => { setCreating(false); setEditing(null); navigate('/admin/bookings'); }} onSaved={async (m) => { toasts.success(m); setCreating(false); setEditing(null); await load(); }} onError={toasts.error} />}
     {deleteBooking && <ConfirmDialog title="Buchung löschen?" description="Die ausgewählte Buchung wird entfernt." onCancel={() => setDeleteBooking(null)} onConfirm={async () => { await del(`/admin/bookings/${deleteBooking.id}`); setDeleteBooking(null); toasts.success('Buchung gelöscht'); await load(); }} />}
     {bulkDeleteOpen && <ConfirmDialog title={`${selectedBookingIds.length} Einträge löschen?`} description="Dieser Vorgang ist irreversibel." onCancel={() => setBulkDeleteOpen(false)} onConfirm={() => void runBulkDelete()} confirmDisabled={isBulkDeleting} confirmLabel={isBulkDeleting ? 'Lösche…' : 'Löschen'} />}
-    <ToastViewport toasts={toasts.toasts} />
   </AdminLayout>;
 }
 
@@ -1126,7 +1109,7 @@ function BookingEditor({ booking, desks, employees, floorplans, onClose, onSaved
 }
 
 function EmployeesPage({ path, navigate, onRoleStateChanged, onLogout, currentAdminEmail, currentUser }: RouteProps & { currentAdminEmail: string }) {
-  const toasts = useToasts();
+  const toasts = useToast();
   const [state, setState] = useState<DataState>({ loading: true, error: '', ready: false });
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [query, setQuery] = useState('');
@@ -1188,14 +1171,13 @@ function EmployeesPage({ path, navigate, onRoleStateChanged, onLogout, currentAd
       </section>
       {(creating || editing) && <EmployeeEditor employee={editing} onClose={() => { setCreating(false); setEditing(null); navigate('/admin/employees'); }} onSaved={async () => { setCreating(false); setEditing(null); toasts.success('Mitarbeiter gespeichert'); await load(); await onRoleStateChanged(); }} onError={toasts.error} />}
       {pendingDeactivate && <ConfirmDialog title="Mitarbeiter deaktivieren?" description={`${pendingDeactivate.displayName} wird auf inaktiv gesetzt.`} onCancel={() => setPendingDeactivate(null)} onConfirm={async () => { await patch(`/admin/employees/${pendingDeactivate.id}`, { isActive: false }); setPendingDeactivate(null); toasts.success('Mitarbeiter deaktiviert'); await load(); }} />}
-      <ToastViewport toasts={toasts.toasts} />
     </AdminLayout>
   );
 }
 
 
 function DbAdminPage({ path, navigate, onLogout, currentUser }: RouteProps) {
-  const toasts = useToasts();
+  const toasts = useToast();
   const [tables, setTables] = useState<DbTable[]>([]);
   const [tableName, setTableName] = useState('');
   const [rows, setRows] = useState<Record<string, unknown>[]>([]);
@@ -1417,7 +1399,6 @@ function DbAdminPage({ path, navigate, onLogout, currentUser }: RouteProps) {
       {deleteTarget && selectedTable && typeof deleteTarget.id === 'string' && <ConfirmDialog title="Datensatz löschen?" description={`ID: ${String(deleteTarget.id)}${deleteTarget['userEmail'] ? ` · ${String(deleteTarget['userEmail'])}` : ''}`} onCancel={() => setDeleteTarget(null)} onConfirm={async () => { await removeRow(String(deleteTarget.id)); setDeleteTarget(null); }} />}
       {detailRow && <div className="overlay"><section className="card dialog stack-sm"><h3>Details</h3><pre className="db-detail-pre">{JSON.stringify(detailRow, null, 2)}</pre><div className="inline-end"><button className="btn btn-outline" onClick={() => setDetailRow(null)}>Schließen</button></div></section></div>}
       {clearTableOpen && selectedTable && <div className="overlay"><section className="card dialog stack-sm" role="dialog" aria-modal="true"><h3>Tabelle wirklich leeren?</h3><p className="muted">Alle Datensätze in "{selectedTable.model}" werden dauerhaft gelöscht. Zum Bestätigen bitte <strong>DELETE</strong> eingeben.</p><input value={clearConfirmInput} onChange={(event) => setClearConfirmInput(event.target.value)} placeholder="DELETE" /><div className="inline-end"><button className="btn btn-outline" disabled={clearingTable} onClick={() => { setClearTableOpen(false); setClearConfirmInput(''); }}>Abbrechen</button><button className="btn btn-danger" disabled={clearingTable || clearConfirmInput !== 'DELETE'} onClick={() => void clearTable()}>{clearingTable ? 'Lösche…' : 'Tabelle leeren'}</button></div></section></div>}
-      <ToastViewport toasts={toasts.toasts} />
     </AdminLayout>
   );
 }

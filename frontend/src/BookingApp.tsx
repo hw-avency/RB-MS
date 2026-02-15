@@ -8,6 +8,7 @@ import { UserMenu } from './components/UserMenu';
 import { FloorplanCanvas } from './FloorplanCanvas';
 import { APP_TITLE } from './config';
 import type { AuthUser } from './auth/AuthProvider';
+import { useToast } from './components/toast';
 
 type Floorplan = { id: string; name: string; imageUrl: string };
 type OccupancyDesk = {
@@ -225,16 +226,14 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
 
   const [isBootstrapping, setIsBootstrapping] = useState(true);
   const [isUpdatingOccupancy, setIsUpdatingOccupancy] = useState(false);
-  const [errorMessage, setErrorMessage] = useState('');
-  const [toastMessage, setToastMessage] = useState('');
   const [backendDown, setBackendDown] = useState(false);
+  const toast = useToast();
 
   const [deskPopup, setDeskPopup] = useState<DeskPopupState | null>(null);
   const [bookingDialogState, setBookingDialogState] = useState<BookingDialogState>('IDLE');
   const [bookingFormValues, setBookingFormValues] = useState<BookingFormValues>(createDefaultBookingFormValues(today));
   const [dialogErrorMessage, setDialogErrorMessage] = useState('');
   const [rebookConfirm, setRebookConfirm] = useState<RebookConfirmState | null>(null);
-  const [rebookErrorMessage, setRebookErrorMessage] = useState('');
   const [isRebooking, setIsRebooking] = useState(false);
   const [cancelConfirmOpen, setCancelConfirmOpen] = useState(false);
 
@@ -274,7 +273,6 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
     if (!floorplanId) return;
 
     setIsUpdatingOccupancy(true);
-    setErrorMessage('');
 
     try {
       const [nextOccupancy, nextTodayOccupancy] = await Promise.all([
@@ -291,7 +289,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
       if (error instanceof ApiError && error.code === 'BACKEND_UNREACHABLE') {
         setBackendDown(true);
       }
-      setErrorMessage(getApiErrorMessage(error, 'Belegung konnte nicht geladen werden.'));
+      toast.error(getApiErrorMessage(error, 'Belegung konnte nicht geladen werden.'));
       setTodayOccupancy(null);
     } finally {
       setIsUpdatingOccupancy(false);
@@ -300,7 +298,6 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
 
   const loadInitial = async () => {
     setIsBootstrapping(true);
-    setErrorMessage('');
 
     const healthy = await checkBackendHealth();
     if (!healthy) {
@@ -320,7 +317,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
       if (error instanceof ApiError && error.code === 'BACKEND_UNREACHABLE') {
         setBackendDown(true);
       }
-      setErrorMessage(getApiErrorMessage(error, 'Daten konnten nicht geladen werden.'));
+      toast.error(getApiErrorMessage(error, 'Daten konnten nicht geladen werden.'));
     } finally {
       setIsBootstrapping(false);
     }
@@ -336,11 +333,6 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
     }
   }, [selectedFloorplanId, selectedDate, backendDown]);
 
-  useEffect(() => {
-    if (!toastMessage) return;
-    const timer = window.setTimeout(() => setToastMessage(''), 3500);
-    return () => window.clearTimeout(timer);
-  }, [toastMessage]);
 
   useEffect(() => {
     return () => {
@@ -433,7 +425,6 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
     triggerDeskHighlight(deskId);
     setDeskPopup({ deskId, anchorEl });
     setRebookConfirm(null);
-    setRebookErrorMessage('');
     setIsRebooking(false);
     setCancelConfirmOpen(false);
     setDialogErrorMessage('');
@@ -459,7 +450,6 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
     setRebookConfirm(null);
     setBookingDialogState('IDLE');
     setDialogErrorMessage('');
-    setRebookErrorMessage('');
     setIsRebooking(false);
     setDeskPopupCoords(null);
     setCancelConfirmOpen(false);
@@ -472,7 +462,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
 
     if (payload.type === 'single') {
       await post('/bookings', { deskId, userEmail: selectedEmployeeEmail, date: payload.date, replaceExisting: overwrite });
-      setToastMessage(overwrite ? 'Umbuchung durchgeführt.' : 'Gebucht');
+      toast.success(overwrite ? 'Umbuchung durchgeführt.' : 'Gebucht');
       return;
     }
 
@@ -486,7 +476,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
         overrideExisting: overwrite
       });
 
-      setToastMessage(overwrite
+      toast.success(overwrite
         ? `${response.createdCount ?? 0} Tage gebucht, ${response.updatedCount ?? 0} Tage umgebucht.`
         : 'Gebucht');
       return;
@@ -501,7 +491,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
       overrideExisting: overwrite
     });
 
-    setToastMessage(overwrite
+    toast.success(overwrite
       ? `${response.createdCount ?? 0} Tage gebucht, ${response.updatedCount ?? 0} Tage umgebucht.`
       : 'Gebucht');
   };
@@ -531,7 +521,6 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
         setDeskPopupCoords(null);
         setBookingDialogState('CONFLICT_REVIEW');
         setDialogErrorMessage('');
-        setRebookErrorMessage('');
         setIsRebooking(false);
         setRebookConfirm({
           deskId: popupDesk.id,
@@ -552,7 +541,6 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
   const confirmRebook = async () => {
     if (!rebookConfirm) return;
 
-    setRebookErrorMessage('');
     setIsRebooking(true);
 
     try {
@@ -565,19 +553,18 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
       if (error instanceof ApiError && error.code === 'BACKEND_UNREACHABLE') {
         setBackendDown(true);
         setIsRebooking(false);
-        setRebookErrorMessage('Umbuchen fehlgeschlagen. Bitte erneut versuchen.');
+        toast.error('Umbuchen fehlgeschlagen. Bitte erneut versuchen.');
         return;
       }
 
       setIsRebooking(false);
-      setRebookErrorMessage('Umbuchen fehlgeschlagen. Bitte erneut versuchen.');
+      toast.error('Umbuchen fehlgeschlagen. Bitte erneut versuchen.');
     }
   };
 
   const cancelRebook = () => {
     if (!rebookConfirm) return;
 
-    setRebookErrorMessage('');
     setIsRebooking(false);
     setDeskPopup({ deskId: rebookConfirm.deskId, anchorEl: rebookConfirm.anchorEl });
     setBookingDialogState('BOOKING_OPEN');
@@ -587,7 +574,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
   const submitPopupCancel = async () => {
     if (!popupDesk || !popupDeskState || popupDeskState !== 'MINE') return;
     if (popupDesk.booking?.type === 'recurring') {
-      setErrorMessage('Serienbuchungen können aktuell nur im Admin-Modus storniert werden.');
+      toast.error('Serienbuchungen können aktuell nur im Admin-Modus storniert werden.');
       return;
     }
 
@@ -598,12 +585,11 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
       }
 
       await del(`/bookings/${bookingId}`);
-      setToastMessage('Buchung storniert.');
-      setErrorMessage('');
+      toast.success('Buchung storniert.');
       closeBookingFlow();
       await reloadBookings();
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : 'Stornierung fehlgeschlagen.');
+      toast.error(error instanceof Error ? error.message : 'Stornierung fehlgeschlagen.');
     }
   };
 
@@ -621,7 +607,6 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
     }
 
     setBackendDown(false);
-    setErrorMessage('');
     await loadInitial();
   };
 
@@ -772,8 +757,6 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
         </div>
       </header>
 
-      {errorMessage && <div className="inline-alert">{errorMessage} <button className="btn btn-ghost" onClick={reloadBookings}>Retry</button></div>}
-      {toastMessage && <div className="toast toast-success">{toastMessage}</div>}
 
       {isBootstrapping ? <div className="card skeleton h-120" /> : todayPanel}
 
@@ -890,7 +873,6 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
             <h3 id="rebook-title">Bestehende Buchung gefunden</h3>
             <p className="muted">Du hast am {formatDate(rebookConfirm.date)} bereits eine Buchung. Soll diese auf Tisch {rebookConfirm.deskLabel} umgebucht werden?</p>
             {rebookConfirm.existingDeskLabel && <p className="muted">Aktueller Tisch: {rebookConfirm.existingDeskLabel}</p>}
-            {rebookErrorMessage && <div className="error-banner" role="alert">{rebookErrorMessage}</div>}
             <div className="inline-end">
               <button type="button" className="btn btn-outline" onClick={cancelRebook} disabled={isRebooking}>Abbrechen</button>
               <button type="button" className="btn btn-danger" onClick={() => void confirmRebook()} disabled={isRebooking}>

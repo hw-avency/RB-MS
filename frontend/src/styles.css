@@ -164,7 +164,11 @@ tr{cursor:pointer}.row-selected{background:hsl(var(--muted))}
 .checkbox-label{display:flex;align-items:center;gap:8px;font-size:14px}
 .sheet{position:fixed;left:16px;top:16px;bottom:16px;width:min(360px,calc(100% - 32px));overflow:auto}.sheet-right{left:auto;right:16px}
 
-.toast{border-radius:12px;padding:10px 12px;font-size:14px;font-weight:500}.toast-error{background:#fee2e2;color:#991b1b}.toast-success{background:#dcfce7;color:#166534}
+.toast-viewport{position:fixed;top:16px;right:16px;z-index:220;display:grid;gap:8px;max-width:min(380px,calc(100vw - 32px));pointer-events:none}
+.toast{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;border-radius:12px;padding:10px 12px;font-size:14px;box-shadow:0 12px 24px rgba(15,23,42,.16);border:1px solid transparent;pointer-events:auto}
+.toast-content{display:grid;gap:2px}.toast-content strong{font-size:14px;line-height:1.3}.toast-content p{margin:0;font-size:13px;line-height:1.3}
+.toast-success{background:#dcfce7;color:#166534;border-color:#86efac}.toast-destructive{background:#fee2e2;color:#991b1b;border-color:#fca5a5}
+.toast-close{border:0;background:transparent;color:inherit;cursor:pointer;padding:0 2px;font-size:14px;line-height:1}
 .error-inline{color:#b91c1c;font-size:13px;margin:0}
 .api-base{margin:0;color:hsl(var(--muted-foreground));font-size:12px}
 .mobile-only{display:none}
@@ -266,7 +270,6 @@ tr{cursor:pointer}.row-selected{background:hsl(var(--muted))}
 .admin-badge-ok{background:#dcfce7;color:#166534}
 .admin-badge-warn{background:#fef3c7;color:#92400e}
 .admin-table-skeleton{height:32px;border-radius:8px}
-.toast-stack{position:fixed;right:16px;bottom:16px;z-index:90;display:grid;gap:8px;max-width:380px}
 .position-picker{position:relative;border:1px solid hsl(var(--border));border-radius:12px;overflow:hidden;min-height:220px;cursor:crosshair;background:hsl(var(--muted))}
 .position-image{display:block;width:100%;height:auto}
 .position-pin{position:absolute;width:18px;height:18px;border-radius:999px;background:hsl(var(--primary));border:2px solid white;transform:translate(-50%,-50%);pointer-events:none;box-shadow:0 0 0 2px rgba(59,130,246,.25)}
