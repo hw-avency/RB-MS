@@ -21,7 +21,7 @@ type OccupancyDesk = {
   x: number;
   y: number;
   status: 'free' | 'booked';
-  booking: { id?: string; employeeId?: string; userEmail: string; userDisplayName?: string; userFirstName?: string; userPhotoUrl?: string; type?: 'single' | 'recurring'; slot?: 'FULL_DAY' | 'MORNING' | 'AFTERNOON' | 'CUSTOM'; startTime?: string; endTime?: string } | null;
+  booking: { id?: string; employeeId?: string; userEmail: string; userDisplayName?: string; userFirstName?: string; userPhotoUrl?: string; type?: 'single' | 'recurring'; daySlot?: 'AM' | 'PM' | 'FULL'; slot?: 'FULL_DAY' | 'MORNING' | 'AFTERNOON' | 'CUSTOM'; startTime?: string; endTime?: string } | null;
   isCurrentUsersDesk?: boolean;
   isHighlighted?: boolean;
 };
@@ -37,6 +37,7 @@ type RebookConfirmState = {
   deskKindLabel: string;
   existingDeskLabel?: string;
   existingKindLabel?: string;
+  existingSlotLabel?: string;
   date: string;
   retryPayload: BookingSubmitPayload;
   anchorEl: HTMLElement;
@@ -173,6 +174,12 @@ const getConflictExistingDeskLabel = (error: ApiError): string | undefined => {
   return typeof deskName === 'string' && deskName.trim() ? deskName : undefined;
 };
 
+
+const getConflictExistingSlotLabel = (error: ApiError): string | undefined => {
+  if (!error.details || typeof error.details !== 'object') return undefined;
+  const details = error.details as { details?: { existingBooking?: { daySlot?: unknown } } };
+  return formatDaySlotLabel(typeof details.details?.existingBooking?.daySlot === 'string' ? details.details.existingBooking.daySlot : undefined);
+};
 const getConflictKindLabel = (error: ApiError): string | undefined => {
   if (!error.details || typeof error.details !== 'object') return undefined;
   const details = error.details as { details?: { conflictKind?: unknown } };
@@ -180,6 +187,13 @@ const getConflictKindLabel = (error: ApiError): string | undefined => {
   return resourceKindLabel(details.details.conflictKind);
 };
 
+
+const formatDaySlotLabel = (slot?: string): string | undefined => {
+  if (slot === 'AM') return 'Vormittag';
+  if (slot === 'PM') return 'Nachmittag';
+  if (slot === 'FULL') return 'Ganztag';
+  return undefined;
+};
 const getOccupantIdentityKey = (occupant: OccupantForDay): string => {
   if (occupant.employeeId?.trim()) return `employee:${occupant.employeeId}`;
   if (occupant.email.trim()) return `email:${occupant.email.toLowerCase()}`;
@@ -506,7 +520,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
     }
 
     if (payload.type === 'single') {
-      await post('/bookings', { deskId, userEmail: selectedEmployeeEmail, date: payload.date, slot: payload.slot, startTime: payload.startTime, endTime: payload.endTime, replaceExisting: overwrite });
+      await post('/bookings', { deskId, userEmail: selectedEmployeeEmail, date: payload.date, daySlot: payload.slot === 'FULL_DAY' ? 'FULL' : payload.slot === 'MORNING' ? 'AM' : payload.slot === 'AFTERNOON' ? 'PM' : undefined, startTime: payload.startTime, endTime: payload.endTime, overwrite });
       toast.success(overwrite ? 'Umbuchung durchgeführt.' : 'Gebucht', { deskId });
       return;
     }
@@ -560,6 +574,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
           deskKindLabel: resourceKindLabel(popupDesk.kind),
           existingDeskLabel: getConflictExistingDeskLabel(error),
           existingKindLabel: getConflictKindLabel(error) ?? resourceKindLabel(popupDesk.kind),
+          existingSlotLabel: getConflictExistingSlotLabel(error),
           date: payload.type === 'single' ? payload.date : selectedDate,
           retryPayload: payload,
           anchorEl: deskPopup.anchorEl
@@ -891,7 +906,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
                 <h3>{resourceKindLabel(popupDesk.kind)}: {popupDesk.name}</h3>
                 <div className="stack-sm">
                   <p className="muted">Datum: {new Date(`${selectedDate}T00:00:00.000Z`).toLocaleDateString('de-DE')}</p>
-                  <p className="muted">Zeitraum: {popupDesk.booking?.slot === 'MORNING' ? 'Vormittag' : popupDesk.booking?.slot === 'AFTERNOON' ? 'Nachmittag' : popupDesk.booking?.slot === 'CUSTOM' ? `${popupDesk.booking?.startTime ?? '--:--'}–${popupDesk.booking?.endTime ?? '--:--'}` : 'Ganztägig'}</p>
+                  <p className="muted">Zeitraum: {popupDesk.booking?.daySlot === 'AM' || popupDesk.booking?.slot === 'MORNING' ? 'Vormittag' : popupDesk.booking?.daySlot === 'PM' || popupDesk.booking?.slot === 'AFTERNOON' ? 'Nachmittag' : popupDesk.booking?.daySlot === 'FULL' ? 'Ganztägig' : popupDesk.booking?.slot === 'CUSTOM' ? `${popupDesk.booking?.startTime ?? '--:--'}–${popupDesk.booking?.endTime ?? '--:--'}` : 'Ganztägig'}</p>
                   {popupDesk.booking?.type === 'recurring' && <p className="muted">Typ: Serienbuchung (wöchentlich)</p>}
                   <div className="inline-end">
                     <button type="button" className="btn btn-outline" onClick={closeBookingFlow}>Abbrechen</button>
@@ -927,7 +942,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
           <section className="card dialog stack-sm rebook-dialog" role="dialog" aria-modal="true" aria-labelledby="rebook-title">
             <h3 id="rebook-title">Umbuchen?</h3>
             <p>
-              Du hast am <strong className="rebook-date">{formatDate(rebookConfirm.date)}</strong> bereits eine {rebookConfirm.existingKindLabel ?? rebookConfirm.deskKindLabel}-Buchung.
+              Du hast am <strong className="rebook-date">{formatDate(rebookConfirm.date)}</strong> bereits eine {rebookConfirm.existingKindLabel ?? rebookConfirm.deskKindLabel}-Buchung{rebookConfirm.existingSlotLabel ? ` (${rebookConfirm.existingSlotLabel})` : ''}.
               <br />
               Möchtest du diese auf {rebookConfirm.deskKindLabel} {rebookConfirm.deskLabel} umbuchen?
             </p>

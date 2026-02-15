@@ -74,6 +74,9 @@ model Booking {
   deskId    String
   userEmail String
   date      DateTime @db.Date
+  daySlot   DaySlot?
+  startTime DateTime?
+  endTime   DateTime?
   slot      BookingSlot @default(FULL_DAY)
   startMinute Int?
   endMinute Int?
@@ -83,6 +86,12 @@ model Booking {
   @@index([userEmail, date])
   @@index([date])
   @@index([deskId])
+}
+
+enum DaySlot {
+  AM
+  PM
+  FULL
 }
 
 enum BookingSlot {
