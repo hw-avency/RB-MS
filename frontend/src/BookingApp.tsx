@@ -1,6 +1,6 @@
 import { FormEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { API_BASE, ApiError, checkBackendHealth, get, markBackendAvailable, post, put, resolveApiUrl } from './api';
+import { API_BASE, ApiError, checkBackendHealth, del, get, markBackendAvailable, post, put, resolveApiUrl } from './api';
 import { Avatar } from './components/Avatar';
 import { UserMenu } from './components/UserMenu';
 import { FloorplanCanvas } from './FloorplanCanvas';
@@ -14,17 +14,18 @@ type OccupancyDesk = {
   y: number;
   status: 'free' | 'booked';
   booking: { id?: string; employeeId?: string; userEmail: string; userDisplayName?: string; userPhotoUrl?: string } | null;
+  isCurrentUsersDesk?: boolean;
+  isHighlighted?: boolean;
 };
 type OccupancyPerson = { email: string; displayName?: string; deskName?: string; deskId?: string };
 type OccupancyResponse = { date: string; floorplanId: string; desks: OccupancyDesk[]; people: OccupancyPerson[] };
 type BookingEmployee = { id: string; email: string; displayName: string; photoUrl?: string };
 type OccupantForDay = { deskId: string; deskLabel: string; userId: string; name: string; email: string; employeeId?: string; photoUrl?: string };
-type BookingMode = 'single' | 'range' | 'series';
 type OverrideDialogState = { existingBookingId: string; existingDeskName: string; nextDeskName: string; newDeskId: string; date: string };
+type DeskPopupState = { deskId: string; anchorRect: DOMRect };
 
 const today = new Date().toISOString().slice(0, 10);
 const weekdays = ['Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa', 'So'];
-const weekdayToBackend = [1, 2, 3, 4, 5, 6, 0];
 
 const toDateKey = (value: Date): string => value.toISOString().slice(0, 10);
 const startOfMonth = (dateString: string): Date => {
@@ -71,16 +72,9 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
   const [toastMessage, setToastMessage] = useState('');
   const [backendDown, setBackendDown] = useState(false);
 
-  const [bookingDialogOpen, setBookingDialogOpen] = useState(false);
+  const [deskPopup, setDeskPopup] = useState<DeskPopupState | null>(null);
   const [overrideDialog, setOverrideDialog] = useState<OverrideDialogState | null>(null);
   const [isOverrideSubmitting, setIsOverrideSubmitting] = useState(false);
-
-  const [bookingMode, setBookingMode] = useState<BookingMode>('single');
-  const [rangeStartDate, setRangeStartDate] = useState(selectedDate);
-  const [rangeEndDate, setRangeEndDate] = useState(selectedDate);
-  const [seriesStartDate, setSeriesStartDate] = useState(selectedDate);
-  const [seriesEndDate, setSeriesEndDate] = useState('');
-  const [seriesWeekdays, setSeriesWeekdays] = useState<number[]>([]);
 
   const [highlightedDeskId, setHighlightedDeskId] = useState('');
   const occupantRowRefs = useRef<Record<string, HTMLTableRowElement | null>>({});
@@ -113,7 +107,6 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
     };
   }), [occupancy?.desks, employeesByEmail, employeesById, currentUserEmail, currentUser?.id]);
   const filteredDesks = useMemo(() => (onlyFree ? desks.filter((desk) => desk.status === 'free') : desks).map((desk) => ({ ...desk, isHighlighted: desk.id === highlightedDeskId })), [desks, onlyFree, highlightedDeskId]);
-  const selectedDesk = useMemo(() => desks.find((desk) => desk.id === selectedDeskId) ?? null, [desks, selectedDeskId]);
   const occupantsForDay = useMemo<OccupantForDay[]>(
     () => desks
       .filter((desk) => desk.booking)
@@ -129,7 +122,23 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
       .sort((a, b) => a.name.localeCompare(b.name, 'de')),
     [desks]
   );
-  const selectedDeskOccupant = useMemo(() => occupantsForDay.find((occupant) => occupant.deskId === selectedDeskId) ?? null, [occupantsForDay, selectedDeskId]);
+  const popupDesk = useMemo(() => (deskPopup ? desks.find((desk) => desk.id === deskPopup.deskId) ?? null : null), [desks, deskPopup]);
+  const popupDeskState = popupDesk ? (!popupDesk.booking ? 'FREE' : popupDesk.isCurrentUsersDesk ? 'MINE' : 'TAKEN') : null;
+  const deskPopupPosition = useMemo(() => {
+    if (!deskPopup) return null;
+    const viewportPadding = 12;
+    const popupWidth = 280;
+    const popupHeight = 140;
+    const preferRight = deskPopup.anchorRect.right + 10;
+    const preferLeft = deskPopup.anchorRect.left - popupWidth - 10;
+    const canUseRight = preferRight + popupWidth <= window.innerWidth - viewportPadding;
+    const left = canUseRight
+      ? preferRight
+      : Math.max(viewportPadding, Math.min(window.innerWidth - popupWidth - viewportPadding, preferLeft));
+    const centeredTop = deskPopup.anchorRect.top + deskPopup.anchorRect.height / 2 - popupHeight / 2;
+    const top = Math.max(viewportPadding, Math.min(window.innerHeight - popupHeight - viewportPadding, centeredTop));
+    return { left, top };
+  }, [deskPopup]);
 
   const calendarDays = useMemo(() => buildCalendarDays(visibleMonth), [visibleMonth]);
 
@@ -201,19 +210,23 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
   }, [toastMessage]);
 
   useEffect(() => {
-    if (!bookingDialogOpen) return;
-    setRangeStartDate(selectedDate);
-    setRangeEndDate(selectedDate);
-    setSeriesStartDate(selectedDate);
-  }, [bookingDialogOpen, selectedDate]);
-
-  useEffect(() => {
     return () => {
       if (highlightTimerRef.current) {
         window.clearTimeout(highlightTimerRef.current);
       }
     };
   }, []);
+
+  useEffect(() => {
+    if (!deskPopup) return;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setDeskPopup(null);
+      }
+    };
+    window.addEventListener('keydown', closeOnEscape);
+    return () => window.removeEventListener('keydown', closeOnEscape);
+  }, [deskPopup]);
 
   const triggerDeskHighlight = (deskId: string, hold = 1300) => {
     setHighlightedDeskId(deskId);
@@ -226,9 +239,17 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
     }, hold);
   };
 
-  const selectDeskFromCanvas = (deskId: string) => {
+  const selectDeskFromCanvas = (deskId: string, pinRect?: DOMRect) => {
+    const desk = desks.find((entry) => entry.id === deskId);
+    if (!desk) return;
+    const state = !desk.booking ? 'FREE' : desk.isCurrentUsersDesk ? 'MINE' : 'TAKEN';
+    if (state === 'TAKEN' || !pinRect) {
+      return;
+    }
+
     setSelectedDeskId(deskId);
     triggerDeskHighlight(deskId);
+    setDeskPopup({ deskId, anchorRect: pinRect });
     const row = occupantRowRefs.current[deskId];
     if (row) {
       row.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
@@ -239,34 +260,44 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
     await loadOccupancy(selectedFloorplanId, selectedDate);
   };
 
-  const createSingleBooking = async (): Promise<'created' | 'pending_override' | 'unchanged'> => {
-    if (!selectedDeskId) {
+  const createSingleBooking = async (deskId: string): Promise<'created' | 'pending_override' | 'unchanged'> => {
+    if (!deskId) {
       throw new Error('Bitte Tisch auswählen.');
     }
 
     const existingBooking = desks.find((desk) => desk.booking && desk.booking.userEmail.toLowerCase() === selectedEmployeeEmail.toLowerCase())?.booking;
     const existingDesk = desks.find((desk) => desk.booking?.id === existingBooking?.id);
 
-    if (existingBooking && existingBooking.id && existingBooking.id !== '' && existingDesk && existingDesk.id !== selectedDeskId) {
-      const nextDesk = desks.find((desk) => desk.id === selectedDeskId);
+    if (existingBooking && existingBooking.id && existingBooking.id !== '' && existingDesk && existingDesk.id !== deskId) {
+      const nextDesk = desks.find((desk) => desk.id === deskId);
       setOverrideDialog({
         existingBookingId: existingBooking.id,
         existingDeskName: existingDesk.name,
-        nextDeskName: nextDesk?.name ?? selectedDeskId,
-        newDeskId: selectedDeskId,
+        nextDeskName: nextDesk?.name ?? deskId,
+        newDeskId: deskId,
         date: selectedDate
       });
       return 'pending_override';
     }
 
-    if (existingBooking && existingDesk?.id === selectedDeskId) {
+    if (existingBooking && existingDesk?.id === deskId) {
       setToastMessage('Dieser Tisch ist bereits gebucht.');
       return 'unchanged';
     }
 
-    await post('/bookings', { deskId: selectedDeskId, userEmail: selectedEmployeeEmail, date: selectedDate });
+    await post('/bookings', { deskId, userEmail: selectedEmployeeEmail, date: selectedDate });
     setToastMessage('Einzelbuchung erstellt.');
     return 'created';
+  };
+
+  const cancelOwnBooking = async (deskId: string) => {
+    const bookingId = desks.find((desk) => desk.id === deskId)?.booking?.id;
+    if (!bookingId) {
+      throw new Error('Eigene Buchung konnte nicht gefunden werden.');
+    }
+
+    await del(`/bookings/${bookingId}`);
+    setToastMessage('Buchung storniert.');
   };
 
   const handleOverride = async () => {
@@ -279,7 +310,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
       setSelectedDeskId(overrideDialog.newDeskId);
       setErrorMessage('');
       await refreshData();
-      setBookingDialogOpen(false);
+      setDeskPopup(null);
       setToastMessage('Buchung überschrieben.');
     } catch (error) {
       setErrorMessage(getApiErrorMessage(error, 'Buchung überschreiben fehlgeschlagen.'));
@@ -288,68 +319,26 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
     }
   };
 
-  const createRangeBooking = async () => {
-    if (!selectedDeskId) {
-      throw new Error('Bitte Tisch auswählen.');
-    }
-
-    if (rangeStartDate > rangeEndDate) {
-      throw new Error('Startdatum muss vor oder gleich Enddatum liegen.');
-    }
-
-    await post('/bookings/range', {
-      deskId: selectedDeskId,
-      userEmail: selectedEmployeeEmail,
-      from: rangeStartDate,
-      to: rangeEndDate,
-      weekdaysOnly: false
-    });
-
-    setToastMessage('Zeitraumbuchung erstellt.');
-  };
-
-  const createSeriesBooking = async () => {
-    if (!selectedDeskId) {
-      throw new Error('Bitte Tisch auswählen.');
-    }
-
-    if (seriesWeekdays.length === 0) {
-      throw new Error('Bitte mindestens einen Wochentag auswählen.');
-    }
-
-    await post('/recurring-bookings/bulk', {
-      deskId: selectedDeskId,
-      userEmail: selectedEmployeeEmail,
-      weekdays: seriesWeekdays.map((weekdayIndex) => weekdayToBackend[weekdayIndex]),
-      validFrom: seriesStartDate,
-      validTo: seriesEndDate || undefined
-    });
-
-    setToastMessage('Serienbuchung erstellt.');
-  };
-
-  const createBooking = async (event: FormEvent) => {
+  const submitPopupAction = async (event: FormEvent) => {
     event.preventDefault();
-
+    if (!popupDesk || !popupDeskState) return;
     try {
       if (!selectedEmployeeEmail) {
         throw new Error('Bitte Mitarbeiter auswählen.');
       }
 
-      if (bookingMode === 'single') {
-        const result = await createSingleBooking();
+      if (popupDeskState === 'FREE') {
+        const result = await createSingleBooking(popupDesk.id);
         if (result !== 'created') {
           setErrorMessage('');
           return;
         }
-      } else if (bookingMode === 'range') {
-        await createRangeBooking();
       } else {
-        await createSeriesBooking();
+        await cancelOwnBooking(popupDesk.id);
       }
 
       setErrorMessage('');
-      setBookingDialogOpen(false);
+      setDeskPopup(null);
       await refreshData();
     } catch (error) {
       if (error instanceof ApiError && error.code === 'BACKEND_UNREACHABLE') {
@@ -373,10 +362,6 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
     const key = toDateKey(day);
     setSelectedDate(key);
     setVisibleMonth(new Date(Date.UTC(day.getUTCFullYear(), day.getUTCMonth(), 1)));
-  };
-
-  const toggleSeriesWeekday = (weekday: number) => {
-    setSeriesWeekdays((prev) => (prev.includes(weekday) ? prev.filter((value) => value !== weekday) : [...prev, weekday].sort((a, b) => a - b)));
   };
 
   const retryHealthCheck = async () => {
@@ -440,38 +425,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
         <span className="badge">Im Büro: {occupantsForDay.length}</span>
       </div>
 
-      {selectedDesk && (
-        <div className="filter-row">
-          <span className="badge">Gefiltert: {selectedDesk.name}</span>
-          <button className="btn btn-outline" onClick={() => setSelectedDeskId('')}>Alle anzeigen</button>
-        </div>
-      )}
-
-      {selectedDesk ? (
-        selectedDeskOccupant ? (
-          <div className="occupant-card">
-            <p className="muted">Belegt</p>
-            <h4>{selectedDeskOccupant.name}</h4>
-            <p className="muted">{selectedDeskOccupant.email}</p>
-            <p><strong>Tisch:</strong> {selectedDeskOccupant.deskLabel}</p>
-          </div>
-        ) : (
-          <div className="empty-state stack-sm">
-            <p>{selectedDesk.name} ist frei.</p>
-            <div>
-              <button
-                className="btn"
-                onClick={() => {
-                  setSelectedDeskId(selectedDesk.id);
-                  setBookingDialogOpen(true);
-                }}
-              >
-                Buchung erstellen
-              </button>
-            </div>
-          </div>
-        )
-      ) : occupantsForDay.length === 0 ? (
+      {occupantsForDay.length === 0 ? (
         <div className="empty-state">
           <p>Niemand im Büro an diesem Tag.</p>
         </div>
@@ -512,7 +466,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
                       </div>
                     </div>
                   </td>
-                  <td>{occupant.deskLabel}</td>
+                  <td>Tisch: {occupant.deskLabel}</td>
                 </tr>
               ))}
             </tbody>
@@ -560,9 +514,6 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
           <article className="card canvas-card">
             <div className="card-header-row">
               <h2>{selectedFloorplan?.name ?? 'Floorplan'}</h2>
-              <div className="toolbar">
-                <button className="btn" onClick={() => setBookingDialogOpen(true)}>Buchung erstellen</button>
-              </div>
             </div>
             <div className={`refresh-progress ${isUpdatingOccupancy ? "is-active" : ""}`} aria-hidden={!isUpdatingOccupancy}>
               <span className="refresh-progress-bar" />
@@ -580,7 +531,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
                   onHoverDesk={(deskId) => { setHoveredDeskId(deskId); if (deskId) triggerDeskHighlight(deskId, 900); }}
                   selectedDate={selectedDate}
                   onSelectDesk={selectDeskFromCanvas}
-                  onCanvasClick={() => { setSelectedDeskId(''); setHighlightedDeskId(''); }}
+                  onCanvasClick={() => { setSelectedDeskId(''); setHighlightedDeskId(''); setDeskPopup(null); }}
                 />
               ) : (
                 <div className="empty-state"><p>Kein Floorplan ausgewählt.</p></div>
@@ -592,77 +543,18 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
         <aside className="right-col desktop-right">{isBootstrapping ? <div className="card skeleton h-480" /> : detailPanel}</aside>
       </section>
 
-      {bookingDialogOpen && createPortal(
-        <div className="overlay" onClick={() => setBookingDialogOpen(false)}>
-          <div className="dialog card" onClick={(event) => event.stopPropagation()}>
-            <h3>Buchung erstellen</h3>
-            <div className="tabs">
-              <button type="button" className={`tab-btn ${bookingMode === 'single' ? 'active' : ''}`} onClick={() => setBookingMode('single')}>Einzeln</button>
-              <button type="button" className={`tab-btn ${bookingMode === 'range' ? 'active' : ''}`} onClick={() => setBookingMode('range')}>Zeitraum</button>
-              <button type="button" className={`tab-btn ${bookingMode === 'series' ? 'active' : ''}`} onClick={() => setBookingMode('series')}>Serie</button>
-            </div>
-            <form onSubmit={createBooking} className="stack-sm">
-              <label className="field">
-                <span>Tisch</span>
-                <select value={selectedDeskId} onChange={(event) => setSelectedDeskId(event.target.value)}>
-                  <option value="">Tisch wählen</option>
-                  {desks.map((desk) => <option key={desk.id} value={desk.id}>{desk.name}</option>)}
-                </select>
-              </label>
-
-              <label className="field">
-                <span>Mitarbeiter</span>
-                <select value={selectedEmployeeEmail} onChange={(event) => setSelectedEmployeeEmail(event.target.value)}>
-                  {employees.map((employee) => <option key={employee.id} value={employee.email}>{employee.displayName}</option>)}
-                </select>
-              </label>
-
-              {bookingMode === 'single' && (
-                <label className="field">
-                  <span>Datum</span>
-                  <input type="date" value={selectedDate} onChange={(event) => setSelectedDate(event.target.value)} />
-                </label>
-              )}
-
-              {bookingMode === 'range' && (
-                <div className="inline-grid-two">
-                  <label className="field">
-                    <span>Startdatum</span>
-                    <input type="date" value={rangeStartDate} onChange={(event) => setRangeStartDate(event.target.value)} />
-                  </label>
-                  <label className="field">
-                    <span>Enddatum</span>
-                    <input type="date" value={rangeEndDate} onChange={(event) => setRangeEndDate(event.target.value)} />
-                  </label>
-                </div>
-              )}
-
-              {bookingMode === 'series' && (
-                <>
-                  <div className="inline-grid-two">
-                    <label className="field">
-                      <span>Startdatum</span>
-                      <input type="date" value={seriesStartDate} onChange={(event) => setSeriesStartDate(event.target.value)} />
-                    </label>
-                    <label className="field">
-                      <span>Enddatum (optional)</span>
-                      <input type="date" value={seriesEndDate} onChange={(event) => setSeriesEndDate(event.target.value)} />
-                    </label>
-                  </div>
-                  <div className="weekday-toggle-group">
-                    {weekdays.map((label, index) => (
-                      <button key={label} type="button" className={`weekday-toggle ${seriesWeekdays.includes(index) ? 'active' : ''}`} onClick={() => toggleSeriesWeekday(index)}>
-                        {label}
-                      </button>
-                    ))}
-                  </div>
-                </>
-              )}
-
-              <div className="inline-end"><button type="button" className="btn btn-outline" onClick={() => setBookingDialogOpen(false)}>Abbrechen</button><button className="btn" type="submit">Speichern</button></div>
+      {deskPopup && popupDesk && popupDeskState && deskPopupPosition && createPortal(
+        <>
+          <div className="desk-popup-backdrop" onClick={() => setDeskPopup(null)} />
+          <section className="card desk-popup" style={{ left: deskPopupPosition.left, top: deskPopupPosition.top }} role="dialog" aria-modal="true">
+            <h3>Tisch: {popupDesk.name}</h3>
+            <p className="muted">{new Date(`${selectedDate}T00:00:00.000Z`).toLocaleDateString('de-DE')}</p>
+            <form onSubmit={submitPopupAction} className="inline-end">
+              <button type="button" className="btn btn-outline" onClick={() => setDeskPopup(null)}>Schließen</button>
+              {popupDeskState === 'FREE' ? <button className="btn" type="submit">Buchung erstellen</button> : <button className="btn btn-danger" type="submit">Buchung stornieren</button>}
             </form>
-          </div>
-        </div>,
+          </section>
+        </>,
         document.body
       )}
 

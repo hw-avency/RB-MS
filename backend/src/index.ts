@@ -1483,6 +1483,29 @@ app.put('/bookings/:id', async (req, res) => {
   res.status(200).json(updated);
 });
 
+app.delete('/bookings/:id', async (req, res) => {
+  const id = getRouteId(req.params.id);
+  if (!id) {
+    res.status(400).json({ error: 'validation', message: 'id is required' });
+    return;
+  }
+
+  const existing = await prisma.booking.findUnique({ where: { id } });
+  if (!existing) {
+    res.status(404).json({ error: 'not_found', message: 'Booking not found' });
+    return;
+  }
+
+  const authEmail = req.authUser?.email;
+  if (req.authUser?.role !== 'admin' && existing.userEmail !== authEmail) {
+    res.status(403).json({ error: 'forbidden', message: 'Cannot cancel booking of another user' });
+    return;
+  }
+
+  await prisma.booking.delete({ where: { id } });
+  res.status(200).json({ ok: true });
+});
+
 app.post('/bookings/range', async (req, res) => {
   const { deskId, userEmail, from, to, weekdaysOnly } = req.body as {
     deskId?: string;
