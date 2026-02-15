@@ -69,7 +69,7 @@ type FloorplanCanvasProps = {
   hoveredDeskId: string;
   selectedDate?: string;
   onHoverDesk: (deskId: string) => void;
-  onSelectDesk: (deskId: string) => void;
+  onSelectDesk: (deskId: string, pinRect?: DOMRect) => void;
   onCanvasClick?: (coords: { xPct: number; yPct: number }) => void;
   onDeskDoubleClick?: (deskId: string) => void;
 };
@@ -78,7 +78,7 @@ const FloorplanImage = memo(function FloorplanImage({ imageUrl, imageAlt, imgRef
   return <img ref={imgRef} src={imageUrl} alt={imageAlt} className="floorplan-image" onLoad={onLoad} />;
 });
 
-const DeskOverlay = memo(function DeskOverlay({ desks, selectedDeskId, hoveredDeskId, selectedDate, overlayRect, onHoverDesk, onSelectDesk, onDeskDoubleClick }: { desks: FloorplanDesk[]; selectedDeskId: string; hoveredDeskId: string; selectedDate?: string; overlayRect: OverlayRect; onHoverDesk: (deskId: string) => void; onSelectDesk: (deskId: string) => void; onDeskDoubleClick?: (deskId: string) => void; }) {
+const DeskOverlay = memo(function DeskOverlay({ desks, selectedDeskId, hoveredDeskId, selectedDate, overlayRect, onHoverDesk, onSelectDesk, onDeskDoubleClick }: { desks: FloorplanDesk[]; selectedDeskId: string; hoveredDeskId: string; selectedDate?: string; overlayRect: OverlayRect; onHoverDesk: (deskId: string) => void; onSelectDesk: (deskId: string, pinRect?: DOMRect) => void; onDeskDoubleClick?: (deskId: string) => void; }) {
   const [imageStates, setImageStates] = useState<Record<string, boolean>>({});
   const [tooltip, setTooltip] = useState<{ deskId: string; left: number; top: number } | null>(null);
   const showDebugCross = isDeskPinDebugEnabled();
@@ -141,7 +141,7 @@ const DeskOverlay = memo(function DeskOverlay({ desks, selectedDeskId, hoveredDe
                 onClick={(event) => {
                   event.stopPropagation();
                   if (!isClickable) return;
-                  onSelectDesk(desk.id);
+                  onSelectDesk(desk.id, event.currentTarget.getBoundingClientRect());
                 }}
                 onDoubleClick={(event) => {
                   event.stopPropagation();
