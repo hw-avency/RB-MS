@@ -41,6 +41,19 @@ const formatDateOnly = (value?: string) => (value ? new Date(value).toLocaleDate
 const basePath = (path: string) => path.split('?')[0];
 const hasCreateFlag = (path: string) => path.includes('create=1');
 
+const isLikelyDateColumn = (columnName: string) => ['date', 'createdat', 'updatedat'].includes(columnName.toLowerCase());
+const isIdColumn = (columnName: string) => ['id', 'deskid'].includes(columnName.toLowerCase());
+
+const formatCellValue = (columnName: string, value: unknown) => {
+  if (value === null || typeof value === 'undefined') return '—';
+  if (isLikelyDateColumn(columnName) && typeof value === 'string') {
+    const parsed = new Date(value);
+    if (!Number.isNaN(parsed.getTime())) return parsed.toLocaleString('de-DE');
+  }
+  if (typeof value === 'object') return JSON.stringify(value);
+  return String(value);
+};
+
 function useToasts() {
   const [toasts, setToasts] = useState<Toast[]>([]);
   const push = (tone: Toast['tone'], message: string) => {
@@ -807,6 +820,13 @@ function DbAdminPage({ path, navigate, onLogout, currentUser }: RouteProps) {
   const [editorValue, setEditorValue] = useState('{}');
   const [clearTableOpen, setClearTableOpen] = useState(false);
   const [clearingTable, setClearingTable] = useState(false);
+  const [clearConfirmInput, setClearConfirmInput] = useState('');
+  const [search, setSearch] = useState('');
+  const [sortColumn, setSortColumn] = useState('createdAt');
+  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
+  const [deleteTarget, setDeleteTarget] = useState<Record<string, unknown> | null>(null);
+  const [detailRow, setDetailRow] = useState<Record<string, unknown> | null>(null);
+  const [isCompact, setIsCompact] = useState(() => window.innerWidth < 900);
 
   const selectedTable = useMemo(() => tables.find((item) => item.name === tableName) ?? null, [tables, tableName]);
 
@@ -840,6 +860,21 @@ function DbAdminPage({ path, navigate, onLogout, currentUser }: RouteProps) {
 
   useEffect(() => { void loadTables(); }, []);
   useEffect(() => { if (tableName) void loadRows(tableName); }, [tableName]);
+  useEffect(() => {
+    const mediaQuery = window.matchMedia('(max-width: 900px)');
+    const listener = (event: MediaQueryListEvent) => setIsCompact(event.matches);
+    setIsCompact(mediaQuery.matches);
+    mediaQuery.addEventListener('change', listener);
+    return () => mediaQuery.removeEventListener('change', listener);
+  }, []);
+
+  useEffect(() => {
+    if (!selectedTable) return;
+    const hasCreatedAt = selectedTable.columns.some((column) => column.name.toLowerCase() === 'createdat');
+    setSortColumn(hasCreatedAt ? 'createdAt' : selectedTable.columns[0]?.name ?? '');
+    setSortDirection(hasCreatedAt ? 'desc' : 'asc');
+    setSearch('');
+  }, [selectedTable]);
 
   const openCreate = () => {
     if (!selectedTable) return;
@@ -888,7 +923,6 @@ function DbAdminPage({ path, navigate, onLogout, currentUser }: RouteProps) {
 
   const removeRow = async (rowId: string) => {
     if (!selectedTable) return;
-    if (!window.confirm('Datensatz wirklich löschen?')) return;
     try {
       await del(`/admin/db/${selectedTable.name}/rows/${rowId}`);
       toasts.success('Datensatz gelöscht');
@@ -905,6 +939,7 @@ function DbAdminPage({ path, navigate, onLogout, currentUser }: RouteProps) {
     try {
       const response = await del<{ deleted?: number }>(`/admin/db/${selectedTable.name}/rows`);
       setClearTableOpen(false);
+      setClearConfirmInput('');
       const deletedCount = typeof response?.deleted === 'number' ? response.deleted : rows.length;
       toasts.success(`Tabelle geleert (${deletedCount} Datensätze gelöscht)`);
       await loadRows(selectedTable.name);
@@ -915,21 +950,86 @@ function DbAdminPage({ path, navigate, onLogout, currentUser }: RouteProps) {
     }
   };
 
+  const columnsToShow = useMemo(() => {
+    if (!selectedTable) return [] as DbColumn[];
+    if (!isCompact) return selectedTable.columns;
+    const preferred = ['id', 'useremail', 'date'];
+    const compactColumns = selectedTable.columns.filter((column) => preferred.includes(column.name.toLowerCase()));
+    return compactColumns.length > 0 ? compactColumns : selectedTable.columns.slice(0, 3);
+  }, [isCompact, selectedTable]);
+
+  const filteredRows = useMemo(() => {
+    if (!selectedTable) return rows;
+    const query = search.trim().toLowerCase();
+    const baseRows = query
+      ? rows.filter((row) => selectedTable.columns.some((column) => formatCellValue(column.name, row[column.name]).toLowerCase().includes(query)))
+      : rows;
+    const sorted = [...baseRows].sort((a, b) => {
+      const left = a[sortColumn];
+      const right = b[sortColumn];
+      const leftDate = typeof left === 'string' ? Date.parse(left) : Number.NaN;
+      const rightDate = typeof right === 'string' ? Date.parse(right) : Number.NaN;
+      let compare = 0;
+      if (!Number.isNaN(leftDate) && !Number.isNaN(rightDate)) compare = leftDate - rightDate;
+      else compare = String(left ?? '').localeCompare(String(right ?? ''), 'de', { numeric: true, sensitivity: 'base' });
+      return sortDirection === 'asc' ? compare : -compare;
+    });
+    return sorted;
+  }, [rows, search, selectedTable, sortColumn, sortDirection]);
+
+  const toggleSort = (column: string) => {
+    if (sortColumn === column) {
+      setSortDirection((current) => current === 'asc' ? 'desc' : 'asc');
+      return;
+    }
+    setSortColumn(column);
+    setSortDirection(column.toLowerCase() === 'createdat' ? 'desc' : 'asc');
+  };
+
+  const copyValue = async (value: string) => {
+    try {
+      await navigator.clipboard.writeText(value);
+      toasts.success('Wert kopiert');
+    } catch {
+      toasts.error('Kopieren fehlgeschlagen');
+    }
+  };
+
   return (
     <AdminLayout path={path} navigate={navigate} onLogout={onLogout} title="DB Admin" currentUser={currentUser ?? null}>
-      <section className="card stack-sm">
-        <ListToolbar
-          title="Datenbank Editor"
-          count={selectedTable?.model ?? '—'}
-          filters={<label className="field"><span>Tabelle</span><select value={tableName} onChange={(event) => setTableName(event.target.value)}>{tables.map((table) => <option key={table.name} value={table.name}>{table.model}</option>)}</select></label>}
-          actions={<><button className="btn btn-danger-text" onClick={() => setClearTableOpen(true)} disabled={!selectedTable || rows.length === 0}>Tabelle leeren</button><button className="btn" onClick={openCreate} disabled={!selectedTable}>Neu</button></>}
-        />
-        {(loading || rowLoading) && <p className="muted">Lade Daten…</p>}
+      <section className="card stack-sm db-editor-panel">
+        <header className="db-editor-header">
+          <div>
+            <h3>Datenbank Editor</h3>
+            <p className="muted">Tabelle bearbeiten, filtern, Einträge verwalten</p>
+          </div>
+          <div className="db-editor-controls">
+            <label className="field">
+              <span>Tabelle</span>
+              <select value={tableName} onChange={(event) => setTableName(event.target.value)}>
+                {tables.map((table) => <option key={table.name} value={table.name}>{table.model}</option>)}
+              </select>
+            </label>
+            <div className="admin-search">
+              🔎
+              <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Suchen" />
+            </div>
+            <button className="btn" onClick={openCreate} disabled={!selectedTable}>Neu</button>
+          </div>
+        </header>
+        <div className="inline-between">
+          <Badge>{selectedTable?.model ?? '—'}</Badge>
+          <button className="btn btn-danger-text" onClick={() => setClearTableOpen(true)} disabled={!selectedTable || rows.length === 0}>Tabelle leeren</button>
+        </div>
+        {(loading || rowLoading) && <div className="table-wrap"><table className="admin-table db-editor-table"><thead><tr>{(selectedTable?.columns ?? Array.from({ length: 5 }).map((_, index) => ({ name: `col-${index}` } as DbColumn))).map((column) => <th key={column.name}>{column.name}</th>)}<th className="align-right">Aktionen</th></tr></thead><SkeletonRows columns={(selectedTable?.columns.length ?? 5) + 1} /></table></div>}
         {error && <ErrorState text={error} onRetry={() => { if (tableName) void loadRows(tableName); else void loadTables(); }} />}
-        {selectedTable && !rowLoading && <div className="table-wrap"><table className="admin-table"><thead><tr>{selectedTable.columns.map((column) => <th key={column.name}>{column.name}</th>)}<th className="align-right">Aktionen</th></tr></thead><tbody>{rows.map((row, index) => <tr key={`${String(row.id ?? 'row')}-${index}`}>{selectedTable.columns.map((column) => <td key={column.name} className="truncate-cell" title={String(row[column.name] ?? '')}>{typeof row[column.name] === 'object' ? JSON.stringify(row[column.name]) : String(row[column.name] ?? '—')}</td>)}<td className="align-right"><div className="admin-row-actions"><button className="btn btn-outline" onClick={() => openEdit(row)}>Bearbeiten</button>{typeof row.id === 'string' && <button className="btn btn-danger-text" onClick={() => void removeRow(row.id as string)}>Löschen</button>}</div></td></tr>)}</tbody></table></div>}
+        {selectedTable && !rowLoading && filteredRows.length > 0 && <div className="table-wrap"><table className="admin-table db-editor-table"><thead><tr>{columnsToShow.map((column) => <th key={column.name} className={`db-col-${column.name.toLowerCase()}`}><button type="button" className="btn btn-ghost db-sort-btn" onClick={() => toggleSort(column.name)}>{column.name}{sortColumn === column.name && <span>{sortDirection === 'asc' ? ' ↑' : ' ↓'}</span>}</button></th>)}<th className="align-right">Aktionen</th></tr></thead><tbody>{filteredRows.map((row, index) => <tr key={`${String(row.id ?? 'row')}-${index}`}>{columnsToShow.map((column) => { const rawValue = row[column.name]; const value = formatCellValue(column.name, rawValue); if (isIdColumn(column.name) && typeof rawValue === 'string') { return <td key={column.name} className={`truncate-cell db-col-${column.name.toLowerCase()}`} title={rawValue}><div className="db-id-cell"><span>{rawValue}</span><button className="btn btn-ghost btn-icon" onClick={() => void copyValue(rawValue)} title="Kopieren" aria-label={`${column.name} kopieren`}>📋</button></div></td>; } return <td key={column.name} className={`truncate-cell db-col-${column.name.toLowerCase()}`} title={value}>{value}</td>; })}<td className="align-right"><div className="admin-row-actions"><button className="btn btn-outline" onClick={() => openEdit(row)}>Bearbeiten</button><RowMenu items={[{ label: 'Bearbeiten', onSelect: () => openEdit(row) }, ...(isCompact ? [{ label: 'Details', onSelect: () => setDetailRow(row) }] : []), ...(typeof row.id === 'string' ? [{ label: 'Löschen', onSelect: () => setDeleteTarget(row), danger: true }] : [])]} /></div></td></tr>)}</tbody></table></div>}
+        {selectedTable && !rowLoading && filteredRows.length === 0 && <EmptyState text="🗂️ Keine Einträge gefunden." action={<button className="btn" onClick={openCreate} disabled={!selectedTable}>Neu</button>} />}
       </section>
       {editorOpen && <div className="overlay"><section className="card dialog stack-sm"><h3>{editingRowId ? 'Datensatz bearbeiten' : 'Datensatz erstellen'}</h3><form className="stack-sm" onSubmit={submitEditor}><textarea className="db-editor-textarea" rows={16} value={editorValue} onChange={(event) => setEditorValue(event.target.value)} /><p className="muted">JSON Objekt mit Feldwerten eingeben.</p><div className="inline-end"><button className="btn btn-outline" type="button" onClick={() => setEditorOpen(false)}>Abbrechen</button><button className="btn">Speichern</button></div></form></section></div>}
-      {clearTableOpen && selectedTable && <ConfirmDialog title="Tabelle wirklich leeren?" description={`Alle Datensätze in "${selectedTable.model}" werden dauerhaft gelöscht.`} onCancel={() => setClearTableOpen(false)} onConfirm={() => void clearTable()} confirmDisabled={clearingTable} confirmLabel={clearingTable ? 'Lösche…' : 'Tabelle leeren'} />}
+      {deleteTarget && selectedTable && typeof deleteTarget.id === 'string' && <ConfirmDialog title="Datensatz löschen?" description={`ID: ${String(deleteTarget.id)}${deleteTarget['userEmail'] ? ` · ${String(deleteTarget['userEmail'])}` : ''}`} onCancel={() => setDeleteTarget(null)} onConfirm={async () => { await removeRow(String(deleteTarget.id)); setDeleteTarget(null); }} />}
+      {detailRow && <div className="overlay"><section className="card dialog stack-sm"><h3>Details</h3><pre className="db-detail-pre">{JSON.stringify(detailRow, null, 2)}</pre><div className="inline-end"><button className="btn btn-outline" onClick={() => setDetailRow(null)}>Schließen</button></div></section></div>}
+      {clearTableOpen && selectedTable && <div className="overlay"><section className="card dialog stack-sm" role="dialog" aria-modal="true"><h3>Tabelle wirklich leeren?</h3><p className="muted">Alle Datensätze in "{selectedTable.model}" werden dauerhaft gelöscht. Zum Bestätigen bitte <strong>DELETE</strong> eingeben.</p><input value={clearConfirmInput} onChange={(event) => setClearConfirmInput(event.target.value)} placeholder="DELETE" /><div className="inline-end"><button className="btn btn-outline" disabled={clearingTable} onClick={() => { setClearTableOpen(false); setClearConfirmInput(''); }}>Abbrechen</button><button className="btn btn-danger" disabled={clearingTable || clearConfirmInput !== 'DELETE'} onClick={() => void clearTable()}>{clearingTable ? 'Lösche…' : 'Tabelle leeren'}</button></div></section></div>}
       <ToastViewport toasts={toasts.toasts} />
     </AdminLayout>
   );
