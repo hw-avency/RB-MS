@@ -7,7 +7,9 @@ type ToastInput = {
   message: string;
   variant?: ToastVariant;
   durationMs?: number;
+  deskId?: string;
   anchorRect?: DOMRect;
+  fallbackRect?: DOMRect;
   placement?: ToastPlacement;
 };
 
@@ -38,6 +40,8 @@ type ToastContextValue = {
   toast: (input: ToastInput) => void;
   success: (message: string, options?: Omit<ToastInput, 'message' | 'variant'>) => void;
   error: (message: string, options?: Omit<ToastInput, 'message' | 'variant'>) => void;
+  registerDeskAnchor: (deskId: string, element: HTMLElement | null) => void;
+  getDeskAnchorRect: (deskId: string) => DOMRect | null;
 };
 
 const EXIT_ANIMATION_MS = 180;
@@ -61,6 +65,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   const [positions, setPositions] = useState<Record<number, CSSProperties>>({});
   const timersRef = useRef<Map<number, number>>(new Map());
   const elementsRef = useRef<Map<number, HTMLElement>>(new Map());
+  const deskAnchorMap = useRef(new Map<string, HTMLElement>());
 
   const normalizeRect = useCallback((rect?: DOMRect): NormalizedRect | undefined => {
     if (!rect) return undefined;
@@ -73,6 +78,36 @@ export function ToastProvider({ children }: { children: ReactNode }) {
       height: rect.height
     };
   }, []);
+
+  const registerDeskAnchor = useCallback((deskId: string, element: HTMLElement | null) => {
+    if (!element) {
+      deskAnchorMap.current.delete(deskId);
+      return;
+    }
+    deskAnchorMap.current.set(deskId, element);
+  }, []);
+
+  const getDeskAnchorRect = useCallback((deskId: string): DOMRect | null => {
+    const element = deskAnchorMap.current.get(deskId);
+    return element ? element.getBoundingClientRect() : null;
+  }, []);
+
+  const resolveDeskAnchorRect = useCallback((deskId: string, retries = 3): Promise<DOMRect | null> => new Promise((resolve) => {
+    let attempts = 0;
+
+    const tryResolve = () => {
+      const rect = getDeskAnchorRect(deskId);
+      if (rect || attempts >= retries) {
+        resolve(rect);
+        return;
+      }
+
+      attempts += 1;
+      window.requestAnimationFrame(tryResolve);
+    };
+
+    tryResolve();
+  }), [getDeskAnchorRect]);
 
   const clearTimer = useCallback((toastId: number) => {
     const timer = timersRef.current.get(toastId);
@@ -127,25 +162,38 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     const durationMs = input.durationMs ?? DEFAULT_DURATION_MS[variant];
     const now = Date.now();
 
-    setToasts((current) => [...current, {
-      ...input,
-      id,
-      variant,
-      placement: input.placement ?? 'auto',
-      anchorRect: normalizeRect(input.anchorRect),
-      expiresAt: now + durationMs,
-      remainingMs: durationMs,
-      isLeaving: false,
-    }]);
+    const enqueueToast = (anchorRect?: DOMRect | null) => {
+      setToasts((current) => [...current, {
+        message: input.message,
+        id,
+        variant,
+        placement: input.placement ?? 'auto',
+        anchorRect: normalizeRect(anchorRect ?? input.anchorRect ?? input.fallbackRect),
+        expiresAt: now + durationMs,
+        remainingMs: durationMs,
+        isLeaving: false,
+      }]);
 
-    scheduleDismiss(id, durationMs);
-  }, [normalizeRect, scheduleDismiss]);
+      scheduleDismiss(id, durationMs);
+    };
+
+    if (input.deskId) {
+      void resolveDeskAnchorRect(input.deskId).then((resolvedAnchorRect) => {
+        enqueueToast(resolvedAnchorRect ?? input.fallbackRect ?? input.anchorRect);
+      });
+      return;
+    }
+
+    enqueueToast(input.anchorRect ?? input.fallbackRect);
+  }, [normalizeRect, resolveDeskAnchorRect, scheduleDismiss]);
 
   const value = useMemo<ToastContextValue>(() => ({
     toast,
     success: (message: string, options) => toast({ message, variant: 'success', ...options }),
     error: (message: string, options) => toast({ message, variant: 'error', ...options }),
-  }), [toast]);
+    registerDeskAnchor,
+    getDeskAnchorRect,
+  }), [getDeskAnchorRect, registerDeskAnchor, toast]);
 
   useEffect(() => {
     if (toasts.length === 0) {
