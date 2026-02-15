@@ -11,12 +11,16 @@ app.set('trust proxy', 1);
 
 const ADMIN_EMAIL = process.env.ADMIN_EMAIL?.trim().toLowerCase();
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD;
-const FRONTEND_URL = (process.env.FRONTEND_URL ?? process.env.CORS_ORIGIN ?? process.env.FRONTEND_ORIGIN ?? '')
-  .split(',')[0]
-  ?.trim() ?? '';
+const configuredOrigins = (process.env.FRONTEND_URL ?? process.env.CORS_ORIGIN ?? process.env.FRONTEND_ORIGIN ?? '')
+  .split(',')
+  .map((origin) => origin.trim())
+  .filter((origin) => Boolean(origin));
+const FRONTEND_URL = configuredOrigins[0] ?? '';
 const DEFAULT_USER_PASSWORD = process.env.DEFAULT_USER_PASSWORD ?? 'ChangeMe123!';
 const PASSWORD_SALT_ROUNDS = Number(process.env.PASSWORD_SALT_ROUNDS ?? 12);
-const isProd = process.env.NODE_ENV === 'production';
+const normalizedNodeEnv = process.env.NODE_ENV?.trim().toLowerCase();
+const isRenderRuntime = process.env.RENDER === 'true' || Boolean(process.env.RENDER_EXTERNAL_URL);
+const isProd = normalizedNodeEnv === 'production' || isRenderRuntime;
 const AUTH_BYPASS_ENABLED = process.env.AUTH_BYPASS === 'true' && !isProd;
 const cookieSameSite: 'none' | 'lax' = (process.env.COOKIE_SAMESITE === 'none' || process.env.COOKIE_SAMESITE === 'lax')
   ? process.env.COOKIE_SAMESITE
@@ -33,7 +37,7 @@ const GRAPH_APP_SCOPE = 'https://graph.microsoft.com/.default';
 
 const corsOptions = {
   origin: (origin: string | undefined, callback: (error: Error | null, allow?: boolean) => void) => {
-    if (!FRONTEND_URL) {
+    if (configuredOrigins.length === 0) {
       callback(null, true);
       return;
     }
@@ -43,7 +47,7 @@ const corsOptions = {
       return;
     }
 
-    callback(null, origin === FRONTEND_URL);
+    callback(null, configuredOrigins.includes(origin));
   },
   credentials: true
 };
@@ -80,6 +84,7 @@ declare global {
       requestId?: string;
       authUser?: AuthUser;
       authSession?: SessionRecord;
+      authFailureReason?: 'MISSING_SESSION_COOKIE' | 'SESSION_INVALID_OR_EXPIRED' | 'USER_MISSING_OR_INACTIVE';
     }
   }
 }
@@ -256,20 +261,21 @@ const requireAllowedMutationOrigin: express.RequestHandler = (req, res, next) =>
     return;
   }
 
-  if (!FRONTEND_URL) {
+  if (configuredOrigins.length === 0) {
     next();
     return;
   }
 
   const origin = req.get('origin');
-  if (origin && origin !== FRONTEND_URL) {
+  if (origin && !configuredOrigins.includes(origin)) {
     res.status(403).json({ error: 'forbidden', code: 'ORIGIN_NOT_ALLOWED', message: 'Request blocked (Origin)' });
     return;
   }
 
   if (!origin) {
     const referer = req.get('referer');
-    if (!referer || !referer.startsWith(FRONTEND_URL)) {
+    const refererAllowed = Boolean(referer && configuredOrigins.some((allowedOrigin) => referer.startsWith(allowedOrigin)));
+    if (!refererAllowed) {
       res.status(403).json({ error: 'forbidden', code: 'ORIGIN_NOT_ALLOWED', message: 'Request blocked (Origin)' });
       return;
     }
@@ -297,6 +303,7 @@ const attachAuthUser: express.RequestHandler = async (req, _res, next) => {
   const cookies = parseCookies(req.headers.cookie);
   const sessionId = cookies[SESSION_COOKIE_NAME];
   if (!sessionId) {
+    req.authFailureReason = 'MISSING_SESSION_COOKIE';
     next();
     return;
   }
@@ -304,6 +311,7 @@ const attachAuthUser: express.RequestHandler = async (req, _res, next) => {
   const session = sessions.get(sessionId);
   if (!session || session.expiresAt <= Date.now()) {
     destroySession(sessionId);
+    req.authFailureReason = 'SESSION_INVALID_OR_EXPIRED';
     next();
     return;
   }
@@ -321,6 +329,7 @@ const attachAuthUser: express.RequestHandler = async (req, _res, next) => {
 
   if (!user || !user.isActive) {
     destroySession(sessionId);
+    req.authFailureReason = 'USER_MISSING_OR_INACTIVE';
     next();
     return;
   }
@@ -1102,7 +1111,16 @@ app.post('/auth/logout', (req, res) => {
 
 app.get('/auth/me', (req, res) => {
   const requestId = req.requestId ?? 'unknown';
-  console.log('ME_CHECK', { requestId, hasSession: Boolean(req.authSession && req.authUser) });
+  if (!isProd) {
+    const hasSessionCookie = Boolean(parseCookies(req.headers.cookie)[SESSION_COOKIE_NAME]);
+    console.log('ME_DEBUG', {
+      requestId,
+      hasSessionCookie,
+      hasSession: Boolean(req.authSession),
+      hasAuthUser: Boolean(req.authUser),
+      authFailureReason: req.authFailureReason ?? null
+    });
+  }
 
   if (!req.authUser) {
     res.status(401).json({ code: 'UNAUTHENTICATED', message: 'Authentication required' });

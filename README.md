@@ -59,7 +59,7 @@
 ## Environment Variables
 
 ### Backend (required)
-- `NODE_ENV=production|development`
+- `NODE_ENV=production|development` (Render: **immer** `production`)
 - `PORT=3000`
 - `DATABASE_URL=postgresql://...`
 - `SESSION_SECRET=<lange-zufällige-zeichenfolge>`
@@ -83,7 +83,7 @@
 - `ENTRA_LOGOUT_REDIRECT=https://rb-ms-1.onrender.com/#/login`
 
 ### Dev/Test Auth Bypass (optional, niemals Produktion)
-- `AUTH_BYPASS=true` aktiviert im Backend den Header-Bypass **nur** wenn `NODE_ENV != production`
+- `AUTH_BYPASS=true` aktiviert im Backend den Header-Bypass **nur** wenn `NODE_ENV != production` **und** der Dienst nicht auf Render läuft
 - Mit Header `x-dev-user: admin` wird ein lokaler Admin-User (`dev@local`) gesetzt
 
 ### Frontend (required)
