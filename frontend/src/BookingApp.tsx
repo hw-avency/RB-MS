@@ -22,6 +22,7 @@ type OccupancyDesk = {
   y: number;
   status: 'free' | 'booked';
   booking: { id?: string; employeeId?: string; userEmail: string; userDisplayName?: string; userFirstName?: string; userPhotoUrl?: string; type?: 'single' | 'recurring'; daySlot?: 'AM' | 'PM' | 'FULL'; slot?: 'FULL_DAY' | 'MORNING' | 'AFTERNOON' | 'CUSTOM'; startTime?: string; endTime?: string } | null;
+  bookings?: Array<{ id?: string; employeeId?: string; userEmail: string; userDisplayName?: string; userFirstName?: string; userPhotoUrl?: string; type?: 'single' | 'recurring'; daySlot?: 'AM' | 'PM' | 'FULL'; slot?: 'FULL_DAY' | 'MORNING' | 'AFTERNOON' | 'CUSTOM'; startTime?: string; endTime?: string; isCurrentUser?: boolean }>;
   isCurrentUsersDesk?: boolean;
   isHighlighted?: boolean;
 };
@@ -51,6 +52,7 @@ type BulkBookingResponse = {
 };
 type DeskPopupState = { deskId: string; anchorEl: HTMLElement };
 type OccupancyBooking = NonNullable<OccupancyDesk['booking']>;
+type DeskSlotAvailability = 'FREE' | 'AM_BOOKED' | 'PM_BOOKED' | 'FULL_BOOKED';
 type PopupPlacement = 'top' | 'right' | 'bottom' | 'left';
 type PopupCoordinates = { left: number; top: number; placement: PopupPlacement };
 
@@ -204,6 +206,57 @@ const bookingSlotLabel = (booking?: OccupancyBooking | null): string => {
   if (booking.slot === 'CUSTOM') return `${booking.startTime ?? '--:--'}–${booking.endTime ?? '--:--'}`;
   return 'Ganztägig';
 };
+
+const normalizeDeskBookings = (desk: OccupancyDesk): OccupancyBooking[] => {
+  if (desk.bookings && desk.bookings.length > 0) return desk.bookings;
+  return desk.booking ? [desk.booking] : [];
+};
+
+const getDeskSlotAvailability = (desk?: OccupancyDesk | null): DeskSlotAvailability => {
+  if (!desk) return 'FREE';
+  const bookings = normalizeDeskBookings(desk);
+  if (bookings.length === 0) return 'FREE';
+
+  let amTaken = false;
+  let pmTaken = false;
+  for (const booking of bookings) {
+    if (booking.daySlot === 'FULL' || booking.slot === 'FULL_DAY') {
+      amTaken = true;
+      pmTaken = true;
+      break;
+    }
+    if (booking.daySlot === 'AM' || booking.slot === 'MORNING') amTaken = true;
+    if (booking.daySlot === 'PM' || booking.slot === 'AFTERNOON') pmTaken = true;
+  }
+
+  if (amTaken && pmTaken) return 'FULL_BOOKED';
+  if (amTaken) return 'AM_BOOKED';
+  if (pmTaken) return 'PM_BOOKED';
+  return 'FREE';
+};
+
+const getDefaultSlotForDesk = (desk: OccupancyDesk): BookingFormValues['slot'] | null => {
+  const availability = getDeskSlotAvailability(desk);
+  if (availability === 'AM_BOOKED') return 'AFTERNOON';
+  if (availability === 'PM_BOOKED') return 'MORNING';
+  if (availability === 'FREE') return 'FULL_DAY';
+  return null;
+};
+
+const isRoomResource = (desk?: OccupancyDesk | null): boolean => desk?.kind === 'RAUM';
+
+const canBookDesk = (desk?: OccupancyDesk | null): boolean => {
+  if (!desk) return false;
+  if (isRoomResource(desk)) return true;
+  return getDefaultSlotForDesk(desk) !== null;
+};
+
+const deskAvailabilityLabel = (availability: DeskSlotAvailability): string => {
+  if (availability === 'AM_BOOKED') return 'Vormittag belegt';
+  if (availability === 'PM_BOOKED') return 'Nachmittag belegt';
+  if (availability === 'FULL_BOOKED') return 'Ganztag belegt';
+  return 'Frei';
+};
 const getOccupantIdentityKey = (occupant: OccupantForDay): string => {
   if (occupant.employeeId?.trim()) return `employee:${occupant.employeeId}`;
   if (occupant.email.trim()) return `email:${occupant.email.toLowerCase()}`;
@@ -213,28 +266,28 @@ const getOccupantIdentityKey = (occupant: OccupantForDay): string => {
 const mapBookingsForDay = (desks: OccupancyDesk[]): OccupantForDay[] => {
   const uniqueOccupants = new Map<string, OccupantForDay>();
 
-  desks
-    .filter((desk) => desk.booking)
-    .forEach((desk) => {
-      const fullName = desk.booking?.userDisplayName ?? desk.booking?.userEmail ?? 'Unbekannt';
+  desks.forEach((desk) => {
+    for (const booking of normalizeDeskBookings(desk)) {
+      const fullName = booking.userDisplayName ?? booking.userEmail ?? 'Unbekannt';
 
       const occupant: OccupantForDay = {
         deskId: desk.id,
         deskLabel: desk.name,
         deskKindLabel: resourceKindLabel(desk.kind),
-        userId: desk.booking?.id ?? desk.booking?.employeeId ?? desk.booking?.userEmail ?? `${desk.id}-occupant`,
+        userId: booking.id ?? booking.employeeId ?? booking.userEmail ?? `${desk.id}-occupant`,
         name: fullName,
-        firstName: getFirstName({ firstName: desk.booking?.userFirstName, displayName: fullName, email: desk.booking?.userEmail }),
-        email: desk.booking?.userEmail ?? '',
-        employeeId: desk.booking?.employeeId,
-        photoUrl: desk.booking?.userPhotoUrl
+        firstName: getFirstName({ firstName: booking.userFirstName, displayName: fullName, email: booking.userEmail }),
+        email: booking.userEmail ?? '',
+        employeeId: booking.employeeId,
+        photoUrl: booking.userPhotoUrl
       };
 
       const occupantKey = getOccupantIdentityKey(occupant);
       if (!uniqueOccupants.has(occupantKey)) {
         uniqueOccupants.set(occupantKey, occupant);
       }
-    });
+    }
+  });
 
   return Array.from(uniqueOccupants.values()).sort((a, b) => a.name.localeCompare(b.name, 'de'));
 };
@@ -252,29 +305,35 @@ const enrichDeskBookings = ({
   currentUserEmail?: string;
   currentUserId?: string;
 }): OccupancyDesk[] => desks.map((desk) => {
-  if (!desk.booking) return desk;
+  const normalizedBookings = normalizeDeskBookings(desk).map((booking) => {
+    const employee = booking.employeeId ? employeesById.get(booking.employeeId) : employeesByEmail.get(booking.userEmail.toLowerCase());
+    const fallbackPhotoUrl = currentUserEmail && booking.userEmail.toLowerCase() === currentUserEmail.toLowerCase()
+      ? resolveApiUrl(`/user/me/photo?v=${encodeURIComponent(currentUserEmail)}`)
+      : undefined;
+    const employeePhotoUrl = resolveApiUrl(employee?.photoUrl);
+    const bookingPhotoUrl = resolveApiUrl(booking.userPhotoUrl);
+    const bookingEmail = booking.userEmail.toLowerCase();
+    const isMineByEmail = Boolean(currentUserEmail && bookingEmail === currentUserEmail.toLowerCase());
+    const isMineByEmployeeId = Boolean(currentUserId && booking.employeeId && booking.employeeId === currentUserId);
 
-  const booking: OccupancyBooking = desk.booking;
-  const employee = booking.employeeId ? employeesById.get(booking.employeeId) : employeesByEmail.get(booking.userEmail.toLowerCase());
-  const fallbackPhotoUrl = currentUserEmail && booking.userEmail.toLowerCase() === currentUserEmail.toLowerCase()
-    ? resolveApiUrl(`/user/me/photo?v=${encodeURIComponent(currentUserEmail)}`)
-    : undefined;
-  const employeePhotoUrl = resolveApiUrl(employee?.photoUrl);
-  const bookingPhotoUrl = resolveApiUrl(booking.userPhotoUrl);
-  const bookingEmail = booking.userEmail.toLowerCase();
-  const isMineByEmail = Boolean(currentUserEmail && bookingEmail === currentUserEmail.toLowerCase());
-  const isMineByEmployeeId = Boolean(currentUserId && booking.employeeId && booking.employeeId === currentUserId);
-
-  return {
-    ...desk,
-    booking: {
+    return {
       ...booking,
       employeeId: booking.employeeId ?? employee?.id,
       userFirstName: booking.userFirstName ?? employee?.firstName ?? getFirstName({ displayName: booking.userDisplayName ?? employee?.displayName, email: booking.userEmail }),
       userDisplayName: booking.userDisplayName ?? employee?.displayName,
-      userPhotoUrl: bookingPhotoUrl ?? employeePhotoUrl ?? fallbackPhotoUrl
-    },
-    isCurrentUsersDesk: isMineByEmail || isMineByEmployeeId
+      userPhotoUrl: bookingPhotoUrl ?? employeePhotoUrl ?? fallbackPhotoUrl,
+      isCurrentUser: isMineByEmail || isMineByEmployeeId
+    };
+  });
+
+  const primaryBooking = normalizedBookings[0] ?? null;
+
+  return {
+    ...desk,
+    booking: primaryBooking,
+    bookings: normalizedBookings,
+    status: normalizedBookings.length > 0 ? 'booked' : 'free',
+    isCurrentUsersDesk: normalizedBookings.some((booking) => booking.isCurrentUser)
   };
 });
 
@@ -334,11 +393,13 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
     currentUserEmail,
     currentUserId: currentUser?.id
   }), [todayOccupancy?.desks, employeesByEmail, employeesById, currentUserEmail, currentUser?.id]);
-  const filteredDesks = useMemo(() => (onlyFree ? desks.filter((desk) => desk.status === 'free') : desks).map((desk) => ({ ...desk, isHighlighted: desk.id === highlightedDeskId })), [desks, onlyFree, highlightedDeskId]);
+  const filteredDesks = useMemo(() => (onlyFree ? desks.filter((desk) => canBookDesk(desk)) : desks).map((desk) => ({ ...desk, isHighlighted: desk.id === highlightedDeskId })), [desks, onlyFree, highlightedDeskId]);
   const bookingsForSelectedDate = useMemo<OccupantForDay[]>(() => mapBookingsForDay(desks), [desks]);
   const bookingsForToday = useMemo<OccupantForDay[]>(() => mapBookingsForDay(desksToday), [desksToday]);
   const popupDesk = useMemo(() => (deskPopup ? desks.find((desk) => desk.id === deskPopup.deskId) ?? null : null), [desks, deskPopup]);
-  const popupDeskState = popupDesk ? (!popupDesk.booking ? 'FREE' : popupDesk.isCurrentUsersDesk ? 'MINE' : 'TAKEN') : null;
+  const popupDeskAvailability = useMemo(() => getDeskSlotAvailability(popupDesk), [popupDesk]);
+  const popupDeskBookings = useMemo(() => (popupDesk ? normalizeDeskBookings(popupDesk) : []), [popupDesk]);
+  const popupDeskState = popupDesk ? (!canBookDesk(popupDesk) ? (popupDesk.isCurrentUsersDesk ? 'MINE' : 'TAKEN') : 'FREE') : null;
   const cancelConfirmDesk = useMemo(() => (cancelConfirmContext ? desks.find((desk) => desk.id === cancelConfirmContext.deskId) ?? null : null), [desks, cancelConfirmContext]);
   const calendarDays = useMemo(() => buildCalendarDays(visibleMonth), [visibleMonth]);
 
@@ -479,11 +540,6 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
     const desk = desks.find((entry) => entry.id === deskId);
     if (!desk || !anchorEl) return;
 
-    const state = !desk.booking ? 'FREE' : desk.isCurrentUsersDesk ? 'MINE' : 'TAKEN';
-    if (state === 'TAKEN') {
-      return;
-    }
-
     if (deskPopup?.deskId === deskId) {
       closeBookingFlow();
       return;
@@ -499,8 +555,14 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
     setIsCancellingBooking(false);
     setCancelDialogError('');
     setDialogErrorMessage('');
-    if (state === 'FREE') {
-      setBookingFormValues(createDefaultBookingFormValues(selectedDate));
+
+    if (canBookDesk(desk)) {
+      const defaults = createDefaultBookingFormValues(selectedDate);
+      if (!isRoomResource(desk)) {
+        const nextSlot = getDefaultSlotForDesk(desk);
+        if (nextSlot) defaults.slot = nextSlot;
+      }
+      setBookingFormValues(defaults);
       setBookingDialogState('BOOKING_OPEN');
     } else {
       setBookingDialogState('IDLE');
@@ -582,7 +644,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
       setDialogErrorMessage('Für diese Ressource sind Serientermine nicht erlaubt.');
       return;
     }
-    if (!deskPopup || !popupDesk || popupDeskState !== 'FREE') return;
+    if (!deskPopup || !popupDesk || !canBookDesk(popupDesk)) return;
 
     setDialogErrorMessage('');
     setBookingDialogState('SUBMITTING');
@@ -928,7 +990,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
               <div className="desk-popup-header">
                 <div className="stack-xxs">
                   <h3>{resourceKindLabel(popupDesk.kind)}: {popupDesk.name}</h3>
-                  <p className="muted">Buchung anlegen</p>
+                  <p className="muted">Buchung anlegen{!isRoomResource(popupDesk) ? ` · ${deskAvailabilityLabel(popupDeskAvailability)}` : ''}</p>
                 </div>
                 <button type="button" className="btn btn-ghost desk-popup-close" aria-label="Popover schließen" onClick={closeBookingFlow}>✕</button>
               </div>
@@ -950,20 +1012,26 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
               <h3>{resourceKindLabel(popupDesk.kind)}: {popupDesk.name}</h3>
               <div className="stack-sm">
                 <p className="muted">Datum: {new Date(`${selectedDate}T00:00:00.000Z`).toLocaleDateString('de-DE')}</p>
-                <p className="muted">Zeitraum: {bookingSlotLabel(popupDesk.booking)}</p>
-                {popupDesk.booking?.type === 'recurring' && <p className="muted">Typ: Serienbuchung (wöchentlich)</p>}
+                {!isRoomResource(popupDesk) && <p className="muted">Status: {deskAvailabilityLabel(popupDeskAvailability)}</p>}
+                {popupDeskBookings.map((booking) => (
+                  <p key={booking.id ?? `${booking.userEmail}-${bookingSlotLabel(booking)}`} className="muted">
+                    {bookingSlotLabel(booking)}: {booking.userDisplayName ?? booking.userEmail}
+                  </p>
+                ))}
                 <div className="inline-end">
                   <button type="button" className="btn btn-outline" onClick={closeBookingFlow}>Schließen</button>
-                  <button
-                    type="button"
-                    className="btn btn-danger"
-                    onClick={openCancelConfirm}
-                    disabled={popupDesk.booking?.type === 'recurring'}
-                  >
-                    Buchung stornieren
-                  </button>
+                  {popupDeskState === 'MINE' && (
+                    <button
+                      type="button"
+                      className="btn btn-danger"
+                      onClick={openCancelConfirm}
+                      disabled={popupDesk.booking?.type === 'recurring'}
+                    >
+                      Buchung stornieren
+                    </button>
+                  )}
                 </div>
-                {popupDesk.booking?.type === 'recurring' && <p className="muted">Serienbuchungen können derzeit nur im Admin-Modus storniert werden.</p>}
+                {popupDesk.booking?.type === 'recurring' && popupDeskState === 'MINE' && <p className="muted">Serienbuchungen können derzeit nur im Admin-Modus storniert werden.</p>}
               </div>
             </>
           )}
