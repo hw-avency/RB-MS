@@ -2,7 +2,7 @@ import cors from 'cors';
 import express from 'express';
 import crypto from 'crypto';
 import bcrypt from 'bcryptjs';
-import { BookingSlot, Prisma, ResourceKind } from '@prisma/client';
+import { BookingSlot, DaySlot, Prisma, ResourceKind } from '@prisma/client';
 import { prisma } from './prisma';
 
 const app = express();
@@ -435,13 +435,28 @@ const datesInRange = (from: Date, to: Date): Date[] => {
   return dates;
 };
 
+const DAY_SLOT_KINDS = new Set<ResourceKind>(['TISCH', 'PARKPLATZ']);
+const DAY_SLOTS = new Set<DaySlot>(['AM', 'PM', 'FULL']);
 const BOOKING_SLOTS = new Set<BookingSlot>(['FULL_DAY', 'MORNING', 'AFTERNOON', 'CUSTOM']);
-type BookingWindowInput = { slot: BookingSlot; startMinute: number | null; endMinute: number | null };
+type BookingWindowInput = { mode: 'day'; daySlot: DaySlot } | { mode: 'time'; startMinute: number; endMinute: number };
+
+const isDaySlotKind = (kind: ResourceKind): boolean => DAY_SLOT_KINDS.has(kind);
+
+const parseDaySlot = (value: unknown): DaySlot | null => {
+  if (typeof value !== 'string') return null;
+  const normalized = value.trim().toUpperCase() as DaySlot;
+  return DAY_SLOTS.has(normalized) ? normalized : null;
+};
 
 const parseBookingSlot = (value: unknown): BookingSlot | null => {
   if (typeof value !== 'string') return null;
   const normalized = value.trim().toUpperCase() as BookingSlot;
   return BOOKING_SLOTS.has(normalized) ? normalized : null;
+};
+
+const overlapsDaySlot = (a: DaySlot, b: DaySlot): boolean => {
+  if (a === 'FULL' || b === 'FULL') return true;
+  return a === b;
 };
 
 const parseTimeToMinute = (value: unknown): number | null => {
@@ -461,16 +476,35 @@ const minuteToHHMM = (value: number | null | undefined): string | undefined => {
   return `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
 };
 
-const windowsOverlap = (left: BookingWindowInput, right: BookingWindowInput): boolean => {
-  const leftStart = left.slot === 'FULL_DAY' ? 0 : left.slot === 'MORNING' ? 0 : left.slot === 'AFTERNOON' ? 720 : left.startMinute ?? 0;
-  const leftEnd = left.slot === 'FULL_DAY' ? 1440 : left.slot === 'MORNING' ? 720 : left.slot === 'AFTERNOON' ? 1440 : left.endMinute ?? 1440;
-  const rightStart = right.slot === 'FULL_DAY' ? 0 : right.slot === 'MORNING' ? 0 : right.slot === 'AFTERNOON' ? 720 : right.startMinute ?? 0;
-  const rightEnd = right.slot === 'FULL_DAY' ? 1440 : right.slot === 'MORNING' ? 720 : right.slot === 'AFTERNOON' ? 1440 : right.endMinute ?? 1440;
-  return leftStart < rightEnd && rightStart < leftEnd;
+const bookingSlotToDaySlot = (slot: BookingSlot | null | undefined): DaySlot | null => {
+  if (slot === 'FULL_DAY') return 'FULL';
+  if (slot === 'MORNING') return 'AM';
+  if (slot === 'AFTERNOON') return 'PM';
+  return null;
 };
 
-const resolveBookingWindow = ({ deskKind, slot, startTime, endTime }: { deskKind: ResourceKind; slot?: unknown; startTime?: unknown; endTime?: unknown }): { ok: true; value: BookingWindowInput } | { ok: false; message: string } => {
-  if (deskKind === 'RAUM') {
+const bookingToWindow = (booking: { daySlot: DaySlot | null; startTime: Date | null; endTime: Date | null; slot: BookingSlot; startMinute: number | null; endMinute: number | null }): BookingWindowInput | null => {
+  const normalizedDaySlot = booking.daySlot ?? bookingSlotToDaySlot(booking.slot);
+  if (normalizedDaySlot) return { mode: 'day', daySlot: normalizedDaySlot };
+
+  const startMinute = booking.startMinute ?? (booking.startTime ? booking.startTime.getUTCHours() * 60 + booking.startTime.getUTCMinutes() : null);
+  const endMinute = booking.endMinute ?? (booking.endTime ? booking.endTime.getUTCHours() * 60 + booking.endTime.getUTCMinutes() : null);
+  if (typeof startMinute !== 'number' || typeof endMinute !== 'number') return null;
+  return { mode: 'time', startMinute, endMinute };
+};
+
+const windowsOverlap = (left: BookingWindowInput, right: BookingWindowInput): boolean => {
+  if (left.mode === 'day' && right.mode === 'day') {
+    return overlapsDaySlot(left.daySlot, right.daySlot);
+  }
+  if (left.mode === 'time' && right.mode === 'time') {
+    return left.startMinute < right.endMinute && right.startMinute < left.endMinute;
+  }
+  return false;
+};
+
+const resolveBookingWindow = ({ deskKind, daySlot, slot, startTime, endTime }: { deskKind: ResourceKind; daySlot?: unknown; slot?: unknown; startTime?: unknown; endTime?: unknown }): { ok: true; value: BookingWindowInput } | { ok: false; message: string } => {
+  if (!isDaySlotKind(deskKind)) {
     const startMinute = parseTimeToMinute(startTime);
     const endMinute = parseTimeToMinute(endTime);
     if (startMinute === null || endMinute === null) {
@@ -479,15 +513,15 @@ const resolveBookingWindow = ({ deskKind, slot, startTime, endTime }: { deskKind
     if (startMinute >= endMinute) {
       return { ok: false, message: 'endTime muss nach startTime liegen.' };
     }
-    return { ok: true, value: { slot: 'CUSTOM', startMinute, endMinute } };
+    return { ok: true, value: { mode: 'time', startMinute, endMinute } };
   }
 
-  const parsedSlot = parseBookingSlot(slot ?? 'FULL_DAY');
-  if (!parsedSlot || parsedSlot === 'CUSTOM') {
-    return { ok: false, message: 'Für diesen Ressourcentyp sind nur slot=FULL_DAY|MORNING|AFTERNOON erlaubt.' };
+  const parsedDaySlot = parseDaySlot(daySlot) ?? bookingSlotToDaySlot(parseBookingSlot(slot ?? 'FULL_DAY'));
+  if (!parsedDaySlot) {
+    return { ok: false, message: 'Für diese Ressource ist daySlot=AM|PM|FULL erforderlich.' };
   }
 
-  return { ok: true, value: { slot: parsedSlot, startMinute: null, endMinute: null } };
+  return { ok: true, value: { mode: 'day', daySlot: parsedDaySlot } };
 };
 
 const getRouteId = (value: string | string[] | undefined): string | null => {
@@ -677,11 +711,10 @@ const findOverlappingBooking = async (tx: BookingTx, params: {
     orderBy: [{ createdAt: 'desc' }, { id: 'desc' }]
   });
 
-  return matches.find((booking) => windowsOverlap(params.window, {
-    slot: booking.slot,
-    startMinute: booking.startMinute,
-    endMinute: booking.endMinute
-  })) ?? null;
+  return matches.find((booking) => {
+    const bookingWindow = bookingToWindow(booking);
+    return bookingWindow ? windowsOverlap(params.window, bookingWindow) : false;
+  }) ?? null;
 };
 
 const findDuplicateUserDateGroups = (bookings: Array<{ id: string; userEmail: string; date: Date; desk: { kind: ResourceKind } }>) => {
@@ -1712,7 +1745,7 @@ app.get('/floorplans/:id/desks', async (req, res) => {
 });
 
 app.post('/bookings', async (req, res) => {
-  const { deskId, userEmail, date, replaceExisting, slot, startTime, endTime } = req.body as { deskId?: string; userEmail?: string; date?: string; replaceExisting?: boolean; slot?: string; startTime?: string; endTime?: string };
+  const { deskId, userEmail, date, replaceExisting, overwrite, daySlot, slot, startTime, endTime } = req.body as { deskId?: string; userEmail?: string; date?: string; replaceExisting?: boolean; overwrite?: boolean; daySlot?: string; slot?: string; startTime?: string; endTime?: string };
 
   if (!deskId || !userEmail || !date) {
     res.status(400).json({ error: 'validation', message: 'deskId, userEmail and date are required' });
@@ -1731,7 +1764,7 @@ app.post('/bookings', async (req, res) => {
     return;
   }
 
-  const bookingWindowResult = resolveBookingWindow({ deskKind: desk.kind, slot, startTime, endTime });
+  const bookingWindowResult = resolveBookingWindow({ deskKind: desk.kind, daySlot, slot, startTime, endTime });
   if (!bookingWindowResult.ok) {
     res.status(400).json({ error: 'validation', message: bookingWindowResult.message });
     return;
@@ -1739,13 +1772,27 @@ app.post('/bookings', async (req, res) => {
 
   const bookingWindow = bookingWindowResult.value;
   const identity = await findBookingIdentity(userEmail);
-  const shouldReplaceExisting = replaceExisting ?? false;
+  const shouldReplaceExisting = overwrite ?? replaceExisting ?? false;
 
   const result = await prisma.$transaction(async (tx) => {
     await acquireBookingLock(tx, bookingUserKeyForDate(identity.userKey, parsedDate));
     await acquireBookingLock(tx, bookingDeskKeyForDate(deskId, parsedDate));
 
-    const existingUserBooking = await findOverlappingBooking(tx, { identity, date: parsedDate, targetKind: desk.kind, window: bookingWindow });
+    const userKindBookings = await tx.booking.findMany({
+      where: {
+        date: parsedDate,
+        userEmail: { in: identity.emailAliases },
+        desk: { kind: desk.kind }
+      },
+      include: { desk: { select: { name: true, kind: true } } },
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }]
+    });
+
+    const conflictingUserBookings = userKindBookings.filter((booking) => {
+      const candidateWindow = bookingToWindow(booking);
+      return candidateWindow ? windowsOverlap(bookingWindow, candidateWindow) : false;
+    });
+    const existingUserBooking = conflictingUserBookings[0] ?? null;
 
     if (existingUserBooking && existingUserBooking.deskId !== deskId && !shouldReplaceExisting) {
       return {
@@ -1756,7 +1803,8 @@ app.post('/bookings', async (req, res) => {
           existingBooking: {
             id: existingUserBooking.id,
             deskId: existingUserBooking.deskId,
-            deskName: existingUserBooking.desk?.name ?? existingUserBooking.deskId
+            deskName: existingUserBooking.desk?.name ?? existingUserBooking.deskId,
+            daySlot: existingUserBooking.daySlot ?? bookingSlotToDaySlot(existingUserBooking.slot)
           },
           requestedDesk: {
             id: deskId,
@@ -1767,12 +1815,36 @@ app.post('/bookings', async (req, res) => {
       };
     }
 
+    if (bookingWindow.mode === 'day' && conflictingUserBookings.some((booking) => booking.deskId === deskId) && !shouldReplaceExisting) {
+      return { kind: 'ok' as const, status: 200, booking: conflictingUserBookings.find((booking) => booking.deskId === deskId)! };
+    }
+
+    if (bookingWindow.mode === 'day' && conflictingUserBookings.length > 0 && !shouldReplaceExisting) {
+      return {
+        kind: 'conflict' as const,
+        message: 'User already has a booking for this date and resource kind',
+        details: {
+          conflictKind: desk.kind,
+          existingBooking: {
+            id: existingUserBooking?.id,
+            deskId: existingUserBooking?.deskId,
+            deskName: existingUserBooking?.desk?.name ?? existingUserBooking?.deskId,
+            daySlot: existingUserBooking?.daySlot ?? bookingSlotToDaySlot(existingUserBooking?.slot)
+          },
+          requestedDesk: { id: deskId, name: desk.name },
+          date
+        }
+      };
+    }
+
+    const ignoredBookingIds = new Set<string>(conflictingUserBookings.map((booking) => booking.id));
     const deskBookings = await tx.booking.findMany({ where: { deskId, date: parsedDate }, orderBy: [{ createdAt: 'desc' }] });
-    const targetDeskBooking = deskBookings.find((candidate) => windowsOverlap(bookingWindow, {
-      slot: candidate.slot,
-      startMinute: candidate.startMinute,
-      endMinute: candidate.endMinute
-    }) && (!existingUserBooking || candidate.id !== existingUserBooking.id));
+    const targetDeskBooking = deskBookings.find((candidate) => {
+      const candidateWindow = bookingToWindow(candidate);
+      return candidateWindow
+        ? windowsOverlap(bookingWindow, candidateWindow) && !ignoredBookingIds.has(candidate.id)
+        : false;
+    });
 
     if (targetDeskBooking) {
       return {
@@ -1782,14 +1854,25 @@ app.post('/bookings', async (req, res) => {
       };
     }
 
-    if (existingUserBooking) {
+    if (bookingWindow.mode === 'day' && shouldReplaceExisting && conflictingUserBookings.length > 0) {
+      await tx.booking.deleteMany({ where: { id: { in: conflictingUserBookings.map((booking) => booking.id) } } });
+    } else if (existingUserBooking && bookingWindow.mode === 'time') {
       if (existingUserBooking.deskId === deskId && existingUserBooking.userEmail === identity.normalizedEmail) {
         return { kind: 'ok' as const, status: 200, booking: existingUserBooking };
       }
 
       const updated = await tx.booking.update({
         where: { id: existingUserBooking.id },
-        data: { deskId, userEmail: identity.normalizedEmail, slot: bookingWindow.slot, startMinute: bookingWindow.startMinute, endMinute: bookingWindow.endMinute }
+        data: {
+          deskId,
+          userEmail: identity.normalizedEmail,
+          daySlot: null,
+          startTime: new Date(Date.UTC(parsedDate.getUTCFullYear(), parsedDate.getUTCMonth(), parsedDate.getUTCDate(), Math.floor(bookingWindow.startMinute / 60), bookingWindow.startMinute % 60, 0, 0)),
+          endTime: new Date(Date.UTC(parsedDate.getUTCFullYear(), parsedDate.getUTCMonth(), parsedDate.getUTCDate(), Math.floor(bookingWindow.endMinute / 60), bookingWindow.endMinute % 60, 0, 0)),
+          slot: 'CUSTOM',
+          startMinute: bookingWindow.startMinute,
+          endMinute: bookingWindow.endMinute
+        }
       });
       return { kind: 'ok' as const, status: 200, booking: updated };
     }
@@ -1799,9 +1882,12 @@ app.post('/bookings', async (req, res) => {
         deskId,
         userEmail: identity.normalizedEmail,
         date: parsedDate,
-        slot: bookingWindow.slot,
-        startMinute: bookingWindow.startMinute,
-        endMinute: bookingWindow.endMinute
+        daySlot: bookingWindow.mode === 'day' ? bookingWindow.daySlot : null,
+        startTime: bookingWindow.mode === 'time' ? new Date(Date.UTC(parsedDate.getUTCFullYear(), parsedDate.getUTCMonth(), parsedDate.getUTCDate(), Math.floor(bookingWindow.startMinute / 60), bookingWindow.startMinute % 60, 0, 0)) : null,
+        endTime: bookingWindow.mode === 'time' ? new Date(Date.UTC(parsedDate.getUTCFullYear(), parsedDate.getUTCMonth(), parsedDate.getUTCDate(), Math.floor(bookingWindow.endMinute / 60), bookingWindow.endMinute % 60, 0, 0)) : null,
+        slot: bookingWindow.mode === 'day' ? (bookingWindow.daySlot === 'FULL' ? 'FULL_DAY' : bookingWindow.daySlot === 'AM' ? 'MORNING' : 'AFTERNOON') : 'CUSTOM',
+        startMinute: bookingWindow.mode === 'time' ? bookingWindow.startMinute : null,
+        endMinute: bookingWindow.mode === 'time' ? bookingWindow.endMinute : null
       }
     });
 
@@ -1892,7 +1978,7 @@ app.delete('/bookings/:id', async (req, res) => {
 
 
 app.post('/bookings/check-conflicts', async (req, res) => {
-  const { deskId, userEmail, userId, start, end, weekdays, type } = req.body as {
+  const { deskId, userEmail, userId, start, end, weekdays, type, daySlot, startTime, endTime } = req.body as {
     deskId?: string;
     userEmail?: string;
     userId?: string;
@@ -1900,6 +1986,9 @@ app.post('/bookings/check-conflicts', async (req, res) => {
     end?: string;
     weekdays?: number[];
     type?: 'single' | 'range' | 'recurring';
+    daySlot?: string;
+    startTime?: string;
+    endTime?: string;
   };
 
   if (!deskId || !userEmail || !start || !type) {
@@ -1914,48 +2003,26 @@ app.post('/bookings/check-conflicts', async (req, res) => {
     return;
   }
 
-  if (parsedEnd < parsedStart) {
-    res.status(400).json({ error: 'validation', message: 'end must be on or after start' });
-    return;
-  }
-
-  if (!['single', 'range', 'recurring'].includes(type)) {
-    res.status(400).json({ error: 'validation', message: 'type must be single, range or recurring' });
-    return;
-  }
-
-  if (type === 'recurring') {
-    if (!Array.isArray(weekdays) || weekdays.length === 0) {
-      res.status(400).json({ error: 'validation', message: 'weekdays are required for recurring bookings' });
-      return;
-    }
-
-    if (weekdays.some((weekday) => !Number.isInteger(weekday) || weekday < 0 || weekday > 6)) {
-      res.status(400).json({ error: 'validation', message: 'weekdays must contain values between 0 and 6' });
-      return;
-    }
-  }
-
   const desk = await getDeskContext(deskId);
   if (!desk) {
     res.status(404).json({ error: 'not_found', message: 'Desk not found' });
     return;
   }
 
+  const requestWindowResult = resolveBookingWindow({ deskKind: desk.kind, daySlot, startTime, endTime });
+  if (!requestWindowResult.ok) {
+    res.status(400).json({ error: 'validation', message: requestWindowResult.message });
+    return;
+  }
+
   const targetDates = datesInRange(parsedStart, parsedEnd).filter((date) => {
-    if (type === 'single') {
-      return toISODateOnly(date) === toISODateOnly(parsedStart);
-    }
-
-    if (type === 'recurring') {
-      return Boolean(weekdays?.includes(date.getUTCDay()));
-    }
-
+    if (type === 'single') return toISODateOnly(date) === toISODateOnly(parsedStart);
+    if (type === 'recurring') return Boolean(weekdays?.includes(date.getUTCDay()));
     return true;
   });
 
   if (targetDates.length === 0) {
-    res.status(200).json({ hasConflicts: false, conflictDates: [], conflictBookingIds: [], conflictResourceLabels: [] });
+    res.status(200).json({ hasConflicts: false, conflictDates: [], conflictSlots: [], conflictBookingIds: [], conflictResourceLabels: [] });
     return;
   }
 
@@ -1970,23 +2037,27 @@ app.post('/bookings/check-conflicts', async (req, res) => {
     orderBy: [{ date: 'asc' }, { createdAt: 'desc' }, { id: 'desc' }]
   });
 
-  const uniqueByDate = new Map<string, { id: string; deskName: string }>();
+  const byDate = new Map<string, { slots: DaySlot[]; resourceLabels: string[]; bookingIds: string[] }>();
   for (const booking of conflicts) {
+    const bookingWindow = bookingToWindow(booking);
+    if (!bookingWindow || !windowsOverlap(requestWindowResult.value, bookingWindow)) continue;
     const dateKey = toISODateOnly(booking.date);
-    if (!uniqueByDate.has(dateKey)) {
-      uniqueByDate.set(dateKey, { id: booking.id, deskName: booking.desk?.name ?? booking.deskId });
-    }
+    const item = byDate.get(dateKey) ?? { slots: [], resourceLabels: [], bookingIds: [] };
+    const normalizedSlot = booking.daySlot ?? bookingSlotToDaySlot(booking.slot);
+    if (normalizedSlot && !item.slots.includes(normalizedSlot)) item.slots.push(normalizedSlot);
+    const deskName = booking.desk?.name ?? booking.deskId;
+    if (!item.resourceLabels.includes(deskName)) item.resourceLabels.push(deskName);
+    item.bookingIds.push(booking.id);
+    byDate.set(dateKey, item);
   }
 
-  const conflictDates = Array.from(uniqueByDate.keys());
-  const conflictBookingIds = Array.from(uniqueByDate.values()).map((value) => value.id);
-  const conflictResourceLabels = Array.from(uniqueByDate.values()).map((value) => value.deskName);
-
+  const conflictDates = Array.from(byDate.keys());
   res.status(200).json({
     hasConflicts: conflictDates.length > 0,
     conflictDates,
-    conflictBookingIds,
-    conflictResourceLabels,
+    conflictBookingIds: conflictDates.flatMap((dateKey) => byDate.get(dateKey)?.bookingIds ?? []),
+    conflictResourceLabels: conflictDates.flatMap((dateKey) => byDate.get(dateKey)?.resourceLabels ?? []),
+    conflictSlots: conflictDates.map((dateISO) => ({ dateISO, slots: byDate.get(dateISO)?.slots ?? [], resourceLabels: byDate.get(dateISO)?.resourceLabels ?? [] })),
     conflictKind: desk.kind,
     userId
   });
@@ -2211,6 +2282,9 @@ app.get('/bookings', async (req, res) => {
       deskId: true,
       userEmail: true,
       date: true,
+      daySlot: true,
+      startTime: true,
+      endTime: true,
       slot: true,
       startMinute: true,
       endMinute: true,
@@ -2234,9 +2308,10 @@ app.get('/bookings', async (req, res) => {
     userEmail: booking.userEmail,
     date: booking.date,
     createdAt: booking.createdAt,
+    daySlot: booking.daySlot ?? bookingSlotToDaySlot(booking.slot),
     slot: booking.slot,
-    startTime: minuteToHHMM(booking.startMinute),
-    endTime: minuteToHHMM(booking.endMinute),
+    startTime: minuteToHHMM(booking.startMinute ?? (booking.startTime ? booking.startTime.getUTCHours() * 60 + booking.startTime.getUTCMinutes() : null)),
+    endTime: minuteToHHMM(booking.endMinute ?? (booking.endTime ? booking.endTime.getUTCHours() * 60 + booking.endTime.getUTCMinutes() : null)),
     employeeId: employeesByEmail.get(normalizeEmail(booking.userEmail))?.id,
     userDisplayName: employeesByEmail.get(normalizeEmail(booking.userEmail))?.displayName,
     userPhotoUrl: employeesByEmail.get(normalizeEmail(booking.userEmail))?.photoUrl ?? undefined
@@ -2271,52 +2346,34 @@ app.get('/occupancy', async (req, res) => {
     where: {
       date: parsedDate,
       deskId: { in: deskIds }
-    }
+    },
+    orderBy: [{ createdAt: 'asc' }]
   });
 
   const employeesByEmail = await getActiveEmployeesByEmail(singleBookings.map((booking) => booking.userEmail));
-
-  const bookingPriority: BookingSlot[] = ['FULL_DAY', 'MORNING', 'AFTERNOON', 'CUSTOM'];
-  const singleByDeskId = new Map<string, (typeof singleBookings)[number]>();
+  const bookingsByDeskId = new Map<string, typeof singleBookings>();
   for (const booking of singleBookings) {
-    const existing = singleByDeskId.get(booking.deskId);
-    if (!existing) {
-      singleByDeskId.set(booking.deskId, booking);
-      continue;
-    }
-    if (bookingPriority.indexOf(booking.slot) < bookingPriority.indexOf(existing.slot)) {
-      singleByDeskId.set(booking.deskId, booking);
-    }
+    bookingsByDeskId.set(booking.deskId, [...(bookingsByDeskId.get(booking.deskId) ?? []), booking]);
   }
 
   const occupancyDesks = desks.map((desk) => {
-    const single = singleByDeskId.get(desk.id);
-    if (single) {
-      return {
-        id: desk.id,
-        name: desk.name,
-        kind: desk.kind,
-        x: desk.x,
-        y: desk.y,
-        allowSeriesOverride: desk.allowSeriesOverride,
-        effectiveAllowSeries: resolveEffectiveAllowSeries(desk),
-        status: 'booked' as const,
-        booking: {
-          id: single.id,
-          userEmail: single.userEmail,
-          employeeId: employeesByEmail.get(normalizeEmail(single.userEmail))?.id,
-          userDisplayName: employeesByEmail.get(normalizeEmail(single.userEmail))?.displayName,
-          userPhotoUrl: employeesByEmail.get(normalizeEmail(single.userEmail))?.photoUrl ?? undefined,
-          deskName: desk.name,
-        deskId: desk.id,
-          type: 'single' as const,
-          slot: single.slot,
-          startTime: minuteToHHMM(single.startMinute),
-          endTime: minuteToHHMM(single.endMinute)
-        }
-      };
-    }
+    const deskBookings = bookingsByDeskId.get(desk.id) ?? [];
+    const normalizedBookings = deskBookings.map((booking) => ({
+      id: booking.id,
+      userEmail: booking.userEmail,
+      employeeId: employeesByEmail.get(normalizeEmail(booking.userEmail))?.id,
+      userDisplayName: employeesByEmail.get(normalizeEmail(booking.userEmail))?.displayName,
+      userPhotoUrl: employeesByEmail.get(normalizeEmail(booking.userEmail))?.photoUrl ?? undefined,
+      deskName: desk.name,
+      deskId: desk.id,
+      type: 'single' as const,
+      daySlot: booking.daySlot ?? bookingSlotToDaySlot(booking.slot),
+      slot: booking.slot,
+      startTime: minuteToHHMM(booking.startMinute ?? (booking.startTime ? booking.startTime.getUTCHours() * 60 + booking.startTime.getUTCMinutes() : null)),
+      endTime: minuteToHHMM(booking.endMinute ?? (booking.endTime ? booking.endTime.getUTCHours() * 60 + booking.endTime.getUTCMinutes() : null))
+    }));
 
+    const primaryBooking = normalizedBookings[0] ?? null;
     return {
       id: desk.id,
       name: desk.name,
@@ -2325,30 +2382,31 @@ app.get('/occupancy', async (req, res) => {
       y: desk.y,
       allowSeriesOverride: desk.allowSeriesOverride,
       effectiveAllowSeries: resolveEffectiveAllowSeries(desk),
-      status: 'free' as const,
-      booking: null
+      status: normalizedBookings.length > 0 ? 'booked' as const : 'free' as const,
+      booking: primaryBooking,
+      bookings: normalizedBookings
     };
   });
 
   const uniquePeopleByEmail = new Map<string, { email: string; userEmail: string; displayName?: string; photoUrl?: string; deskName?: string; deskId?: string }>();
-  occupancyDesks
-    .filter((desk) => desk.booking)
-    .forEach((desk) => {
-      const userEmail = desk.booking?.userEmail ?? '';
+  occupancyDesks.forEach((desk) => {
+    for (const booking of desk.bookings ?? []) {
+      const userEmail = booking.userEmail ?? '';
       const normalizedEmail = normalizeEmail(userEmail);
       if (!userEmail || uniquePeopleByEmail.has(normalizedEmail)) {
-        return;
+        continue;
       }
 
       uniquePeopleByEmail.set(normalizedEmail, {
         email: userEmail,
         userEmail,
         displayName: employeesByEmail.get(normalizedEmail)?.displayName,
-        photoUrl: employeesByEmail.get(normalizedEmail)?.photoUrl ?? undefined,
+        photoUrl: employeesByEmail.get(normalizeEmail(userEmail))?.photoUrl ?? undefined,
         deskName: desk.name,
         deskId: desk.id
       });
-    });
+    }
+  });
 
   const people = Array.from(uniquePeopleByEmail.values())
     .sort((a, b) => (a.displayName ?? a.email).localeCompare(b.displayName ?? b.email, 'de'));
@@ -2422,8 +2480,8 @@ app.post('/recurring-bookings', async (req, res) => {
     let createdCount = 0;
     let updatedCount = 0;
     for (const targetDate of targetDates) {
-      const existingUserBooking = await findOverlappingBooking(tx, { identity, date: targetDate, targetKind: desk.kind, window: { slot: 'FULL_DAY', startMinute: null, endMinute: null } });
-      const existingDeskBooking = await tx.booking.findFirst({ where: { deskId, date: targetDate, slot: 'FULL_DAY' } });
+      const existingUserBooking = await findOverlappingBooking(tx, { identity, date: targetDate, targetKind: desk.kind, window: { mode: 'day', daySlot: 'FULL' } });
+      const existingDeskBooking = await tx.booking.findFirst({ where: { deskId, date: targetDate, OR: [{ daySlot: 'FULL' }, { slot: 'FULL_DAY' }] } });
 
       if (existingUserBooking) {
         if (existingUserBooking.deskId === deskId) {
@@ -3029,9 +3087,10 @@ app.get('/admin/bookings', requireAdmin, async (req, res) => {
     userEmail: booking.userEmail,
     date: booking.date,
     createdAt: booking.createdAt,
+    daySlot: booking.daySlot ?? bookingSlotToDaySlot(booking.slot),
     slot: booking.slot,
-    startTime: minuteToHHMM(booking.startMinute),
-    endTime: minuteToHHMM(booking.endMinute),
+    startTime: minuteToHHMM(booking.startMinute ?? (booking.startTime ? booking.startTime.getUTCHours() * 60 + booking.startTime.getUTCMinutes() : null)),
+    endTime: minuteToHHMM(booking.endMinute ?? (booking.endTime ? booking.endTime.getUTCHours() * 60 + booking.endTime.getUTCMinutes() : null)),
     employeeId: employeesByEmail.get(normalizeEmail(booking.userEmail))?.id,
     userDisplayName: employeesByEmail.get(normalizeEmail(booking.userEmail))?.displayName
   }));
@@ -3140,9 +3199,10 @@ app.patch('/admin/bookings/:id', requireAdmin, async (req, res) => {
 
   const bookingWindowResult = resolveBookingWindow({
     deskKind: nextDesk.kind,
+    daySlot: typeof slot === 'undefined' ? (existing.daySlot ?? bookingSlotToDaySlot(existing.slot)) : slot,
     slot: typeof slot === 'undefined' ? existing.slot : slot,
-    startTime: typeof startTime === 'undefined' ? minuteToHHMM(existing.startMinute) : startTime,
-    endTime: typeof endTime === 'undefined' ? minuteToHHMM(existing.endMinute) : endTime
+    startTime: typeof startTime === 'undefined' ? minuteToHHMM(existing.startMinute ?? (existing.startTime ? existing.startTime.getUTCHours() * 60 + existing.startTime.getUTCMinutes() : null)) : startTime,
+    endTime: typeof endTime === 'undefined' ? minuteToHHMM(existing.endMinute ?? (existing.endTime ? existing.endTime.getUTCHours() * 60 + existing.endTime.getUTCMinutes() : null)) : endTime
   });
   if (!bookingWindowResult.ok) {
     res.status(400).json({ error: 'validation', message: bookingWindowResult.message });
@@ -3159,7 +3219,7 @@ app.patch('/admin/bookings/:id', requireAdmin, async (req, res) => {
       }
     });
 
-    const overlappingDeskConflict = conflictingBooking && windowsOverlap(nextWindow, { slot: conflictingBooking.slot, startMinute: conflictingBooking.startMinute, endMinute: conflictingBooking.endMinute });
+    const overlappingDeskConflict = conflictingBooking && (() => { const conflictWindow = bookingToWindow(conflictingBooking); return conflictWindow ? windowsOverlap(nextWindow, conflictWindow) : false; })();
 
     if (overlappingDeskConflict) {
       sendConflict(res, 'Desk is already booked for this Zeitraum', { deskId: nextDeskId, date, bookingId: conflictingBooking.id });
@@ -3178,7 +3238,7 @@ app.patch('/admin/bookings/:id', requireAdmin, async (req, res) => {
     include: { desk: { select: { id: true, name: true } } }
   });
 
-  if (userDateConflict && windowsOverlap(nextWindow, { slot: userDateConflict.slot, startMinute: userDateConflict.startMinute, endMinute: userDateConflict.endMinute })) {
+  if (userDateConflict && (() => { const conflictWindow = bookingToWindow(userDateConflict); return conflictWindow ? windowsOverlap(nextWindow, conflictWindow) : false; })()) {
     sendConflict(res, 'User already has a booking for this date and resource kind', {
       conflictKind: nextDesk.kind,
       existingBooking: {
@@ -3196,9 +3256,12 @@ app.patch('/admin/bookings/:id', requireAdmin, async (req, res) => {
       ...(userEmail ? { userEmail: nextUserEmail } : {}),
       ...(date ? { date: nextDate } : {}),
       ...(deskId ? { deskId: nextDeskId } : {}),
-      slot: nextWindow.slot,
-      startMinute: nextWindow.startMinute,
-      endMinute: nextWindow.endMinute
+      daySlot: nextWindow.mode === 'day' ? nextWindow.daySlot : null,
+      startTime: nextWindow.mode === 'time' ? new Date(Date.UTC(nextDate.getUTCFullYear(), nextDate.getUTCMonth(), nextDate.getUTCDate(), Math.floor(nextWindow.startMinute / 60), nextWindow.startMinute % 60, 0, 0)) : null,
+      endTime: nextWindow.mode === 'time' ? new Date(Date.UTC(nextDate.getUTCFullYear(), nextDate.getUTCMonth(), nextDate.getUTCDate(), Math.floor(nextWindow.endMinute / 60), nextWindow.endMinute % 60, 0, 0)) : null,
+      slot: nextWindow.mode === 'day' ? (nextWindow.daySlot === 'FULL' ? 'FULL_DAY' : nextWindow.daySlot === 'AM' ? 'MORNING' : 'AFTERNOON') : 'CUSTOM',
+      startMinute: nextWindow.mode === 'time' ? nextWindow.startMinute : null,
+      endMinute: nextWindow.mode === 'time' ? nextWindow.endMinute : null
     }
   });
 
