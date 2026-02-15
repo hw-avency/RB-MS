@@ -134,6 +134,9 @@ const toLocalDateKey = (value: Date): string => {
 
 const today = toLocalDateKey(new Date());
 const weekdays = ['Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa', 'So'];
+const TOP_LOADING_SHOW_DELAY_MS = 200;
+const TOP_LOADING_HIDE_DELAY_MS = 250;
+const TOP_LOADING_FADE_OUT_MS = 320;
 
 const toDateKey = (value: Date): string => value.toISOString().slice(0, 10);
 const toBookingDateKey = (value: string): string => value.slice(0, 10);
@@ -386,6 +389,45 @@ const enrichDeskBookings = ({
   };
 });
 
+function TopLoadingBar({ loading }: { loading: boolean }) {
+  const [shouldRender, setShouldRender] = useState(false);
+  const [isVisible, setIsVisible] = useState(false);
+
+  useEffect(() => {
+    let showTimer: number | null = null;
+    let hideTimer: number | null = null;
+    let unmountTimer: number | null = null;
+
+    if (loading) {
+      showTimer = window.setTimeout(() => {
+        setShouldRender(true);
+        window.requestAnimationFrame(() => setIsVisible(true));
+      }, TOP_LOADING_SHOW_DELAY_MS);
+    } else {
+      hideTimer = window.setTimeout(() => {
+        setIsVisible(false);
+        unmountTimer = window.setTimeout(() => {
+          setShouldRender(false);
+        }, TOP_LOADING_FADE_OUT_MS);
+      }, TOP_LOADING_HIDE_DELAY_MS);
+    }
+
+    return () => {
+      if (showTimer) window.clearTimeout(showTimer);
+      if (hideTimer) window.clearTimeout(hideTimer);
+      if (unmountTimer) window.clearTimeout(unmountTimer);
+    };
+  }, [loading]);
+
+  if (!shouldRender) return null;
+
+  return (
+    <div className={`top-loading-bar ${isVisible ? 'is-visible' : ''}`} aria-hidden={!isVisible}>
+      <span className="top-loading-bar-track" />
+    </div>
+  );
+}
+
 export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogout, currentUser }: { onOpenAdmin: () => void; canOpenAdmin: boolean; currentUserEmail?: string; onLogout: () => Promise<void>; currentUser: AuthUser }) {
   const [floorplans, setFloorplans] = useState<Floorplan[]>([]);
   const [selectedFloorplanId, setSelectedFloorplanId] = useState('');
@@ -404,6 +446,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
 
   const [isBootstrapping, setIsBootstrapping] = useState(true);
   const [isUpdatingOccupancy, setIsUpdatingOccupancy] = useState(false);
+  const [loadingRequestCount, setLoadingRequestCount] = useState(0);
   const [backendDown, setBackendDown] = useState(false);
   const toast = useToast();
   const { registerDeskAnchor } = toast;
@@ -500,6 +543,16 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
     to: toDateKey(calendarDays[calendarDays.length - 1])
   }), [calendarDays]);
   const bookedCalendarDaysSet = useMemo(() => new Set(bookedCalendarDays), [bookedCalendarDays]);
+  const isAppLoading = loadingRequestCount > 0;
+
+  const runWithAppLoading = async <T,>(operation: () => Promise<T>): Promise<T> => {
+    setLoadingRequestCount((count) => count + 1);
+    try {
+      return await operation();
+    } finally {
+      setLoadingRequestCount((count) => Math.max(0, count - 1));
+    }
+  };
 
   const loadOccupancy = async (floorplanId: string, date: string) => {
     if (!floorplanId) return;
@@ -507,10 +560,10 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
     setIsUpdatingOccupancy(true);
 
     try {
-      const [nextOccupancy, nextTodayOccupancy] = await Promise.all([
+      const [nextOccupancy, nextTodayOccupancy] = await runWithAppLoading(() => Promise.all([
         get<OccupancyResponse>(`/occupancy?floorplanId=${floorplanId}&date=${date}`),
         get<OccupancyResponse>(`/occupancy?floorplanId=${floorplanId}&date=${today}`)
-      ]);
+      ]));
 
       setOccupancy(nextOccupancy);
       setTodayOccupancy(nextTodayOccupancy);
@@ -531,20 +584,21 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
   const loadInitial = async () => {
     setIsBootstrapping(true);
 
-    const healthy = await checkBackendHealth();
-    if (!healthy) {
-      setBackendDown(true);
-      setIsBootstrapping(false);
-      return;
-    }
-
     try {
-      const [nextFloorplans, nextEmployees] = await Promise.all([get<Floorplan[]>('/floorplans'), get<BookingEmployee[]>('/employees')]);
-      setFloorplans(nextFloorplans);
-      setEmployees(nextEmployees);
-      setSelectedFloorplanId((prev) => prev || nextFloorplans.find((plan) => plan.isDefault)?.id || nextFloorplans[0]?.id || '');
-      setSelectedEmployeeEmail((prev) => prev || currentUserEmail || nextEmployees[0]?.email || '');
-      setBackendDown(false);
+      await runWithAppLoading(async () => {
+        const healthy = await checkBackendHealth();
+        if (!healthy) {
+          setBackendDown(true);
+          return;
+        }
+
+        const [nextFloorplans, nextEmployees] = await Promise.all([get<Floorplan[]>('/floorplans'), get<BookingEmployee[]>('/employees')]);
+        setFloorplans(nextFloorplans);
+        setEmployees(nextEmployees);
+        setSelectedFloorplanId((prev) => prev || nextFloorplans.find((plan) => plan.isDefault)?.id || nextFloorplans[0]?.id || '');
+        setSelectedEmployeeEmail((prev) => prev || currentUserEmail || nextEmployees[0]?.email || '');
+        setBackendDown(false);
+      });
     } catch (error) {
       if (error instanceof ApiError && error.code === 'BACKEND_UNREACHABLE') {
         setBackendDown(true);
@@ -575,7 +629,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
 
     const loadCalendarBookings = async () => {
       try {
-        const calendarBookings = await get<CalendarBooking[]>(`/bookings?from=${calendarRange.from}&to=${calendarRange.to}`);
+        const calendarBookings = await runWithAppLoading(() => get<CalendarBooking[]>(`/bookings?from=${calendarRange.from}&to=${calendarRange.to}`));
         if (cancelled) return;
         setBookedCalendarDays(Array.from(new Set(calendarBookings.map((booking) => toBookingDateKey(booking.date)))));
       } catch {
@@ -770,18 +824,18 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
     }
 
     if (payload.type === 'single') {
-      await post('/bookings', { deskId, userEmail: selectedEmployeeEmail, date: payload.date, daySlot: payload.slot === 'FULL_DAY' ? 'FULL' : payload.slot === 'MORNING' ? 'AM' : payload.slot === 'AFTERNOON' ? 'PM' : undefined, startTime: payload.startTime, endTime: payload.endTime, overwrite });
+      await runWithAppLoading(() => post('/bookings', { deskId, userEmail: selectedEmployeeEmail, date: payload.date, daySlot: payload.slot === 'FULL_DAY' ? 'FULL' : payload.slot === 'MORNING' ? 'AM' : payload.slot === 'AFTERNOON' ? 'PM' : undefined, startTime: payload.startTime, endTime: payload.endTime, overwrite }));
       toast.success(overwrite ? 'Umbuchung durchgeführt.' : 'Gebucht', { deskId });
       return;
     }
-    const response = await post<BulkBookingResponse>('/recurring-bookings/bulk', {
+    const response = await runWithAppLoading(() => post<BulkBookingResponse>('/recurring-bookings/bulk', {
       deskId,
       userEmail: selectedEmployeeEmail,
       weekdays: payload.weekdays,
       validFrom: payload.dateFrom,
       validTo: payload.dateTo,
       overrideExisting: overwrite
-    });
+    }));
 
     toast.success(overwrite
       ? `${response.createdCount ?? 0} Tage gebucht, ${response.updatedCount ?? 0} Tage umgebucht.`
@@ -909,7 +963,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
     setIsCancellingBooking(true);
 
     try {
-      await del(`/bookings/${cancelConfirmContext.bookingId}`);
+      await runWithAppLoading(() => del(`/bookings/${cancelConfirmContext.bookingId}`));
       toast.success('Buchung storniert', { deskId: cancelConfirmDesk.id });
       await reloadBookings();
       setBookingVersion((value) => value + 1);
@@ -937,7 +991,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
   };
 
   const retryHealthCheck = async () => {
-    const healthy = await checkBackendHealth();
+    const healthy = await runWithAppLoading(() => checkBackendHealth());
     if (!healthy) {
       setBackendDown(true);
       return;
@@ -1079,6 +1133,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
   if (backendDown) {
     return (
       <main className="app-shell">
+        <TopLoadingBar loading={isAppLoading} />
         <section className="card stack-sm down-card">
           <h2>Backend nicht erreichbar</h2>
           <p>Bitte prüfen, ob Server läuft.</p>
@@ -1093,6 +1148,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
 
   return (
     <main className="app-shell">
+      <TopLoadingBar loading={isAppLoading} />
       <header className="app-header simplified-header compact-topbar">
         <div className="header-left">
           {COMPANY_LOGO_URL ? <img className="brand-logo" src={COMPANY_LOGO_URL} alt={`${APP_TITLE} Logo`} /> : <span className="brand-mark" aria-hidden="true">A</span>}
@@ -1128,10 +1184,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
                 <button className="btn btn-ghost" type="button" onClick={() => setFloorplanZoom((prev) => Math.min(1.8, Number((prev + 0.1).toFixed(2))))}>＋</button>
               </div>
             </div>
-            <div className={`refresh-progress ${isUpdatingOccupancy ? "is-active" : ""}`} aria-hidden={!isUpdatingOccupancy}>
-              <span className="refresh-progress-bar" />
-            </div>
-            <div className="canvas-body canvas-body-focus" style={{ ['--floorplan-zoom' as string]: floorplanZoom }}>
+            <div className={`canvas-body canvas-body-focus ${isUpdatingOccupancy ? 'is-loading' : ''}`} style={{ ['--floorplan-zoom' as string]: floorplanZoom }}>
               {isBootstrapping ? (
                 <div className="skeleton h-420" />
               ) : selectedFloorplan ? (
