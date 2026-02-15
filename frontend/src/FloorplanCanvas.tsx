@@ -38,8 +38,8 @@ type TimeInterval = { start: number; end: number };
 
 const PIN_HITBOX_SIZE = 44;
 const PIN_VISUAL_SIZE = 36;
-const RING_RADIUS = 16;
-const RING_WIDTH = 5;
+const RING_RADIUS = 14.5;
+const RING_WIDTH = 4;
 const CENTER_SIZE = 28;
 const START_ANGLE = -90;
 const MAX_ROOM_MARKER_LABEL_LENGTH = 4;
@@ -204,7 +204,7 @@ const DeskOverlay = memo(function DeskOverlay({ desks, selectedDeskId, hoveredDe
           const slotColor = (booking?: FloorplanBooking): string => {
             if (!booking) return 'var(--resource-free)';
             if (booking.isCurrentUser) return 'var(--resource-own)';
-            return 'var(--resource-booked)';
+            return 'var(--resource-busy)';
           };
 
           const roomIntervals = mergeIntervals(bookings.flatMap((booking) => {
@@ -218,6 +218,10 @@ const DeskOverlay = memo(function DeskOverlay({ desks, selectedDeskId, hoveredDe
           }));
           const roomCoverage = roomIntervals.reduce((total, interval) => total + (interval.end - interval.start), 0);
           const isRoomFullyBooked = roomCoverage >= WORK_SPAN - 1;
+          const amColor = slotColor(amBooking);
+          const pmColor = slotColor(pmBooking);
+          const hasUniformHalfDayColor = amColor === pmColor;
+          const shouldUseButtCap = hasUniformHalfDayColor && amColor === 'var(--resource-busy)';
 
           return (
             <button
@@ -249,18 +253,20 @@ const DeskOverlay = memo(function DeskOverlay({ desks, selectedDeskId, hoveredDe
               aria-label={`${resourceKindLabel(desk.kind)}: ${getDeskLabel(desk)}`}
             >
               {shouldShowPulse && <span className="resource-pulse-ring" aria-hidden="true" />}
-              <svg className="pin-ring-svg" viewBox={`0 0 ${PIN_VISUAL_SIZE} ${PIN_VISUAL_SIZE}`} aria-hidden="true">
+              <svg className="pin-ring-svg" viewBox={`0 0 ${PIN_VISUAL_SIZE} ${PIN_VISUAL_SIZE}`} shapeRendering="geometricPrecision" aria-hidden="true">
                 {isRoom ? (
                   <>
                     <circle cx={PIN_VISUAL_SIZE / 2} cy={PIN_VISUAL_SIZE / 2} r={RING_RADIUS} className="pin-ring-track" />
                     {isRoomFullyBooked
-                      ? <circle cx={PIN_VISUAL_SIZE / 2} cy={PIN_VISUAL_SIZE / 2} r={RING_RADIUS} className="pin-ring-arc" style={{ stroke: 'var(--resource-booked)', strokeWidth: RING_WIDTH, strokeLinecap: 'butt' }} />
-                      : roomIntervals.map((interval, index) => <path key={`${desk.id}-${interval.start}-${interval.end}-${index}`} d={arcPath(minuteToAngle(interval.start), minuteToAngle(interval.end), RING_RADIUS)} className="pin-ring-arc" style={{ stroke: 'var(--resource-booked)', strokeWidth: RING_WIDTH }} />)}
+                      ? <circle cx={PIN_VISUAL_SIZE / 2} cy={PIN_VISUAL_SIZE / 2} r={RING_RADIUS} className="pin-ring-arc" style={{ stroke: 'var(--resource-busy)', strokeWidth: RING_WIDTH, strokeLinecap: 'butt' }} />
+                      : roomIntervals.map((interval, index) => <path key={`${desk.id}-${interval.start}-${interval.end}-${index}`} d={arcPath(minuteToAngle(interval.start), minuteToAngle(interval.end), RING_RADIUS)} className="pin-ring-arc" style={{ stroke: 'var(--resource-busy)', strokeWidth: RING_WIDTH, strokeLinecap: 'round' }} />)}
                   </>
+                ) : hasUniformHalfDayColor ? (
+                  <circle cx={PIN_VISUAL_SIZE / 2} cy={PIN_VISUAL_SIZE / 2} r={RING_RADIUS} className="pin-ring-arc" style={{ stroke: amColor, strokeWidth: RING_WIDTH, strokeLinecap: shouldUseButtCap ? 'butt' : 'round' }} />
                 ) : (
                   <>
-                    <path d={arcPath(START_ANGLE, START_ANGLE + 180, RING_RADIUS)} className="pin-ring-arc" style={{ stroke: slotColor(amBooking), strokeWidth: RING_WIDTH }} />
-                    <path d={arcPath(START_ANGLE + 180, START_ANGLE + 360, RING_RADIUS)} className="pin-ring-arc" style={{ stroke: slotColor(pmBooking), strokeWidth: RING_WIDTH }} />
+                    <path d={arcPath(START_ANGLE, START_ANGLE + 180, RING_RADIUS)} className="pin-ring-arc" style={{ stroke: amColor, strokeWidth: RING_WIDTH, strokeLinecap: 'round' }} />
+                    <path d={arcPath(START_ANGLE + 180, START_ANGLE + 360, RING_RADIUS)} className="pin-ring-arc" style={{ stroke: pmColor, strokeWidth: RING_WIDTH, strokeLinecap: 'round' }} />
                   </>
                 )}
               </svg>
