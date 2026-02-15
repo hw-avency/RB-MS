@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { API_BASE, ApiError, checkBackendHealth, get, markBackendAvailable, post, resolveApiUrl } from './api';
-import { cancelBooking } from './api/bookings';
+import { cancelBooking, createRoomBooking } from './api/bookings';
+import { createMutationRequestId, logMutation, toBodySnippet } from './api/mutationLogger';
 import { Avatar } from './components/Avatar';
 import { BookingForm, createDefaultBookingFormValues } from './components/BookingForm';
 import type { BookingFormSubmitPayload, BookingFormValues } from './components/BookingForm';
@@ -638,8 +639,8 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
     }
   };
 
-  const loadOccupancy = async (floorplanId: string, date: string) => {
-    if (!floorplanId) return;
+  const loadOccupancy = async (floorplanId: string, date: string): Promise<OccupancyResponse | null> => {
+    if (!floorplanId) return null;
 
     setIsUpdatingOccupancy(true);
 
@@ -654,12 +655,14 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
       markBackendAvailable(true);
       setBackendDown(false);
       setSelectedDeskId((prev) => (nextOccupancy.desks.some((desk) => desk.id === prev) ? prev : ''));
+      return nextOccupancy;
     } catch (error) {
       if (error instanceof ApiError && error.code === 'BACKEND_UNREACHABLE') {
         setBackendDown(true);
       }
       toast.error(getApiErrorMessage(error, 'Belegung konnte nicht geladen werden.'));
       setTodayOccupancy(null);
+      return null;
     } finally {
       setIsUpdatingOccupancy(false);
     }
@@ -903,8 +906,13 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
     }
   };
 
-  const reloadBookings = async () => {
-    await loadOccupancy(selectedFloorplanId, selectedDate);
+  const reloadBookings = async (options?: { requestId?: string; roomId?: string; date?: string }) => {
+    const refreshed = await loadOccupancy(selectedFloorplanId, options?.date ?? selectedDate);
+    if (options?.requestId && options.roomId && refreshed) {
+      const roomDesk = refreshed.desks.find((desk) => desk.id === options.roomId);
+      const roomBookingsCount = roomDesk ? normalizeDeskBookings(roomDesk).length : 0;
+      logMutation('ROOM_REFETCH_DONE', { requestId: options.requestId, roomId: options.roomId, count: roomBookingsCount });
+    }
   };
 
   const closeBookingFlow = () => {
@@ -992,15 +1000,51 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
     }
     if (!deskPopup || !popupDesk || !canBookDesk(popupDesk)) return;
 
+    const requestId = createMutationRequestId();
+    const isRoomCreate = isRoomResource(popupDesk) && payload.type === 'single';
+
     setDialogErrorMessage('');
     setBookingDialogState('SUBMITTING');
+    logMutation('UI_SET_LOADING', { requestId, value: true });
+
+    if (isRoomCreate) {
+      logMutation('ROOM_CREATE_CLICK', {
+        requestId,
+        roomId: popupDesk.id,
+        date: payload.date,
+        from: payload.startTime,
+        to: payload.endTime
+      });
+    }
 
     try {
-      await submitPopupBooking(popupDesk.id, payload, false);
-      closeBookingFlow();
-      await reloadBookings();
+      if (isRoomCreate) {
+        if (!selectedEmployeeEmail) {
+          throw new Error('Bitte Mitarbeiter auswählen.');
+        }
+        const body = {
+          deskId: popupDesk.id,
+          userEmail: selectedEmployeeEmail,
+          date: payload.date,
+          startTime: payload.startTime,
+          endTime: payload.endTime,
+          overwrite: false
+        };
+        await runWithAppLoading(() => createRoomBooking(body, { requestId }));
+        toast.success('Gebucht', { deskId: popupDesk.id });
+      } else {
+        await submitPopupBooking(popupDesk.id, payload, false);
+      }
+      await reloadBookings(isRoomCreate ? { requestId, roomId: popupDesk.id, date: payload.date } : undefined);
       setBookingVersion((value) => value + 1);
+      closeBookingFlow();
     } catch (error) {
+      if (isRoomCreate) {
+        logMutation('ROOM_CREATE_ERROR', {
+          requestId,
+          err: error instanceof Error ? error.message : toBodySnippet(error)
+        });
+      }
       if (error instanceof ApiError && error.code === 'BACKEND_UNREACHABLE') {
         setBackendDown(true);
         setBookingDialogState('BOOKING_OPEN');
@@ -1032,6 +1076,9 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
 
       setBookingDialogState('BOOKING_OPEN');
       setDialogErrorMessage(error instanceof Error ? error.message : 'Buchung fehlgeschlagen.');
+    } finally {
+      logMutation('UI_SET_LOADING', { requestId, value: false });
+      setBookingDialogState((prev) => (prev === 'SUBMITTING' ? 'BOOKING_OPEN' : prev));
     }
   };
 
@@ -1095,28 +1142,37 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
     }
 
     const bookingId = cancelConfirmContext.bookingIds[0];
-    console.log('[CANCEL] click', {
-      bookingId,
-      resourceId: cancelConfirmDesk.id,
-      kind: cancelConfirmDesk.kind,
-      date: selectedDate
-    });
+    const requestId = createMutationRequestId();
+    const isRoomCancel = isRoomResource(cancelConfirmDesk);
+
+    if (isRoomCancel) {
+      logMutation('ROOM_CANCEL_CLICK', {
+        requestId,
+        bookingId,
+        roomId: cancelConfirmDesk.id,
+        date: selectedDate
+      });
+    }
+
     if (!bookingId) {
       const message = 'Stornieren fehlgeschlagen: bookingId fehlt.';
-      console.error('[CANCEL] error', new Error(message));
+      if (isRoomCancel) {
+        logMutation('ROOM_CANCEL_ERROR', { requestId, err: message });
+      }
       setCancelDialogError(message);
       return;
     }
 
     setCancelDialogError('');
     setIsCancellingBooking(true);
+    logMutation('UI_SET_LOADING', { requestId, value: true });
 
     try {
       await runWithAppLoading(async () => {
-        await cancelBooking(bookingId);
+        await cancelBooking(bookingId, isRoomCancel ? { requestId } : undefined);
       });
       toast.success('Buchung storniert', { deskId: cancelConfirmDesk.id });
-      await reloadBookings();
+      await reloadBookings(isRoomCancel ? { requestId, roomId: cancelConfirmDesk.id, date: selectedDate } : undefined);
       setBookingVersion((value) => value + 1);
 
       setCancelDialogError('');
@@ -1132,8 +1188,15 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
       }
       setCancelConfirmContext(null);
     } catch (error) {
-      console.error('[CANCEL] error', error);
+      if (isRoomCancel) {
+        logMutation('ROOM_CANCEL_ERROR', {
+          requestId,
+          err: error instanceof Error ? error.message : toBodySnippet(error)
+        });
+      }
       setCancelDialogError(error instanceof Error ? error.message : 'Stornieren fehlgeschlagen');
+    } finally {
+      logMutation('UI_SET_LOADING', { requestId, value: false });
       setIsCancellingBooking(false);
     }
   };
@@ -1455,9 +1518,9 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
             <p className="muted cancel-booking-subline">{resourceKindLabel(cancelConfirmDesk.kind)}: {cancelConfirmDesk.name} · {new Date(`${selectedDate}T00:00:00.000Z`).toLocaleDateString('de-DE')}</p>
             {cancelDialogError && <p className="error-banner">{cancelDialogError}</p>}
             <div className="inline-end">
-              <button type="button" className="btn btn-outline" onClick={cancelCancelConfirm} disabled={isCancellingBooking}>Abbrechen</button>
-              <button type="button" className="btn btn-danger" onClick={() => void submitPopupCancel()} disabled={isCancellingBooking}>
-                {isCancellingBooking ? 'Stornieren…' : 'Stornieren'}
+              <button type="button" className="btn btn-outline" onClick={cancelCancelConfirm} disabled={isCancellingBooking} data-state={isCancellingBooking ? 'loading' : 'idle'}>Abbrechen</button>
+              <button type="button" className="btn btn-danger" onClick={() => void submitPopupCancel()} disabled={isCancellingBooking} data-state={isCancellingBooking ? 'loading' : 'idle'}>
+                {isCancellingBooking ? <><span className="btn-spinner" aria-hidden />Stornieren…</> : 'Stornieren'}
               </button>
             </div>
           </section>
