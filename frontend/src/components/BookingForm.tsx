@@ -1,16 +1,20 @@
 import { FormEvent, useMemo, useState } from 'react';
 
+type BookingType = 'single' | 'range' | 'recurring';
+
 type BookingFormValues = {
+  type: BookingType;
   date: string;
-  fromTime: string;
-  toTime: string;
-  mode: 'single' | 'recurring';
-  validFrom: string;
-  validTo: string;
+  dateFrom: string;
+  dateTo: string;
+  onlyWeekdays: boolean;
   weekdays: number[];
 };
 
-type BookingFormSubmitPayload = BookingFormValues;
+type BookingFormSubmitPayload =
+  | { type: 'single'; date: string }
+  | { type: 'range'; dateFrom: string; dateTo: string; onlyWeekdays: boolean }
+  | { type: 'recurring'; dateFrom: string; dateTo: string; weekdays: number[] };
 
 const weekdayButtons = [
   { label: 'Mo', value: 1 },
@@ -21,8 +25,6 @@ const weekdayButtons = [
   { label: 'Sa', value: 6 },
   { label: 'So', value: 0 }
 ];
-
-const isTimeRangeValid = (fromTime: string, toTime: string): boolean => fromTime < toTime;
 
 export function BookingForm({
   selectedDate,
@@ -35,12 +37,11 @@ export function BookingForm({
 }) {
   const defaultWeekday = useMemo(() => new Date(`${selectedDate}T00:00:00.000Z`).getUTCDay(), [selectedDate]);
   const [values, setValues] = useState<BookingFormValues>({
+    type: 'single',
     date: selectedDate,
-    fromTime: '09:00',
-    toTime: '17:00',
-    mode: 'single',
-    validFrom: selectedDate,
-    validTo: selectedDate,
+    dateFrom: selectedDate,
+    dateTo: selectedDate,
+    onlyWeekdays: true,
     weekdays: [defaultWeekday]
   });
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -59,14 +60,16 @@ export function BookingForm({
     event.preventDefault();
     setLocalError('');
 
-    if (!isTimeRangeValid(values.fromTime, values.toTime)) {
-      setLocalError('Zeitraum ist ungültig: „von“ muss vor „bis“ liegen.');
-      return;
+    if (values.type === 'range') {
+      if (!values.dateFrom || !values.dateTo || values.dateFrom > values.dateTo) {
+        setLocalError('Für den Zeitraum muss „Von“ vor oder gleich „Bis“ liegen.');
+        return;
+      }
     }
 
-    if (values.mode === 'recurring') {
-      if (!values.validFrom || !values.validTo || values.validFrom > values.validTo) {
-        setLocalError('Für Serienbuchungen muss der Gültigkeitszeitraum korrekt gesetzt sein.');
+    if (values.type === 'recurring') {
+      if (!values.dateFrom || !values.dateTo || values.dateFrom > values.dateTo) {
+        setLocalError('Für Serienbuchungen muss der Zeitraum korrekt gesetzt sein.');
         return;
       }
       if (values.weekdays.length === 0) {
@@ -75,9 +78,15 @@ export function BookingForm({
       }
     }
 
+    const payload: BookingFormSubmitPayload = values.type === 'single'
+      ? { type: 'single', date: values.date }
+      : values.type === 'range'
+        ? { type: 'range', dateFrom: values.dateFrom, dateTo: values.dateTo, onlyWeekdays: values.onlyWeekdays }
+        : { type: 'recurring', dateFrom: values.dateFrom, dateTo: values.dateTo, weekdays: values.weekdays };
+
     setIsSubmitting(true);
     try {
-      await onSubmit(values);
+      await onSubmit(payload);
     } finally {
       setIsSubmitting(false);
     }
@@ -86,42 +95,64 @@ export function BookingForm({
   return (
     <form className="stack-sm" onSubmit={handleSubmit}>
       <div className="stack-xs">
-        <label>Datum</label>
-        <input type="date" value={values.date} readOnly />
-      </div>
-      <div className="inline-grid-two">
-        <div className="stack-xs">
-          <label>von</label>
-          <input type="time" value={values.fromTime} autoFocus onChange={(event) => setValues((current) => ({ ...current, fromTime: event.target.value }))} />
-        </div>
-        <div className="stack-xs">
-          <label>bis</label>
-          <input type="time" value={values.toTime} onChange={(event) => setValues((current) => ({ ...current, toTime: event.target.value }))} />
-        </div>
-      </div>
-
-      <div className="stack-xs">
         <label>Typ</label>
-        <select value={values.mode} onChange={(event) => setValues((current) => ({ ...current, mode: event.target.value === 'recurring' ? 'recurring' : 'single' }))}>
-          <option value="single">Einzelbuchung</option>
+        <select
+          value={values.type}
+          onChange={(event) => {
+            const nextType = event.target.value === 'range' ? 'range' : event.target.value === 'recurring' ? 'recurring' : 'single';
+            setValues((current) => ({ ...current, type: nextType }));
+          }}
+        >
+          <option value="single">Einzelbuchung ganzer Tag</option>
+          <option value="range">Zeitraum (Von–Bis)</option>
           <option value="recurring">Serienbuchung</option>
         </select>
       </div>
 
-      {values.mode === 'recurring' && (
+      {values.type === 'single' && (
+        <div className="stack-xs">
+          <label>Datum</label>
+          <input type="date" value={values.date} readOnly />
+        </div>
+      )}
+
+      {values.type === 'range' && (
         <>
           <div className="inline-grid-two">
             <div className="stack-xs">
-              <label>Serie von</label>
-              <input type="date" value={values.validFrom} onChange={(event) => setValues((current) => ({ ...current, validFrom: event.target.value }))} />
+              <label>Von</label>
+              <input type="date" value={values.dateFrom} autoFocus onChange={(event) => setValues((current) => ({ ...current, dateFrom: event.target.value }))} />
             </div>
             <div className="stack-xs">
-              <label>Serie bis</label>
-              <input type="date" value={values.validTo} onChange={(event) => setValues((current) => ({ ...current, validTo: event.target.value }))} />
+              <label>Bis</label>
+              <input type="date" value={values.dateTo} onChange={(event) => setValues((current) => ({ ...current, dateTo: event.target.value }))} />
+            </div>
+          </div>
+          <label className="checkbox-label">
+            <input
+              type="checkbox"
+              checked={values.onlyWeekdays}
+              onChange={(event) => setValues((current) => ({ ...current, onlyWeekdays: event.target.checked }))}
+            />
+            Nur Werktage (Mo–Fr)
+          </label>
+        </>
+      )}
+
+      {values.type === 'recurring' && (
+        <>
+          <div className="inline-grid-two">
+            <div className="stack-xs">
+              <label>Start</label>
+              <input type="date" value={values.dateFrom} autoFocus onChange={(event) => setValues((current) => ({ ...current, dateFrom: event.target.value }))} />
+            </div>
+            <div className="stack-xs">
+              <label>Ende</label>
+              <input type="date" value={values.dateTo} onChange={(event) => setValues((current) => ({ ...current, dateTo: event.target.value }))} />
             </div>
           </div>
           <div className="stack-xs">
-            <label>Wiederholungstage</label>
+            <label>Wochentage</label>
             <div className="weekday-toggle-group" role="group" aria-label="Wochentage">
               {weekdayButtons.map((weekday) => (
                 <button
