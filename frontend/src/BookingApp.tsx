@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { API_BASE, ApiError, checkBackendHealth, get, markBackendAvailable, post, resolveApiUrl } from './api';
+import { cancelBooking } from './api/bookings';
 import { Avatar } from './components/Avatar';
 import { BookingForm, createDefaultBookingFormValues } from './components/BookingForm';
 import type { BookingFormSubmitPayload, BookingFormValues } from './components/BookingForm';
@@ -86,38 +87,6 @@ const getCandidatePosition = (placement: PopupPlacement, anchorRect: DOMRect, po
   }
 
   return { left: anchorCenterX - popupWidth / 2, top: anchorRect.bottom + POPUP_OFFSET };
-};
-
-
-const deleteBookingWithDebug = async (bookingId: string): Promise<void> => {
-  if (!bookingId) {
-    throw new Error('Ungültige Buchungs-ID');
-  }
-
-  const path = `/bookings/${bookingId}`;
-  const url = `${API_BASE}${path}`;
-  console.log('CANCEL_API_START', { url, payload: { bookingId } });
-
-  const response = await fetch(url, {
-    method: 'DELETE',
-    credentials: 'include',
-    cache: 'no-store',
-    headers: {
-      'Content-Type': 'application/json'
-    }
-  });
-
-  const contentType = response.headers.get('content-type') ?? '';
-  const rawBody = contentType.includes('application/json')
-    ? JSON.stringify(await response.json())
-    : await response.text();
-  const bodySnippet = rawBody.slice(0, 240);
-
-  console.log('CANCEL_API_DONE', response.status, bodySnippet);
-
-  if (!response.ok) {
-    throw new Error(`Request failed with status ${response.status}: ${bodySnippet || 'no response body'}`);
-  }
 };
 
 const calculatePopupCoordinates = (anchorRect: DOMRect, popupRect: DOMRect): PopupCoordinates => {
@@ -1126,10 +1095,15 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
     }
 
     const bookingId = cancelConfirmContext.bookingIds[0];
-    console.log('CANCEL_CLICK', bookingId);
+    console.log('[CANCEL] click', {
+      bookingId,
+      resourceId: cancelConfirmDesk.id,
+      kind: cancelConfirmDesk.kind,
+      date: selectedDate
+    });
     if (!bookingId) {
       const message = 'Stornieren fehlgeschlagen: bookingId fehlt.';
-      console.error('CANCEL_API_ERR', new Error(message));
+      console.error('[CANCEL] error', new Error(message));
       setCancelDialogError(message);
       return;
     }
@@ -1139,7 +1113,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
 
     try {
       await runWithAppLoading(async () => {
-        await deleteBookingWithDebug(bookingId);
+        await cancelBooking(bookingId);
       });
       toast.success('Buchung storniert', { deskId: cancelConfirmDesk.id });
       await reloadBookings();
@@ -1158,7 +1132,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
       }
       setCancelConfirmContext(null);
     } catch (error) {
-      console.error('CANCEL_API_ERR', error);
+      console.error('[CANCEL] error', error);
       setCancelDialogError(error instanceof Error ? error.message : 'Stornieren fehlgeschlagen');
       setIsCancellingBooking(false);
     }
