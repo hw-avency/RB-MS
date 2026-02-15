@@ -311,36 +311,90 @@ function DashboardPage({ path, navigate, onLogout, currentUser }: RouteProps) {
 
   const bookingsNextWeek = bookings.filter((item) => item.date >= today && item.date <= in7Days).length;
   const recent = [...bookings].sort((a, b) => new Date(b.createdAt ?? b.date).getTime() - new Date(a.createdAt ?? a.date).getTime()).slice(0, 12);
+  const activeEmployees = employees.filter((employee) => employee.isActive).length;
+  const dashboardKpis = [
+    { label: 'Aktive Mitarbeiter', value: activeEmployees, icon: '👥', to: '/admin/employees' },
+    { label: 'Tische', value: desks.length, icon: '🖥️', to: '/admin/desks' },
+    { label: 'Floorpläne', value: floorplans.length, icon: '🗺️', to: '/admin/floorplans' },
+    { label: 'Buchungen (7 Tage)', value: bookingsNextWeek, icon: '📅', to: '/admin/bookings' }
+  ];
 
   return (
     <AdminLayout path={path} navigate={navigate} onLogout={onLogout} title="Dashboard" currentUser={currentUser ?? null}>
       {state.error && <ErrorState text={state.error} onRetry={load} />}
       <section className="dashboard-grid">
-        {[{ label: 'Aktive Mitarbeiter', value: employees.filter((e) => e.isActive).length, icon: '👥', to: '/admin/employees' }, { label: 'Tische', value: desks.length, icon: '🖱️', to: '/admin/desks' }, { label: 'Floorpläne', value: floorplans.length, icon: '🗺️', to: '/admin/floorplans' }, { label: 'Buchungen (7 Tage)', value: bookingsNextWeek, icon: '📅', to: '/admin/bookings' }].map((card) => (
-          <button className="card dashboard-kpi" key={card.label} onClick={() => navigate(card.to)}><span className="dashboard-kpi-icon">{card.icon}</span><strong>{card.value}</strong><p>{card.label}</p></button>
-        ))}
+        {!state.ready || state.loading
+          ? Array.from({ length: 4 }).map((_, index) => <div key={index} className="card dashboard-kpi-skeleton"><div className="skeleton" /><div className="skeleton" /><div className="skeleton" /></div>)
+          : dashboardKpis.map((card) => (
+            <button className="card dashboard-kpi" key={card.label} onClick={() => navigate(card.to)}>
+              <span className="dashboard-kpi-icon" aria-hidden>{card.icon}</span>
+              <div className="stack-xs">
+                <strong>{card.value}</strong>
+                <p>{card.label}</p>
+              </div>
+            </button>
+          ))}
       </section>
       <section className="dashboard-panels">
-        <article className="card stack-sm">
-          <div className="inline-between"><h3>Letzte Buchungen</h3><button className="btn btn-outline" onClick={() => navigate('/admin/bookings')}>Alle öffnen</button></div>
-          {!state.ready || state.loading ? <div className="stack-sm">{Array.from({ length: 6 }).map((_, i) => <div key={i} className="skeleton admin-table-skeleton" />)}</div> : recent.length === 0 ? <EmptyState text="Noch keine Buchungen vorhanden." /> : (
-            <div className="stack-sm">
-              {recent.map((booking) => {
-                const desk = desks.find((item) => item.id === booking.deskId);
-                const floorplan = floorplans.find((plan) => plan.id === desk?.floorplanId);
-                return <button key={booking.id} className="dashboard-booking-row" onClick={() => navigate('/admin/bookings')}><div><strong>{booking.userDisplayName || booking.userEmail}</strong><p className="muted">{formatDateOnly(booking.date)} · {desk?.name ?? 'Tisch'}</p></div><span className="muted">{floorplan?.name ?? '—'}</span></button>;
-              })}
+        <article className="card stack-sm dashboard-main-card">
+          <div className="inline-between"><h3>Letzte Buchungen</h3><button className="btn btn-outline" onClick={() => navigate('/admin/bookings')}>Alle anzeigen</button></div>
+          {!state.ready || state.loading ? <div className="stack-xs">{Array.from({ length: 7 }).map((_, i) => <div key={i} className="skeleton admin-table-skeleton" />)}</div> : recent.length === 0 ? <EmptyState text="Noch keine Buchungen vorhanden" action={<button className="btn" onClick={() => navigate('/admin/bookings?create=1')}>Buchung anlegen</button>} /> : (
+            <div className="table-wrap dashboard-table-wrap">
+              <table className="admin-table dashboard-bookings-table">
+                <thead>
+                  <tr>
+                    <th>Mitarbeiter</th>
+                    <th>Datum</th>
+                    <th>Tisch</th>
+                    <th>Standort</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {recent.map((booking) => {
+                    const desk = desks.find((item) => item.id === booking.deskId);
+                    const floorplan = floorplans.find((plan) => plan.id === desk?.floorplanId);
+                    const userName = booking.userDisplayName || booking.userEmail;
+                    return (
+                      <tr
+                        key={booking.id}
+                        className="dashboard-booking-table-row"
+                        role="button"
+                        tabIndex={0}
+                        onClick={() => navigate('/admin/bookings')}
+                        onKeyDown={(event) => {
+                          if (event.key === 'Enter' || event.key === ' ') {
+                            event.preventDefault();
+                            navigate('/admin/bookings');
+                          }
+                        }}
+                      >
+                        <td>
+                          <div className="occupant-person-cell">
+                            <Avatar displayName={booking.userDisplayName} email={booking.userEmail} size={28} />
+                            <strong>{userName}</strong>
+                          </div>
+                        </td>
+                        <td>{formatDateOnly(booking.date)}</td>
+                        <td>{desk?.name ?? 'Tisch'}</td>
+                        <td>{floorplan?.name ? <Badge>{floorplan.name}</Badge> : <span className="muted">—</span>}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
             </div>
           )}
         </article>
-        <article className="card stack-sm">
+        <article className="card stack-sm dashboard-actions-card">
           <h3>Schnellaktionen</h3>
-          <div className="quick-actions-grid">
-            <button className="btn" onClick={() => navigate('/admin/employees?create=1')}>Mitarbeiter anlegen</button>
-            <button className="btn" onClick={() => navigate('/admin/floorplans?create=1')}>Floorplan anlegen</button>
-            <button className="btn" onClick={() => navigate('/admin/desks?create=1')}>Tisch anlegen</button>
-            <button className="btn" onClick={() => navigate('/admin/bookings?create=1')}>Buchung anlegen</button>
-          </div>
+          {!state.ready || state.loading ? <div className="stack-xs">{Array.from({ length: 4 }).map((_, i) => <div key={i} className="skeleton quick-action-skeleton" />)}</div> : (
+            <div className="quick-actions-list">
+              <button className="btn quick-action-btn" onClick={() => navigate('/admin/bookings?create=1')}><span aria-hidden>📅</span>Buchung anlegen</button>
+              <button className="btn btn-outline quick-action-btn" onClick={() => navigate('/admin/desks?create=1')}><span aria-hidden>🖥️</span>Tisch anlegen</button>
+              <button className="btn btn-outline quick-action-btn" onClick={() => navigate('/admin/employees?create=1')}><span aria-hidden>👤</span>Mitarbeiter anlegen</button>
+              <button className="btn btn-outline quick-action-btn" onClick={() => navigate('/admin/floorplans?create=1')}><span aria-hidden>🗺️</span>Floorplan anlegen</button>
+            </div>
+          )}
         </article>
       </section>
     </AdminLayout>
