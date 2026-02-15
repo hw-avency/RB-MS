@@ -211,6 +211,8 @@ function RowMenu({ items }: { items: RowMenuItem[] }) {
 
 function AdminLayout({ path, navigate, title, children, onLogout, currentUser }: { path: string; navigate: (to: string) => void; title: string; children: ReactNode; onLogout: () => Promise<void>; currentUser: AdminSession | null }) {
   const current = basePath(path);
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
+
   return (
     <main className="app-shell">
       <div className="admin-shell-v2">
@@ -221,6 +223,7 @@ function AdminLayout({ path, navigate, title, children, onLogout, currentUser }:
         <section className="admin-content-v2 stack-sm">
           <header className="card app-header simplified-header">
             <div className="header-left">
+              <button className="btn btn-outline admin-mobile-nav-toggle" onClick={() => setMobileNavOpen(true)}>☰ Menü</button>
               <div>
                 <p className="muted">Admin / {title}</p>
                 <strong>{title}</strong>
@@ -234,6 +237,17 @@ function AdminLayout({ path, navigate, title, children, onLogout, currentUser }:
           {children}
         </section>
       </div>
+      {mobileNavOpen && createPortal(
+        <div className="overlay" onClick={() => setMobileNavOpen(false)}>
+          <section className="card mobile-admin-drawer stack-sm" onClick={(event) => event.stopPropagation()}>
+            <div className="inline-between"><strong>Navigation</strong><button className="btn btn-outline" onClick={() => setMobileNavOpen(false)}>Schließen</button></div>
+            {navItems.map((item) => (
+              <button key={item.to} className={`btn btn-ghost admin-nav-link ${current === item.to ? 'active' : ''}`} onClick={() => { navigate(item.to); setMobileNavOpen(false); }}>{item.label}</button>
+            ))}
+          </section>
+        </div>,
+        document.body
+      )}
     </main>
   );
 }
@@ -448,6 +462,90 @@ function DeskEditor({ desk, floorplans, defaultFloorplanId, initialPosition, loc
   );
 }
 
+function useDebouncedValue<T>(value: T, delayMs: number) {
+  const [debounced, setDebounced] = useState(value);
+  useEffect(() => {
+    const handle = window.setTimeout(() => setDebounced(value), delayMs);
+    return () => window.clearTimeout(handle);
+  }, [value, delayMs]);
+  return debounced;
+}
+
+type DeskFilterMode = 'all' | 'assigned' | 'missing-position';
+
+function DeskTableToolbar({
+  floorplanId,
+  floorplans,
+  searchValue,
+  onSearchChange,
+  onSearchClear,
+  filterMode,
+  onFilterModeChange,
+  showFilter,
+  disableCreate,
+  onFloorplanChange,
+  onCreate,
+  modeActive,
+  onCancelMode
+}: {
+  floorplanId: string;
+  floorplans: Floorplan[];
+  searchValue: string;
+  onSearchChange: (value: string) => void;
+  onSearchClear: () => void;
+  filterMode: DeskFilterMode;
+  onFilterModeChange: (value: DeskFilterMode) => void;
+  showFilter: boolean;
+  disableCreate: boolean;
+  onFloorplanChange: (value: string) => void;
+  onCreate: () => void;
+  modeActive: boolean;
+  onCancelMode: () => void;
+}) {
+  return (
+    <section className="card stack-sm">
+      <div className="desks-toolbar">
+        <select value={floorplanId} onChange={(event) => onFloorplanChange(event.target.value)} aria-label="Standort auswählen">
+          <option value="">Floorplan wählen</option>
+          {floorplans.map((plan) => <option key={plan.id} value={plan.id}>{plan.name}</option>)}
+        </select>
+        <div className="admin-search">
+          <span aria-hidden="true">🔎</span>
+          <input
+            value={searchValue}
+            onChange={(event) => onSearchChange(event.target.value)}
+            placeholder="Tisch suchen"
+            aria-label="Tisch suchen"
+          />
+          {searchValue && <button type="button" className="btn btn-ghost btn-icon" onClick={onSearchClear} aria-label="Suche zurücksetzen">✕</button>}
+        </div>
+        {showFilter && (
+          <select value={filterMode} onChange={(event) => onFilterModeChange(event.target.value as DeskFilterMode)} aria-label="Filter">
+            <option value="all">Alle</option>
+            <option value="assigned">Zugewiesen</option>
+            <option value="missing-position">Ohne Koordinaten</option>
+          </select>
+        )}
+        <div className="inline-end">
+          <button className="btn" disabled={disableCreate} onClick={onCreate}>Neuer Tisch</button>
+          {modeActive && <button className="btn btn-outline" onClick={onCancelMode}>Abbrechen</button>}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+const hasDeskPosition = (desk: Desk) => Number.isFinite(desk.x) && Number.isFinite(desk.y);
+
+const formatDateTimeShort = (value?: string) => {
+  if (!value) return '—';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '—';
+  const datePart = date.toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric' });
+  const timePart = date.toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' });
+  return `${datePart}, ${timePart}`;
+};
+
 function DesksPage({ path, navigate, onLogout, currentUser }: RouteProps) {
   const toasts = useToasts();
   const [state, setState] = useState<DataState>({ loading: true, error: '', ready: false });
@@ -455,19 +553,22 @@ function DesksPage({ path, navigate, onLogout, currentUser }: RouteProps) {
   const [floorplanId, setFloorplanId] = useState('');
   const [desks, setDesks] = useState<Desk[]>([]);
   const [query, setQuery] = useState('');
+  const [filterMode, setFilterMode] = useState<DeskFilterMode>('all');
   const [editingDesk, setEditingDesk] = useState<Desk | null>(null);
   const [createRequest, setCreateRequest] = useState<{ x: number; y: number } | null>(null);
   const [deleteDesk, setDeleteDesk] = useState<Desk | null>(null);
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
-  const [selectedDeskIds, setSelectedDeskIds] = useState<Set<string>>(new Set());
   const [isBulkDeleting, setIsBulkDeleting] = useState(false);
+  const [selectedDeskIds, setSelectedDeskIds] = useState<Set<string>>(new Set());
   const [selectedDeskId, setSelectedDeskId] = useState('');
   const [hoveredDeskId, setHoveredDeskId] = useState('');
   const [canvasMode, setCanvasMode] = useState<'idle' | 'create' | 'reposition'>('idle');
   const [pendingRepositionDesk, setPendingRepositionDesk] = useState<Desk | null>(null);
+  const [zoom, setZoom] = useState(1);
   const rowRefs = useRef<Record<string, HTMLTableRowElement | null>>({});
 
   const floorplan = floorplans.find((item) => item.id === floorplanId) ?? null;
+  const debouncedQuery = useDebouncedValue(query, 300);
 
   const loadFloorplans = async () => {
     try {
@@ -515,8 +616,22 @@ function DesksPage({ path, navigate, onLogout, currentUser }: RouteProps) {
     return () => window.removeEventListener('keydown', onKey);
   }, []);
 
-  const filtered = useMemo(() => desks.filter((desk) => desk.name.toLowerCase().includes(query.toLowerCase())), [desks, query]);
+  const filtered = useMemo(() => {
+    const search = debouncedQuery.trim().toLowerCase();
+    return desks.filter((desk) => {
+      const nameMatch = !search || desk.name.toLowerCase().includes(search);
+      const filterMatch = filterMode === 'all'
+        ? true
+        : filterMode === 'assigned'
+          ? hasDeskPosition(desk)
+          : !hasDeskPosition(desk);
+      return nameMatch && filterMatch;
+    });
+  }, [desks, debouncedQuery, filterMode]);
+
+  const selectedDesk = desks.find((desk) => desk.id === selectedDeskId) ?? null;
   const isAllVisibleSelected = filtered.length > 0 && filtered.every((desk) => selectedDeskIds.has(desk.id));
+  const hasMissingPositions = desks.some((desk) => !hasDeskPosition(desk));
 
   const startCreateMode = () => {
     setEditingDesk(null);
@@ -597,14 +712,179 @@ function DesksPage({ path, navigate, onLogout, currentUser }: RouteProps) {
     }
   };
 
+  const tableBody = state.loading && !state.ready
+    ? <SkeletonRows columns={4} />
+    : (
+      <tbody>
+        {filtered.map((desk) => (
+          <tr
+            key={desk.id}
+            ref={(row) => { rowRefs.current[desk.id] = row; }}
+            className={`${selectedDeskId === desk.id ? 'row-selected' : ''} ${hoveredDeskId === desk.id ? 'row-hovered' : ''}`.trim()}
+            onMouseEnter={() => setHoveredDeskId(desk.id)}
+            onMouseLeave={() => setHoveredDeskId('')}
+            onClick={() => setSelectedDeskId(desk.id)}
+          >
+            <td>
+              <input
+                type="checkbox"
+                checked={selectedDeskIds.has(desk.id)}
+                onClick={(event) => event.stopPropagation()}
+                onChange={() => toggleDeskSelection(desk.id)}
+                aria-label={`${desk.name} auswählen`}
+              />
+            </td>
+            <td className="truncate-cell">{desk.name}</td>
+            <td>{formatDateTimeShort(desk.updatedAt ?? desk.createdAt)}</td>
+            <td className="align-right">
+              <RowMenu items={[
+                { label: 'Bearbeiten', onSelect: () => setEditingDesk(desk) },
+                { label: 'Auf Floorplan anzeigen', onSelect: () => setSelectedDeskId(desk.id) },
+                { label: 'Position ändern', onSelect: () => { setSelectedDeskId(desk.id); setPendingRepositionDesk(desk); setCanvasMode('reposition'); } },
+                { label: 'Löschen', onSelect: () => setDeleteDesk(desk), danger: true }
+              ]}
+              />
+            </td>
+          </tr>
+        ))}
+      </tbody>
+    );
+
   return (
     <AdminLayout path={path} navigate={navigate} onLogout={onLogout} title="Tische" currentUser={currentUser ?? null}>
-      <AdminSplitLayout
-        leftHeader={<ListToolbar title="Tische" count={filtered.length} filters={<><select value={floorplanId} onChange={(e) => { setFloorplanId(e.target.value); setSelectedDeskId(''); cancelModes(); }}><option value="">Floorplan wählen</option>{floorplans.map((plan) => <option key={plan.id} value={plan.id}>{plan.name}</option>)}</select><div className="admin-search">🔎<input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Tisch suchen" /></div></>} actions={<><button className="btn" disabled={!floorplanId} onClick={startCreateMode}>Neuer Tisch</button>{canvasMode !== 'idle' && <button className="btn btn-outline" onClick={cancelModes}>Abbrechen</button>}</>} />}
-        leftContent={<>{state.error && <ErrorState text={state.error} onRetry={() => void loadDesks(floorplanId)} />}{selectedDeskIds.size > 0 && <div className="bulk-actions"><strong>{selectedDeskIds.size} ausgewählt</strong><div className="inline-end"><button className="btn btn-danger" disabled={isBulkDeleting} onClick={() => setBulkDeleteOpen(true)}>{isBulkDeleting ? 'Lösche…' : 'Auswahl löschen'}</button><button className="btn btn-outline" disabled={isBulkDeleting} onClick={clearSelection}>Abbrechen</button></div></div>}<div className="table-wrap"><table className="admin-table"><thead><tr><th><input type="checkbox" checked={isAllVisibleSelected} onChange={toggleAllVisibleDesks} aria-label="Alle sichtbaren Tische auswählen" /></th><th>Label</th><th>Aktualisiert</th><th className="align-right">Aktionen</th></tr></thead>{state.loading && !state.ready ? <SkeletonRows columns={4} /> : <tbody>{filtered.map((desk) => <tr key={desk.id} ref={(row) => { rowRefs.current[desk.id] = row; }} className={selectedDeskId === desk.id ? 'row-selected' : ''} onClick={() => setSelectedDeskId(desk.id)}><td><input type="checkbox" checked={selectedDeskIds.has(desk.id)} onClick={(e) => e.stopPropagation()} onChange={() => toggleDeskSelection(desk.id)} aria-label={`${desk.name} auswählen`} /></td><td>{desk.name}</td><td>{formatDate(desk.updatedAt ?? desk.createdAt)}</td><td className="align-right"><RowMenu items={[{ label: 'Position ändern', onSelect: () => { setSelectedDeskId(desk.id); setPendingRepositionDesk(desk); setCanvasMode('reposition'); } }, { label: 'Bearbeiten', onSelect: () => setEditingDesk(desk) }, { label: 'Löschen', onSelect: () => setDeleteDesk(desk), danger: true }]} /></td></tr>)}</tbody>}</table></div>{!state.loading && filtered.length === 0 && <EmptyState text="Keine Tische gefunden." action={<button className="btn" onClick={startCreateMode}>Neuen Tisch platzieren</button>} />}</>}
-        rightHeader={<div className="inline-between"><h3>Floorplan</h3>{canvasMode === 'create' && <Badge tone="warn">Klicke auf den Plan, um den Tisch zu platzieren</Badge>}{canvasMode === 'reposition' && pendingRepositionDesk && <Badge tone="warn">Neue Position für {pendingRepositionDesk.name} wählen</Badge>}</div>}
-        rightContent={<>{!floorplan && <EmptyState text="Bitte Floorplan wählen." />}{floorplan && <div className={`canvas-body admin-floor-canvas ${canvasMode !== 'idle' ? 'is-active-mode' : ''}`}><FloorplanCanvas imageUrl={floorplan.imageUrl} imageAlt={floorplan.name} desks={desks.map((desk) => ({ id: desk.id, name: desk.name, x: desk.x, y: desk.y, status: 'free', booking: null, isSelected: selectedDeskIds.has(desk.id) }))} selectedDeskId={selectedDeskId} hoveredDeskId={hoveredDeskId} onHoverDesk={setHoveredDeskId} onSelectDesk={(deskId) => { setSelectedDeskId(deskId); toggleDeskSelection(deskId); }} onCanvasClick={onCanvasClick} onDeskDoubleClick={(deskId) => { const target = desks.find((desk) => desk.id === deskId); if (target) setEditingDesk(target); }} /></div>}</>}
+      <section className="card desks-page-header">
+        <div>
+          <p className="muted">Admin / Ressourcen / Tische</p>
+          <div className="inline-start">
+            <h2>Tische</h2>
+            <Badge>{desks.length}</Badge>
+          </div>
+        </div>
+      </section>
+
+      <DeskTableToolbar
+        floorplanId={floorplanId}
+        floorplans={floorplans}
+        searchValue={query}
+        onSearchChange={setQuery}
+        onSearchClear={() => setQuery('')}
+        filterMode={filterMode}
+        onFilterModeChange={setFilterMode}
+        showFilter={desks.length > 0 && hasMissingPositions}
+        disableCreate={!floorplanId}
+        onFloorplanChange={(value) => {
+          setFloorplanId(value);
+          setSelectedDeskId('');
+          cancelModes();
+        }}
+        onCreate={startCreateMode}
+        modeActive={canvasMode !== 'idle'}
+        onCancelMode={cancelModes}
       />
+
+      <section className="admin-split-layout desks-split-view">
+        <section className="card stack-sm desks-list-panel">
+          {state.error && <ErrorState text={state.error} onRetry={() => void loadDesks(floorplanId)} />}
+          {selectedDeskIds.size > 0 && (
+            <div className="bulk-actions">
+              <strong>{selectedDeskIds.size} ausgewählt</strong>
+              <div className="inline-end">
+                <button className="btn btn-danger" disabled={isBulkDeleting} onClick={() => setBulkDeleteOpen(true)}>{isBulkDeleting ? 'Lösche…' : 'Auswahl löschen'}</button>
+                <button className="btn btn-outline" disabled={isBulkDeleting} onClick={clearSelection}>Abbrechen</button>
+              </div>
+            </div>
+          )}
+          <div className="table-wrap table-scroll-area">
+            <table className="admin-table desks-table">
+              <thead>
+                <tr>
+                  <th><input type="checkbox" checked={isAllVisibleSelected} onChange={toggleAllVisibleDesks} aria-label="Alle sichtbaren Tische auswählen" /></th>
+                  <th>Label</th>
+                  <th>Aktualisiert</th>
+                  <th className="align-right">Aktionen</th>
+                </tr>
+              </thead>
+              {tableBody}
+            </table>
+          </div>
+          {!state.loading && filtered.length === 0 && (
+            <EmptyState
+              text={desks.length === 0 ? 'Noch keine Tische angelegt.' : 'Keine Ergebnisse für deine Suche.'}
+              action={<button className="btn" onClick={startCreateMode}>Neuer Tisch</button>}
+            />
+          )}
+          {state.loading && state.ready && <div className="skeleton admin-table-skeleton" aria-hidden="true" />}
+        </section>
+
+        <aside className="card stack-sm admin-split-floor-preview">
+          <div className="inline-between floorplan-headline">
+            <div>
+              <h3>Floorplan</h3>
+              <p className="muted">Klicke Marker für Details</p>
+            </div>
+            <div className="admin-toolbar">
+              <button type="button" className="btn btn-outline btn-icon" title="Zoom verkleinern" onClick={() => setZoom((value) => Math.max(0.7, Number((value - 0.1).toFixed(2))))}>−</button>
+              <button type="button" className="btn btn-outline btn-icon" title="Zoom zurücksetzen" onClick={() => setZoom(1)}>⟲</button>
+              <button type="button" className="btn btn-outline btn-icon" title="Zoom vergrößern" onClick={() => setZoom((value) => Math.min(1.7, Number((value + 0.1).toFixed(2))))}>＋</button>
+            </div>
+          </div>
+          {(canvasMode === 'create' || (canvasMode === 'reposition' && pendingRepositionDesk)) && (
+            <Badge tone="warn">{canvasMode === 'create' ? 'Klicke auf den Plan, um den Tisch zu platzieren' : `Neue Position für ${pendingRepositionDesk?.name ?? ''} wählen`}</Badge>
+          )}
+          {state.loading && !state.ready && <div className="skeleton admin-floor-skeleton" aria-hidden="true" />}
+          {!state.loading && !floorplan && <EmptyState text="Bitte Floorplan wählen." />}
+          {floorplan && (
+            <>
+              <div className={`canvas-body admin-floor-canvas ${canvasMode !== 'idle' ? 'is-active-mode' : ''}`}>
+                <div style={{ transform: `scale(${zoom})`, transformOrigin: 'top left' }}>
+                  <FloorplanCanvas
+                    imageUrl={floorplan.imageUrl}
+                    imageAlt={floorplan.name}
+                    desks={desks.filter(hasDeskPosition).map((desk) => ({
+                      id: desk.id,
+                      name: desk.name,
+                      x: desk.x,
+                      y: desk.y,
+                      status: 'free',
+                      booking: null,
+                      isSelected: selectedDeskIds.has(desk.id),
+                      isHighlighted: selectedDeskId === desk.id || hoveredDeskId === desk.id
+                    }))}
+                    selectedDeskId={selectedDeskId}
+                    hoveredDeskId={hoveredDeskId}
+                    onHoverDesk={setHoveredDeskId}
+                    onSelectDesk={(deskId) => setSelectedDeskId(deskId)}
+                    onCanvasClick={onCanvasClick}
+                    onDeskDoubleClick={(deskId) => {
+                      const target = desks.find((desk) => desk.id === deskId);
+                      if (target) setEditingDesk(target);
+                    }}
+                  />
+                </div>
+              </div>
+              <div className="desks-legend">
+                <Badge>Normal</Badge>
+                <Badge tone="ok">Ausgewählt</Badge>
+                <Badge tone="warn">Ohne Position: {desks.filter((desk) => !hasDeskPosition(desk)).length}</Badge>
+              </div>
+              {selectedDesk && (
+                <section className="card stack-xs desk-details-card">
+                  <strong>{selectedDesk.name}</strong>
+                  <p className="muted">Desk-ID: {selectedDesk.id}</p>
+                  <p className="muted">Koordinaten: {hasDeskPosition(selectedDesk) ? `${Math.round(selectedDesk.x * 100)}% / ${Math.round(selectedDesk.y * 100)}%` : 'Nicht gesetzt'}</p>
+                  <p className="muted">Zuletzt aktualisiert: {formatDateTimeShort(selectedDesk.updatedAt ?? selectedDesk.createdAt)}</p>
+                  <div className="inline-end">
+                    <button className="btn btn-outline" onClick={() => setEditingDesk(selectedDesk)}>Bearbeiten</button>
+                    <button className="btn btn-outline" onClick={() => { setPendingRepositionDesk(selectedDesk); setCanvasMode('reposition'); }}>Position ändern</button>
+                    <button className="btn btn-danger" onClick={() => setDeleteDesk(selectedDesk)}>Löschen</button>
+                  </div>
+                </section>
+              )}
+            </>
+          )}
+        </aside>
+      </section>
+
       {(createRequest || editingDesk) && <DeskEditor desk={editingDesk} floorplans={floorplans} defaultFloorplanId={floorplanId} initialPosition={createRequest} lockFloorplan={Boolean(createRequest)} onRequestPositionMode={editingDesk ? () => { setPendingRepositionDesk(editingDesk); setCanvasMode('reposition'); } : undefined} onClose={() => { setCreateRequest(null); setEditingDesk(null); navigate('/admin/desks'); }} onSaved={async () => { setCreateRequest(null); setEditingDesk(null); toasts.success('Tisch gespeichert'); await loadDesks(floorplanId); }} onError={toasts.error} />}
       {deleteDesk && <ConfirmDialog title="Tisch löschen?" description={`Tisch "${deleteDesk.name}" wird entfernt.`} onCancel={() => setDeleteDesk(null)} onConfirm={async () => { await del(`/admin/desks/${deleteDesk.id}`); setDeleteDesk(null); toasts.success('Tisch gelöscht'); await loadDesks(floorplanId); }} />}
       {bulkDeleteOpen && <ConfirmDialog title={`${selectedDeskIds.size} Einträge löschen?`} description="Dieser Vorgang ist irreversibel." onCancel={() => setBulkDeleteOpen(false)} onConfirm={() => void runBulkDelete()} confirmDisabled={isBulkDeleting} confirmLabel={isBulkDeleting ? 'Lösche…' : 'Löschen'} />}
