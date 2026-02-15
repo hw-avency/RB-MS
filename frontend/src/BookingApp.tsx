@@ -2,7 +2,8 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { API_BASE, ApiError, checkBackendHealth, del, get, markBackendAvailable, post, resolveApiUrl } from './api';
 import { Avatar } from './components/Avatar';
-import { BookingForm } from './components/BookingForm';
+import { BookingForm, createDefaultBookingFormValues } from './components/BookingForm';
+import type { BookingFormSubmitPayload, BookingFormValues } from './components/BookingForm';
 import { UserMenu } from './components/UserMenu';
 import { FloorplanCanvas } from './FloorplanCanvas';
 import { APP_TITLE } from './config';
@@ -23,14 +24,14 @@ type OccupancyPerson = { email: string; displayName?: string; deskName?: string;
 type OccupancyResponse = { date: string; floorplanId: string; desks: OccupancyDesk[]; people: OccupancyPerson[] };
 type BookingEmployee = { id: string; email: string; displayName: string; photoUrl?: string };
 type OccupantForDay = { deskId: string; deskLabel: string; userId: string; name: string; email: string; employeeId?: string; photoUrl?: string };
-type BookingSubmitPayload =
-  | { type: 'single'; date: string }
-  | { type: 'range'; dateFrom: string; dateTo: string; onlyWeekdays: boolean }
-  | { type: 'recurring'; dateFrom: string; dateTo: string; weekdays: number[] };
-type OverrideDialogState = {
-  requestedDeskName: string;
-  dates: string[];
+type BookingSubmitPayload = BookingFormSubmitPayload;
+type BookingDialogState = 'IDLE' | 'BOOKING_OPEN' | 'CONFLICT_REVIEW' | 'SUBMITTING';
+type ConflictReviewState = {
+  deskId: string;
+  deskLabel: string;
+  conflictDates: string[];
   retryPayload: BookingSubmitPayload;
+  anchorRect: DOMRect;
 };
 type BulkBookingResponse = {
   createdCount?: number;
@@ -68,6 +69,8 @@ const getApiErrorMessage = (error: unknown, fallback: string): string => {
   }
   return fallback;
 };
+
+const formatDate = (dateString: string): string => new Date(`${dateString}T00:00:00.000Z`).toLocaleDateString('de-DE');
 
 const getNextDate = (dateString: string): string => {
   const date = new Date(`${dateString}T00:00:00.000Z`);
@@ -148,8 +151,10 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
   const [backendDown, setBackendDown] = useState(false);
 
   const [deskPopup, setDeskPopup] = useState<DeskPopupState | null>(null);
-  const [overrideDialog, setOverrideDialog] = useState<OverrideDialogState | null>(null);
-  const [isOverrideSubmitting, setIsOverrideSubmitting] = useState(false);
+  const [bookingDialogState, setBookingDialogState] = useState<BookingDialogState>('IDLE');
+  const [bookingFormValues, setBookingFormValues] = useState<BookingFormValues>(createDefaultBookingFormValues(today));
+  const [dialogErrorMessage, setDialogErrorMessage] = useState('');
+  const [conflictReview, setConflictReview] = useState<ConflictReviewState | null>(null);
 
   const [highlightedDeskId, setHighlightedDeskId] = useState('');
   const occupantRowRefs = useRef<Record<string, HTMLDivElement | null>>({});
@@ -176,23 +181,24 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
   const bookingsToday = useMemo<OccupantForDay[]>(() => mapBookingsForDay(desks), [desks]);
   const bookingsTomorrow = useMemo<OccupantForDay[]>(() => mapBookingsForDay(desksTomorrow), [desksTomorrow]);
   const tomorrowDate = useMemo(() => getNextDate(selectedDate), [selectedDate]);
-  const popupDesk = useMemo(() => (deskPopup ? desks.find((desk) => desk.id === deskPopup.deskId) ?? null : null), [desks, deskPopup]);
+  const activeDialogDeskRef = bookingDialogState === 'CONFLICT_REVIEW' ? conflictReview : deskPopup;
+  const popupDesk = useMemo(() => (activeDialogDeskRef ? desks.find((desk) => desk.id === activeDialogDeskRef.deskId) ?? null : null), [desks, activeDialogDeskRef]);
   const popupDeskState = popupDesk ? (!popupDesk.booking ? 'FREE' : popupDesk.isCurrentUsersDesk ? 'MINE' : 'TAKEN') : null;
   const deskPopupPosition = useMemo(() => {
-    if (!deskPopup) return null;
+    if (!activeDialogDeskRef) return null;
     const viewportPadding = 12;
     const popupWidth = 460;
     const popupHeight = 500;
-    const preferRight = deskPopup.anchorRect.right + 10;
-    const preferLeft = deskPopup.anchorRect.left - popupWidth - 10;
+    const preferRight = activeDialogDeskRef.anchorRect.right + 10;
+    const preferLeft = activeDialogDeskRef.anchorRect.left - popupWidth - 10;
     const canUseRight = preferRight + popupWidth <= window.innerWidth - viewportPadding;
     const left = canUseRight
       ? preferRight
       : Math.max(viewportPadding, Math.min(window.innerWidth - popupWidth - viewportPadding, preferLeft));
-    const centeredTop = deskPopup.anchorRect.top + deskPopup.anchorRect.height / 2 - popupHeight / 2;
+    const centeredTop = activeDialogDeskRef.anchorRect.top + activeDialogDeskRef.anchorRect.height / 2 - popupHeight / 2;
     const top = Math.max(viewportPadding, Math.min(window.innerHeight - popupHeight - viewportPadding, centeredTop));
     return { left, top };
-  }, [deskPopup]);
+  }, [activeDialogDeskRef]);
 
   const calendarDays = useMemo(() => buildCalendarDays(visibleMonth), [visibleMonth]);
 
@@ -277,15 +283,17 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
   }, []);
 
   useEffect(() => {
-    if (!deskPopup) return;
+    if (!activeDialogDeskRef) return;
     const closeOnEscape = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
         setDeskPopup(null);
+        setConflictReview(null);
+        setBookingDialogState('IDLE');
       }
     };
     window.addEventListener('keydown', closeOnEscape);
     return () => window.removeEventListener('keydown', closeOnEscape);
-  }, [deskPopup]);
+  }, [activeDialogDeskRef]);
 
   const triggerDeskHighlight = (deskId: string, hold = 1300) => {
     setHighlightedDeskId(deskId);
@@ -309,6 +317,15 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
     setSelectedDeskId(deskId);
     triggerDeskHighlight(deskId);
     setDeskPopup({ deskId, anchorRect: pinRect });
+    setConflictReview(null);
+    setDialogErrorMessage('');
+    if (state === 'FREE') {
+      setBookingFormValues(createDefaultBookingFormValues(selectedDate));
+      setBookingDialogState('BOOKING_OPEN');
+    } else {
+      setBookingDialogState('IDLE');
+    }
+
     const row = occupantRowRefs.current[deskId];
     if (row) {
       row.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
@@ -319,88 +336,92 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
     await loadOccupancy(selectedFloorplanId, selectedDate);
   };
 
-  const createSingleBooking = async (deskId: string, date: string, replaceExisting: boolean) => {
-    await post('/bookings', { deskId, userEmail: selectedEmployeeEmail, date, replaceExisting });
-    setToastMessage('Einzelbuchung erstellt.');
+  const closeBookingFlow = () => {
+    setDeskPopup(null);
+    setConflictReview(null);
+    setBookingDialogState('IDLE');
+    setDialogErrorMessage('');
   };
 
-  const cancelOwnBooking = async (deskId: string) => {
-    const bookingId = desks.find((desk) => desk.id === deskId)?.booking?.id;
-    if (!bookingId) {
-      throw new Error('Eigene Buchung konnte nicht gefunden werden.');
+  const submitPopupBooking = async (deskId: string, payload: BookingSubmitPayload, overwrite = false) => {
+    if (!selectedEmployeeEmail) {
+      throw new Error('Bitte Mitarbeiter auswählen.');
     }
 
-    await del(`/bookings/${bookingId}`);
-    setToastMessage('Buchung storniert.');
+    if (payload.type === 'single') {
+      await post('/bookings', { deskId, userEmail: selectedEmployeeEmail, date: payload.date, replaceExisting: overwrite });
+      setToastMessage(overwrite ? 'Umbuchung durchgeführt.' : 'Gebucht');
+      return;
+    }
+
+    if (payload.type === 'range') {
+      const response = await post<BulkBookingResponse>('/bookings/range', {
+        deskId,
+        userEmail: selectedEmployeeEmail,
+        from: payload.dateFrom,
+        to: payload.dateTo,
+        weekdaysOnly: payload.onlyWeekdays,
+        overrideExisting: overwrite
+      });
+
+      setToastMessage(overwrite
+        ? `${response.createdCount ?? 0} Tage gebucht, ${response.updatedCount ?? 0} Tage umgebucht.`
+        : 'Gebucht');
+      return;
+    }
+
+    const response = await post<BulkBookingResponse>('/recurring-bookings/bulk', {
+      deskId,
+      userEmail: selectedEmployeeEmail,
+      weekdays: payload.weekdays,
+      validFrom: payload.dateFrom,
+      validTo: payload.dateTo,
+      overrideExisting: overwrite
+    });
+
+    setToastMessage(overwrite
+      ? `${response.createdCount ?? 0} Tage gebucht, ${response.updatedCount ?? 0} Tage umgebucht.`
+      : 'Gebucht');
   };
 
-  const submitPopupBooking = async (payload: BookingSubmitPayload, overrideExisting = false) => {
-    if (!popupDesk || !popupDeskState) return;
-    try {
-      if (!selectedEmployeeEmail) {
-        throw new Error('Bitte Mitarbeiter auswählen.');
-      }
+  const checkConflicts = async (deskId: string, payload: BookingSubmitPayload) => {
+    const start = payload.type === 'single' ? payload.date : payload.dateFrom;
+    const end = payload.type === 'single' ? payload.date : payload.dateTo;
+    const weekdaysForType = payload.type === 'recurring' ? payload.weekdays : undefined;
 
-      if (popupDeskState !== 'FREE') {
+    return post<{ hasConflicts: boolean; conflictDates: string[] }>('/bookings/check-conflicts', {
+      deskId,
+      userEmail: selectedEmployeeEmail,
+      userId: currentUser?.id,
+      start,
+      end,
+      weekdays: weekdaysForType,
+      type: payload.type
+    });
+  };
+
+  const handleBookingSubmit = async (payload: BookingSubmitPayload) => {
+    if (!deskPopup || !popupDesk || popupDeskState !== 'FREE') return;
+
+    setDialogErrorMessage('');
+    setBookingDialogState('SUBMITTING');
+
+    try {
+      const conflictResult = await checkConflicts(popupDesk.id, payload);
+      if (conflictResult.hasConflicts) {
+        setConflictReview({
+          deskId: popupDesk.id,
+          deskLabel: popupDesk.name,
+          conflictDates: conflictResult.conflictDates,
+          retryPayload: payload,
+          anchorRect: deskPopup.anchorRect
+        });
+        setBookingDialogState('CONFLICT_REVIEW');
         return;
       }
 
-      if (payload.type === 'single') {
-        await createSingleBooking(popupDesk.id, payload.date, overrideExisting);
-      } else if (payload.type === 'range') {
-        const response = await post<BulkBookingResponse>('/bookings/range', {
-          deskId: popupDesk.id,
-          userEmail: selectedEmployeeEmail,
-          from: payload.dateFrom,
-          to: payload.dateTo,
-          weekdaysOnly: payload.onlyWeekdays,
-          overrideExisting
-        });
-
-        if (!overrideExisting && (response.skippedCount ?? 0) > 0) {
-          setOverrideDialog({
-            requestedDeskName: popupDesk.name,
-            dates: response.skippedDates ?? [],
-            retryPayload: payload
-          });
-          setErrorMessage('');
-          return;
-        }
-
-        setToastMessage(
-          overrideExisting
-            ? `${response.createdCount ?? 0} Tage gebucht, ${response.updatedCount ?? 0} Tage umgebucht.`
-            : `${response.createdCount ?? 0} Tage gebucht, ${response.skippedCount ?? 0} Tage übersprungen.`
-        );
-      } else {
-        const response = await post<BulkBookingResponse>('/recurring-bookings/bulk', {
-          deskId: popupDesk.id,
-          userEmail: selectedEmployeeEmail,
-          weekdays: payload.weekdays,
-          validFrom: payload.dateFrom,
-          validTo: payload.dateTo,
-          overrideExisting
-        });
-
-        if (!overrideExisting && (response.skippedCount ?? 0) > 0) {
-          setOverrideDialog({
-            requestedDeskName: popupDesk.name,
-            dates: response.skippedDates ?? [],
-            retryPayload: payload
-          });
-          setErrorMessage('');
-          return;
-        }
-
-        setToastMessage(
-          overrideExisting
-            ? `${response.createdCount ?? 0} Tage gebucht, ${response.updatedCount ?? 0} Tage umgebucht.`
-            : `${response.createdCount ?? 0} Tage gebucht, ${response.skippedCount ?? 0} Tage übersprungen.`
-        );
-      }
-
-      setErrorMessage('');
-      setDeskPopup(null);
+      await submitPopupBooking(popupDesk.id, payload, false);
+      closeBookingFlow();
       await reloadBookings();
     } catch (error) {
       if (error instanceof ApiError && error.code === 'BACKEND_UNREACHABLE') {
@@ -408,30 +429,29 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
         return;
       }
 
-      if (error instanceof ApiError && error.status === 409) {
-        const details = (error.details as { conflictingDates?: string[]; conflictingDatesPreview?: string[] } | undefined) ?? {};
-        const list = details.conflictingDates ?? details.conflictingDatesPreview ?? [];
-        const info = list.length > 0 ? ` Konflikte: ${list.slice(0, 8).join(', ')}` : '';
-        setErrorMessage(`${error.message}${info}`);
-        return;
-      }
-
-      setErrorMessage(error instanceof Error ? error.message : 'Buchung fehlgeschlagen.');
+      setBookingDialogState('BOOKING_OPEN');
+      setDialogErrorMessage(error instanceof Error ? error.message : 'Buchung fehlgeschlagen.');
     }
   };
 
-  const handleOverride = async () => {
-    if (!overrideDialog) return;
+  const confirmConflictOverride = async () => {
+    if (!conflictReview) return;
 
-    setIsOverrideSubmitting(true);
+    setBookingDialogState('SUBMITTING');
+    setDialogErrorMessage('');
+
     try {
-      await submitPopupBooking(overrideDialog.retryPayload, true);
-      setOverrideDialog(null);
-      setSelectedDeskId(popupDesk?.id ?? '');
+      await submitPopupBooking(conflictReview.deskId, conflictReview.retryPayload, true);
+      closeBookingFlow();
+      await reloadBookings();
     } catch (error) {
-      setErrorMessage(getApiErrorMessage(error, 'Buchung überschreiben fehlgeschlagen.'));
-    } finally {
-      setIsOverrideSubmitting(false);
+      if (error instanceof ApiError && error.code === 'BACKEND_UNREACHABLE') {
+        setBackendDown(true);
+        return;
+      }
+
+      setBookingDialogState('CONFLICT_REVIEW');
+      setDialogErrorMessage(getApiErrorMessage(error, 'Buchung überschreiben fehlgeschlagen.'));
     }
   };
 
@@ -443,9 +463,15 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
     }
 
     try {
-      await cancelOwnBooking(popupDesk.id);
+      const bookingId = desks.find((desk) => desk.id === popupDesk.id)?.booking?.id;
+      if (!bookingId) {
+        throw new Error('Eigene Buchung konnte nicht gefunden werden.');
+      }
+
+      await del(`/bookings/${bookingId}`);
+      setToastMessage('Buchung storniert.');
       setErrorMessage('');
-      setDeskPopup(null);
+      closeBookingFlow();
       await reloadBookings();
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : 'Stornierung fehlgeschlagen.');
@@ -616,7 +642,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
                   onHoverDesk={(deskId) => { setHoveredDeskId(deskId); if (deskId) triggerDeskHighlight(deskId, 900); }}
                   selectedDate={selectedDate}
                   onSelectDesk={selectDeskFromCanvas}
-                  onCanvasClick={() => { setSelectedDeskId(''); setHighlightedDeskId(''); setDeskPopup(null); }}
+                  onCanvasClick={() => { setSelectedDeskId(''); setHighlightedDeskId(''); closeBookingFlow(); }}
                 />
               ) : (
                 <div className="empty-state"><p>Kein Floorplan ausgewählt.</p></div>
@@ -628,20 +654,64 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
         <aside className="right-col desktop-right">{isBootstrapping ? <div className="card skeleton h-480" /> : detailPanel}</aside>
       </section>
 
-      {deskPopup && popupDesk && popupDeskState && deskPopupPosition && createPortal(
+      {activeDialogDeskRef && popupDesk && popupDeskState && deskPopupPosition && createPortal(
         <>
-          <div className="desk-popup-backdrop" onClick={() => setDeskPopup(null)} />
+          <div className="desk-popup-backdrop" onClick={() => {
+            if (bookingDialogState === 'CONFLICT_REVIEW') {
+              setBookingDialogState('BOOKING_OPEN');
+            } else {
+              closeBookingFlow();
+            }
+          }} />
           <section className="card desk-popup" style={{ left: deskPopupPosition.left, top: deskPopupPosition.top }} role="dialog" aria-modal="true">
-            {popupDeskState === 'FREE' ? (
+            {(popupDeskState === 'FREE' && (!conflictReview || bookingDialogState === 'BOOKING_OPEN' || (bookingDialogState === 'SUBMITTING' && !conflictReview))) ? (
               <>
                 <h3>Tisch: {popupDesk.name} buchen</h3>
                 <BookingForm
-                  selectedDate={selectedDate}
-                  onCancel={() => setDeskPopup(null)}
-                  onSubmit={async (payload) => {
-                    await submitPopupBooking(payload);
-                  }}
+                  values={bookingFormValues}
+                  onChange={setBookingFormValues}
+                  onCancel={closeBookingFlow}
+                  onSubmit={handleBookingSubmit}
+                  isSubmitting={bookingDialogState === 'SUBMITTING'}
+                  disabled={bookingDialogState === 'SUBMITTING'}
+                  errorMessage={dialogErrorMessage}
                 />
+              </>
+            ) : popupDeskState === 'FREE' && conflictReview ? (
+              <>
+                <h3>Konflikt: bestehende Buchungen</h3>
+                <p>
+                  Für {conflictReview.conflictDates.length} Tage existieren bereits Buchungen. Möchtest du diese auf Tisch {conflictReview.deskLabel} umbuchen?
+                </p>
+                {dialogErrorMessage && <div className="error-banner" role="alert">{dialogErrorMessage}</div>}
+                <div className="stack-xs" style={{ maxHeight: 200, overflowY: 'auto' }}>
+                  <div className="weekday-toggle-group" style={{ justifyContent: 'flex-start', flexWrap: 'wrap', gap: 8 }}>
+                    {conflictReview.conflictDates.slice(0, 10).map((date) => (
+                      <span key={date} className="weekday-toggle active" style={{ cursor: 'default' }}>{formatDate(date)}</span>
+                    ))}
+                  </div>
+                  {conflictReview.conflictDates.length > 10 && <p className="muted">+{conflictReview.conflictDates.length - 10} weitere</p>}
+                  <hr className="separator" />
+                  <div className="stack-xs">
+                    {conflictReview.conflictDates.map((date) => <p key={`line-${date}`} className="muted">{formatDate(date)}</p>)}
+                  </div>
+                </div>
+                <div className="inline-end">
+                  <button
+                    type="button"
+                    className="btn btn-outline"
+                    onClick={() => {
+                      setBookingDialogState('BOOKING_OPEN');
+                      setDialogErrorMessage('');
+                    }}
+                    disabled={bookingDialogState === 'SUBMITTING'}
+                  >
+                    Abbrechen
+                  </button>
+                  <button type="button" className="btn btn-danger" onClick={() => void confirmConflictOverride()} disabled={bookingDialogState === 'SUBMITTING'}>
+                    {bookingDialogState === 'SUBMITTING' ? 'Umbuchen…' : 'Umbuchen & buchen'}
+                  </button>
+                </div>
               </>
             ) : (
               <>
@@ -651,7 +721,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
                   <p className="muted">Zeitraum: Ganztägig</p>
                   {popupDesk.booking?.type === 'recurring' && <p className="muted">Typ: Serienbuchung (wöchentlich)</p>}
                   <div className="inline-end">
-                    <button type="button" className="btn btn-outline" onClick={() => setDeskPopup(null)}>Abbrechen</button>
+                    <button type="button" className="btn btn-outline" onClick={closeBookingFlow}>Abbrechen</button>
                     <button
                       type="button"
                       className="btn btn-danger"
@@ -667,25 +737,6 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
             )}
           </section>
         </>,
-        document.body
-      )}
-
-      {overrideDialog && createPortal(
-        <div className="overlay" onClick={() => setOverrideDialog(null)}>
-          <div className="dialog card stack-sm" onClick={(event) => event.stopPropagation()}>
-            <h3>Buchungen überschreiben?</h3>
-            <p>
-              Für {overrideDialog.dates.length} Tage existieren bereits Buchungen. Soll auf Tisch: {overrideDialog.requestedDeskName} umgebucht werden?
-            </p>
-            {overrideDialog.dates.length > 0 && (
-              <p className="muted">Betroffene Tage: {overrideDialog.dates.slice(0, 6).join(', ')}{overrideDialog.dates.length > 6 ? ' …' : ''}</p>
-            )}
-            <div className="inline-end">
-              <button type="button" className="btn btn-outline" onClick={() => setOverrideDialog(null)} disabled={isOverrideSubmitting}>Abbrechen</button>
-              <button type="button" className="btn btn-danger" onClick={() => void handleOverride()} disabled={isOverrideSubmitting}>{isOverrideSubmitting ? 'Überschreibe…' : 'Überschreiben'}</button>
-            </div>
-          </div>
-        </div>,
         document.body
       )}
 
