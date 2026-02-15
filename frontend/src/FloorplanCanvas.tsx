@@ -34,6 +34,7 @@ type FloorplanDesk = {
 type OverlayRect = { left: number; top: number; width: number; height: number };
 type PixelPoint = { x: number; y: number };
 type SlotKey = 'AM' | 'PM';
+type TimeInterval = { start: number; end: number };
 
 const PIN_HITBOX_SIZE = 44;
 const PIN_VISUAL_SIZE = 36;
@@ -47,8 +48,6 @@ const WORK_END = 18 * 60;
 const WORK_SPAN = WORK_END - WORK_START;
 
 const clamp01 = (value: number): number => Math.min(1, Math.max(0, value));
-const isTodayDateKey = (value?: string): boolean => Boolean(value && value === new Date().toISOString().slice(0, 10));
-
 const toNormalized = (raw: number, size: number): number => {
   if (!Number.isFinite(raw)) return 0;
   if (raw <= 1) return clamp01(raw);
@@ -120,6 +119,24 @@ const minuteToAngle = (minutes: number): number => {
   return START_ANGLE + normalized * 360;
 };
 
+const clampToWorkWindow = (minutes: number): number => Math.min(WORK_END, Math.max(WORK_START, minutes));
+
+const mergeIntervals = (intervals: TimeInterval[]): TimeInterval[] => {
+  if (intervals.length <= 1) return intervals;
+  const sorted = [...intervals].sort((a, b) => a.start - b.start);
+  const merged: TimeInterval[] = [sorted[0]];
+  for (let i = 1; i < sorted.length; i += 1) {
+    const current = merged[merged.length - 1];
+    const next = sorted[i];
+    if (next.start <= current.end) {
+      current.end = Math.max(current.end, next.end);
+      continue;
+    }
+    merged.push(next);
+  }
+  return merged;
+};
+
 type FloorplanCanvasProps = {
   imageUrl: string;
   imageAlt: string;
@@ -182,19 +199,15 @@ const DeskOverlay = memo(function DeskOverlay({ desks, selectedDeskId, hoveredDe
             return 'hsl(var(--primary))';
           };
 
-          const roomArcs = bookings.flatMap((booking) => {
+          const roomIntervals = mergeIntervals(bookings.flatMap((booking) => {
             const startMinutes = hhmmToMinutes(booking.startTime);
             const endMinutes = hhmmToMinutes(booking.endTime);
             if (startMinutes === null || endMinutes === null || endMinutes <= startMinutes) return [];
-            const startInWindow = Math.max(WORK_START, startMinutes);
-            const endInWindow = Math.min(WORK_END, endMinutes);
+            const startInWindow = clampToWorkWindow(startMinutes);
+            const endInWindow = clampToWorkWindow(endMinutes);
             if (endInWindow <= startInWindow) return [];
-            return [{ id: `${booking.id ?? booking.userEmail}-${startMinutes}`, d: arcPath(minuteToAngle(startInWindow), minuteToAngle(endInWindow), RING_RADIUS), color: slotColor(booking) }];
-          });
-
-          const nowTickAngle = minuteToAngle(new Date().getHours() * 60 + new Date().getMinutes());
-          const tickStart = angleToPoint(nowTickAngle, RING_RADIUS - 1);
-          const tickEnd = angleToPoint(nowTickAngle, RING_RADIUS + 2);
+            return [{ start: startInWindow, end: endInWindow }];
+          }));
 
           return (
             <button
@@ -230,8 +243,7 @@ const DeskOverlay = memo(function DeskOverlay({ desks, selectedDeskId, hoveredDe
                 {isRoom ? (
                   <>
                     <circle cx={PIN_VISUAL_SIZE / 2} cy={PIN_VISUAL_SIZE / 2} r={RING_RADIUS} className="pin-ring-track" />
-                    {roomArcs.map((arc) => <path key={arc.id} d={arc.d} className="pin-ring-arc" style={{ stroke: arc.color, strokeWidth: RING_WIDTH }} />)}
-                    {isTodayDateKey(selectedDate) && <line x1={tickStart.x} y1={tickStart.y} x2={tickEnd.x} y2={tickEnd.y} className="pin-ring-now-tick" />}
+                    {roomIntervals.map((interval, index) => <path key={`${desk.id}-${interval.start}-${interval.end}-${index}`} d={arcPath(minuteToAngle(interval.start), minuteToAngle(interval.end), RING_RADIUS)} className="pin-ring-arc" style={{ stroke: '#334155', strokeWidth: RING_WIDTH }} />)}
                   </>
                 ) : (
                   <>

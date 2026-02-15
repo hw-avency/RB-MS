@@ -953,8 +953,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
         <div className="legend room-legend">
           <strong>Räume</strong>
           <span><i className="dot room-free" /> Grün = frei (07–18 Uhr)</span>
-          <span><i className="dot room-booked" /> Segmentfarbe = belegt</span>
-          <span><i className="dot room-now" /> Tick = aktuelle Uhrzeit (nur heute)</span>
+          <span><i className="dot room-booked" /> Dunkles Segment = belegt</span>
           <p className="muted">Räume: Ring zeigt Zeitbelegung.</p>
         </div>
       </section>
