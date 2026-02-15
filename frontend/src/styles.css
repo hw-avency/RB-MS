@@ -121,11 +121,15 @@ input, select { border: 1px solid hsl(var(--border)); border-radius: 12px; paddi
 .field-inline select{min-width:160px}
 .compact-card{padding:20px}
 .today-compact-panel{padding:12px 16px}
-.today-summary-btn{width:100%;border:0;background:transparent;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:0;cursor:pointer;text-align:left}
-.today-avatar-row{display:flex;align-items:center}
-.today-avatar-row .avatar{margin-left:-8px;border:2px solid hsl(var(--card))}
-.today-avatar-row .avatar:first-child{margin-left:0}
-.avatar-overflow{min-width:28px;height:28px;border-radius:999px;background:hsl(var(--muted));display:grid;place-items:center;font-size:12px;font-weight:600;margin-left:-8px;border:2px solid hsl(var(--card))}
+.today-summary-header{display:flex;align-items:center;justify-content:flex-start;margin-bottom:10px}
+.today-people-grid{display:flex;flex-wrap:wrap;justify-content:flex-start;gap:11px}
+.today-person-tile{width:80px;height:80px;border:1px solid hsl(var(--border));border-radius:12px;background:hsl(var(--card));display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;padding:8px 6px;cursor:pointer;transition:border-color .15s ease,box-shadow .15s ease,background .15s ease}
+.today-person-tile .avatar{width:34px;height:34px;min-width:34px;min-height:34px}
+.today-person-tile span{max-width:100%;font-size:12px;font-weight:600;line-height:1.2;color:hsl(var(--foreground));white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.today-person-tile:hover,.today-person-tile:focus-visible,.today-person-tile.is-active{border-color:hsl(var(--primary)/.4);box-shadow:0 4px 12px rgba(15,23,42,.08);background:hsl(var(--muted)/.2)}
+.today-person-tile.is-highlighted{border-color:hsl(var(--primary)/.55);box-shadow:0 0 0 1px hsl(var(--primary)/.25)}
+.today-people-empty-state{text-align:left;padding:12px}
+.today-people-empty-state p{margin:0}
 .occupant-desk-label{margin-left:auto;max-width:42%;font-size:11px;padding:3px 8px;border-radius:999px;background:hsl(var(--muted));color:hsl(var(--muted-foreground));font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex-shrink:0}
 .inline-alert{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 12px;border-radius:12px;background:#fee2e2;color:#991b1b;border:1px solid #fecaca}
 .canvas-body-focus .floorplan-canvas{transform:scale(var(--floorplan-zoom,1));transform-origin:top center;transition:transform .18s ease}

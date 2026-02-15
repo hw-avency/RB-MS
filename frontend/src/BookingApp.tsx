@@ -17,14 +17,14 @@ type OccupancyDesk = {
   x: number;
   y: number;
   status: 'free' | 'booked';
-  booking: { id?: string; employeeId?: string; userEmail: string; userDisplayName?: string; userPhotoUrl?: string; type?: 'single' | 'recurring' } | null;
+  booking: { id?: string; employeeId?: string; userEmail: string; userDisplayName?: string; userFirstName?: string; userPhotoUrl?: string; type?: 'single' | 'recurring' } | null;
   isCurrentUsersDesk?: boolean;
   isHighlighted?: boolean;
 };
 type OccupancyPerson = { email: string; displayName?: string; deskName?: string; deskId?: string };
 type OccupancyResponse = { date: string; floorplanId: string; desks: OccupancyDesk[]; people: OccupancyPerson[] };
-type BookingEmployee = { id: string; email: string; displayName: string; photoUrl?: string };
-type OccupantForDay = { deskId: string; deskLabel: string; userId: string; name: string; email: string; employeeId?: string; photoUrl?: string };
+type BookingEmployee = { id: string; email: string; firstName?: string; displayName: string; photoUrl?: string };
+type OccupantForDay = { deskId: string; deskLabel: string; userId: string; name: string; firstName: string; email: string; employeeId?: string; photoUrl?: string };
 type BookingSubmitPayload = BookingFormSubmitPayload;
 type BookingDialogState = 'IDLE' | 'BOOKING_OPEN' | 'SUBMITTING' | 'CONFLICT_REVIEW';
 type RebookConfirmState = {
@@ -144,6 +144,13 @@ const getApiErrorMessage = (error: unknown, fallback: string): string => {
   return fallback;
 };
 
+const getFirstName = ({ firstName, displayName, email }: { firstName?: string; displayName?: string; email?: string }): string => {
+  if (firstName?.trim()) return firstName.trim();
+  if (displayName?.trim()) return displayName.trim().split(/\s+/)[0] ?? 'Unbekannt';
+  if (email?.trim()) return email.trim().split('@')[0] ?? 'Unbekannt';
+  return 'Unbekannt';
+};
+
 const formatDate = (dateString: string): string => new Date(`${dateString}T00:00:00.000Z`).toLocaleDateString('de-DE');
 
 const isUserBookingConflictError = (error: unknown): error is ApiError => error instanceof ApiError
@@ -159,15 +166,20 @@ const getConflictExistingDeskLabel = (error: ApiError): string | undefined => {
 
 const mapBookingsForDay = (desks: OccupancyDesk[]): OccupantForDay[] => desks
   .filter((desk) => desk.booking)
-  .map((desk) => ({
-    deskId: desk.id,
-    deskLabel: desk.name,
-    userId: desk.booking?.id ?? desk.booking?.employeeId ?? desk.booking?.userEmail ?? `${desk.id}-occupant`,
-    name: desk.booking?.userDisplayName ?? desk.booking?.userEmail ?? 'Unbekannt',
-    email: desk.booking?.userEmail ?? '',
-    employeeId: desk.booking?.employeeId,
-    photoUrl: desk.booking?.userPhotoUrl
-  }))
+  .map((desk) => {
+    const fullName = desk.booking?.userDisplayName ?? desk.booking?.userEmail ?? 'Unbekannt';
+
+    return {
+      deskId: desk.id,
+      deskLabel: desk.name,
+      userId: desk.booking?.id ?? desk.booking?.employeeId ?? desk.booking?.userEmail ?? `${desk.id}-occupant`,
+      name: fullName,
+      firstName: getFirstName({ firstName: desk.booking?.userFirstName, displayName: fullName, email: desk.booking?.userEmail }),
+      email: desk.booking?.userEmail ?? '',
+      employeeId: desk.booking?.employeeId,
+      photoUrl: desk.booking?.userPhotoUrl
+    };
+  })
   .sort((a, b) => a.name.localeCompare(b.name, 'de'));
 
 const enrichDeskBookings = ({
@@ -201,6 +213,7 @@ const enrichDeskBookings = ({
     booking: {
       ...booking,
       employeeId: booking.employeeId ?? employee?.id,
+      userFirstName: booking.userFirstName ?? employee?.firstName ?? getFirstName({ displayName: booking.userDisplayName ?? employee?.displayName, email: booking.userEmail }),
       userDisplayName: booking.userDisplayName ?? employee?.displayName,
       userPhotoUrl: bookingPhotoUrl ?? employeePhotoUrl ?? fallbackPhotoUrl
     },
@@ -263,8 +276,6 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
   const filteredDesks = useMemo(() => (onlyFree ? desks.filter((desk) => desk.status === 'free') : desks).map((desk) => ({ ...desk, isHighlighted: desk.id === highlightedDeskId })), [desks, onlyFree, highlightedDeskId]);
   const bookingsForSelectedDate = useMemo<OccupantForDay[]>(() => mapBookingsForDay(desks), [desks]);
   const bookingsForToday = useMemo<OccupantForDay[]>(() => mapBookingsForDay(desksToday), [desksToday]);
-  const visibleTodayAvatars = useMemo(() => bookingsForToday.slice(0, 5), [bookingsForToday]);
-  const hiddenTodayCount = Math.max(0, bookingsForToday.length - visibleTodayAvatars.length);
   const popupDesk = useMemo(() => (deskPopup ? desks.find((desk) => desk.id === deskPopup.deskId) ?? null : null), [desks, deskPopup]);
   const popupDeskState = popupDesk ? (!popupDesk.booking ? 'FREE' : popupDesk.isCurrentUsersDesk ? 'MINE' : 'TAKEN') : null;
   const calendarDays = useMemo(() => buildCalendarDays(visibleMonth), [visibleMonth]);
@@ -691,25 +702,43 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
 
   const todayPanel = (
     <section className="card compact-card today-compact-panel">
-      <button
-        type="button"
-        className="today-summary-btn"
-        onClick={() => {
-          setSelectedDate(today);
-          setVisibleMonth(startOfMonth(today));
-        }}
-      >
-        <div>
-          <strong>Heute im Büro</strong>
-          <p className="muted">{bookingsForToday.length} anwesend</p>
+      <div className="today-summary-header">
+        <strong>Heute im Büro</strong>
+      </div>
+      {bookingsForToday.length === 0 ? (
+        <div className="empty-state compact-empty-state today-people-empty-state">
+          <p>Heute noch niemand eingetragen.</p>
         </div>
-        <div className="today-avatar-row" aria-label="Anwesende heute">
-          {visibleTodayAvatars.map((person) => (
-            <Avatar key={`today-${person.userId}-${person.deskId}`} displayName={person.name} email={person.email} photoUrl={person.photoUrl} size={28} />
+      ) : (
+        <div className="today-people-grid" role="list" aria-label="Anwesende heute">
+          {bookingsForToday.map((person) => (
+            <button
+              key={`today-${person.userId}-${person.deskId}`}
+              type="button"
+              role="listitem"
+              className={`today-person-tile ${(hoveredDeskId === person.deskId || selectedDeskId === person.deskId) ? 'is-active' : ''} ${highlightedDeskId === person.deskId ? 'is-highlighted' : ''}`}
+              onMouseEnter={() => {
+                setHoveredDeskId(person.deskId);
+                setHighlightedDeskId(person.deskId);
+              }}
+              onMouseLeave={() => {
+                setHoveredDeskId('');
+                setHighlightedDeskId('');
+              }}
+              onFocus={() => setHighlightedDeskId(person.deskId)}
+              onBlur={() => setHighlightedDeskId('')}
+              onClick={() => {
+                setSelectedDate(today);
+                setVisibleMonth(startOfMonth(today));
+              }}
+              title={person.name}
+            >
+              <Avatar displayName={person.name} email={person.email} photoUrl={person.photoUrl} size={34} />
+              <span>{person.firstName}</span>
+            </button>
           ))}
-          {hiddenTodayCount > 0 && <span className="avatar-overflow">+{hiddenTodayCount}</span>}
         </div>
-      </button>
+      )}
     </section>
   );
 
