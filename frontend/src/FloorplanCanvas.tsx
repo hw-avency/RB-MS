@@ -38,10 +38,13 @@ type SlotKey = 'AM' | 'PM';
 const PIN_HITBOX_SIZE = 44;
 const PIN_VISUAL_SIZE = 36;
 const RING_RADIUS = 16;
-const RING_WIDTH = 4;
+const RING_WIDTH = 5;
 const CENTER_SIZE = 28;
 const START_ANGLE = -90;
 const MAX_ROOM_MARKER_LABEL_LENGTH = 4;
+const WORK_START = 7 * 60;
+const WORK_END = 18 * 60;
+const WORK_SPAN = WORK_END - WORK_START;
 
 const clamp01 = (value: number): number => Math.min(1, Math.max(0, value));
 const isTodayDateKey = (value?: string): boolean => Boolean(value && value === new Date().toISOString().slice(0, 10));
@@ -111,7 +114,11 @@ const arcPath = (startDeg: number, endDeg: number, radius: number): string => {
   return `M ${start.x} ${start.y} A ${radius} ${radius} 0 ${largeArc} 1 ${end.x} ${end.y}`;
 };
 
-const minuteToAngle = (minutes: number): number => START_ANGLE + (minutes / 1440) * 360;
+const minuteToAngle = (minutes: number): number => {
+  const clampedMinutes = Math.min(WORK_END, Math.max(WORK_START, minutes));
+  const normalized = (clampedMinutes - WORK_START) / WORK_SPAN;
+  return START_ANGLE + normalized * 360;
+};
 
 type FloorplanCanvasProps = {
   imageUrl: string;
@@ -179,7 +186,10 @@ const DeskOverlay = memo(function DeskOverlay({ desks, selectedDeskId, hoveredDe
             const startMinutes = hhmmToMinutes(booking.startTime);
             const endMinutes = hhmmToMinutes(booking.endTime);
             if (startMinutes === null || endMinutes === null || endMinutes <= startMinutes) return [];
-            return [{ id: `${booking.id ?? booking.userEmail}-${startMinutes}`, d: arcPath(minuteToAngle(startMinutes), minuteToAngle(endMinutes), RING_RADIUS), color: slotColor(booking) }];
+            const startInWindow = Math.max(WORK_START, startMinutes);
+            const endInWindow = Math.min(WORK_END, endMinutes);
+            if (endInWindow <= startInWindow) return [];
+            return [{ id: `${booking.id ?? booking.userEmail}-${startMinutes}`, d: arcPath(minuteToAngle(startInWindow), minuteToAngle(endInWindow), RING_RADIUS), color: slotColor(booking) }];
           });
 
           const nowTickAngle = minuteToAngle(new Date().getHours() * 60 + new Date().getMinutes());
@@ -220,13 +230,13 @@ const DeskOverlay = memo(function DeskOverlay({ desks, selectedDeskId, hoveredDe
                 {isRoom ? (
                   <>
                     <circle cx={PIN_VISUAL_SIZE / 2} cy={PIN_VISUAL_SIZE / 2} r={RING_RADIUS} className="pin-ring-track" />
-                    {roomArcs.map((arc) => <path key={arc.id} d={arc.d} className="pin-ring-arc" style={{ stroke: arc.color }} />)}
+                    {roomArcs.map((arc) => <path key={arc.id} d={arc.d} className="pin-ring-arc" style={{ stroke: arc.color, strokeWidth: RING_WIDTH }} />)}
                     {isTodayDateKey(selectedDate) && <line x1={tickStart.x} y1={tickStart.y} x2={tickEnd.x} y2={tickEnd.y} className="pin-ring-now-tick" />}
                   </>
                 ) : (
                   <>
-                    <path d={arcPath(START_ANGLE, START_ANGLE + 180, RING_RADIUS)} className="pin-ring-arc" style={{ stroke: slotColor(amBooking) }} />
-                    <path d={arcPath(START_ANGLE + 180, START_ANGLE + 360, RING_RADIUS)} className="pin-ring-arc" style={{ stroke: slotColor(pmBooking) }} />
+                    <path d={arcPath(START_ANGLE, START_ANGLE + 180, RING_RADIUS)} className="pin-ring-arc" style={{ stroke: slotColor(amBooking), strokeWidth: RING_WIDTH }} />
+                    <path d={arcPath(START_ANGLE + 180, START_ANGLE + 360, RING_RADIUS)} className="pin-ring-arc" style={{ stroke: slotColor(pmBooking), strokeWidth: RING_WIDTH }} />
                   </>
                 )}
               </svg>

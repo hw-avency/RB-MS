@@ -61,6 +61,8 @@ type TimeInterval = { start: number; end: number };
 
 const POPUP_OFFSET = 12;
 const POPUP_PADDING = 8;
+const WORK_START = 7 * 60;
+const WORK_END = 18 * 60;
 
 const clamp = (value: number, min: number, max: number): number => Math.min(max, Math.max(min, value));
 
@@ -195,7 +197,7 @@ const mergeIntervals = (intervals: TimeInterval[]): TimeInterval[] => {
   return merged;
 };
 
-const toFreeIntervals = (occupied: TimeInterval[], dayStart = 8 * 60, dayEnd = 18 * 60): TimeInterval[] => {
+const toFreeIntervals = (occupied: TimeInterval[], dayStart = WORK_START, dayEnd = WORK_END): TimeInterval[] => {
   const free: TimeInterval[] = [];
   let cursor = dayStart;
   for (const interval of occupied) {
@@ -912,9 +914,8 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
     await loadInitial();
   };
 
-  const sidebar = (
-    <div className="stack">
-      <section className="card compact-card">
+  const calendarPanel = (
+    <section className="card compact-card">
         <div className="calendar-header">
           <button className="btn btn-ghost" onClick={() => setVisibleMonth((prev) => new Date(Date.UTC(prev.getUTCFullYear(), prev.getUTCMonth() - 1, 1)))}>‹</button>
           <strong>{monthLabel(visibleMonth)}</strong>
@@ -935,20 +936,28 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
           })}
         </div>
       </section>
+  );
 
-      <section className="card compact-card stack-sm">
+  const legendPanel = (
+    <section className="card compact-card stack-sm">
         <h3 className="section-title">Filter &amp; Legende</h3>
         <label className="toggle">
           <input type="checkbox" checked={onlyFree} onChange={(event) => setOnlyFree(event.target.checked)} />
           <span>Nur freie Plätze</span>
         </label>
         <div className="legend">
-          <span><i className="dot free" /> Frei</span>
-          <span><i className="dot booked" /> Belegt</span>
+          <span><i className="dot free" /> Frei (Tische/Parkplätze)</span>
+          <span><i className="dot booked" /> Belegt (Tische/Parkplätze)</span>
           <span><i className="dot selected" /> Dein Platz</span>
         </div>
+        <div className="legend room-legend">
+          <strong>Räume</strong>
+          <span><i className="dot room-free" /> Grün = frei (07–18 Uhr)</span>
+          <span><i className="dot room-booked" /> Segmentfarbe = belegt</span>
+          <span><i className="dot room-now" /> Tick = aktuelle Uhrzeit (nur heute)</span>
+          <p className="muted">Räume: Ring zeigt Zeitbelegung.</p>
+        </div>
       </section>
-    </div>
   );
 
   const renderOccupancyList = (items: OccupantForDay[], sectionKey: 'today' | 'selected', title: string, emptyText: string) => {
@@ -1081,7 +1090,8 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
       {isBootstrapping ? <div className="card skeleton h-120" /> : todayPanel}
 
       <section className="layout-grid">
-        <aside className="left-col desktop-only">{isBootstrapping ? <div className="card skeleton h-480" /> : sidebar}</aside>
+        <aside className="left-col">{isBootstrapping ? <div className="card skeleton h-480" /> : calendarPanel}</aside>
+        <aside className="legend-col">{isBootstrapping ? <div className="card skeleton h-120" /> : legendPanel}</aside>
         <section className="center-col">
           <article className="card canvas-card">
             <div className="card-header-row">
@@ -1122,7 +1132,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
           </article>
         </section>
 
-        <aside className="right-col desktop-right">{isBootstrapping ? <div className="card skeleton h-480" /> : detailPanel}</aside>
+        <aside className="right-col">{isBootstrapping ? <div className="card skeleton h-480" /> : detailPanel}</aside>
       </section>
 
       {deskPopup && popupDesk && popupDeskState && cancelFlowState !== 'CANCEL_CONFIRM_OPEN' && createPortal(
