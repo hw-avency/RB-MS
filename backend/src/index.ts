@@ -1807,6 +1807,101 @@ app.delete('/bookings/:id', async (req, res) => {
   res.status(200).json({ ok: true });
 });
 
+
+app.post('/bookings/check-conflicts', async (req, res) => {
+  const { deskId, userEmail, userId, start, end, weekdays, type } = req.body as {
+    deskId?: string;
+    userEmail?: string;
+    userId?: string;
+    start?: string;
+    end?: string;
+    weekdays?: number[];
+    type?: 'single' | 'range' | 'recurring';
+  };
+
+  if (!deskId || !userEmail || !start || !type) {
+    res.status(400).json({ error: 'validation', message: 'deskId, userEmail, start and type are required' });
+    return;
+  }
+
+  const parsedStart = toDateOnly(start);
+  const parsedEnd = toDateOnly(end ?? start);
+  if (!parsedStart || !parsedEnd) {
+    res.status(400).json({ error: 'validation', message: 'start/end must be in YYYY-MM-DD format' });
+    return;
+  }
+
+  if (parsedEnd < parsedStart) {
+    res.status(400).json({ error: 'validation', message: 'end must be on or after start' });
+    return;
+  }
+
+  if (!['single', 'range', 'recurring'].includes(type)) {
+    res.status(400).json({ error: 'validation', message: 'type must be single, range or recurring' });
+    return;
+  }
+
+  if (type === 'recurring') {
+    if (!Array.isArray(weekdays) || weekdays.length === 0) {
+      res.status(400).json({ error: 'validation', message: 'weekdays are required for recurring bookings' });
+      return;
+    }
+
+    if (weekdays.some((weekday) => !Number.isInteger(weekday) || weekday < 0 || weekday > 6)) {
+      res.status(400).json({ error: 'validation', message: 'weekdays must contain values between 0 and 6' });
+      return;
+    }
+  }
+
+  const targetDates = datesInRange(parsedStart, parsedEnd).filter((date) => {
+    if (type === 'single') {
+      return toISODateOnly(date) === toISODateOnly(parsedStart);
+    }
+
+    if (type === 'recurring') {
+      return Boolean(weekdays?.includes(date.getUTCDay()));
+    }
+
+    return true;
+  });
+
+  if (targetDates.length === 0) {
+    res.status(200).json({ hasConflicts: false, conflictDates: [] });
+    return;
+  }
+
+  const identity = await findBookingIdentity(userEmail);
+  const existingUserBookings = await prisma.booking.findMany({
+    where: {
+      date: { in: targetDates },
+      userEmail: { in: identity.emailAliases }
+    },
+    orderBy: [{ date: 'asc' }, { createdAt: 'desc' }, { id: 'desc' }]
+  });
+
+  const existingByDate = new Map<string, string>();
+  for (const booking of existingUserBookings) {
+    const key = toISODateOnly(booking.date);
+    if (!existingByDate.has(key)) {
+      existingByDate.set(key, booking.id);
+    }
+  }
+
+  const conflicts = await prisma.booking.findMany({
+    where: {
+      deskId,
+      date: { in: targetDates },
+      id: { notIn: Array.from(existingByDate.values()) },
+      userEmail: { notIn: identity.emailAliases }
+    },
+    select: { date: true },
+    orderBy: { date: 'asc' }
+  });
+
+  const conflictDates = conflicts.map((booking) => toISODateOnly(booking.date));
+  res.status(200).json({ hasConflicts: conflictDates.length > 0, conflictDates, userId });
+});
+
 app.post('/bookings/range', async (req, res) => {
   const { deskId, userEmail, from, to, weekdaysOnly, replaceExisting, overrideExisting } = req.body as {
     deskId?: string;

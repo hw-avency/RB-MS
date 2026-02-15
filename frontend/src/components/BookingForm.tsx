@@ -1,8 +1,8 @@
-import { FormEvent, useMemo, useState } from 'react';
+import { FormEvent, useState } from 'react';
 
 type BookingType = 'single' | 'range' | 'recurring';
 
-type BookingFormValues = {
+export type BookingFormValues = {
   type: BookingType;
   date: string;
   dateFrom: string;
@@ -11,10 +11,22 @@ type BookingFormValues = {
   weekdays: number[];
 };
 
-type BookingFormSubmitPayload =
+export type BookingFormSubmitPayload =
   | { type: 'single'; date: string }
   | { type: 'range'; dateFrom: string; dateTo: string; onlyWeekdays: boolean }
   | { type: 'recurring'; dateFrom: string; dateTo: string; weekdays: number[] };
+
+export const createDefaultBookingFormValues = (selectedDate: string): BookingFormValues => {
+  const defaultWeekday = new Date(`${selectedDate}T00:00:00.000Z`).getUTCDay();
+  return {
+    type: 'single',
+    date: selectedDate,
+    dateFrom: selectedDate,
+    dateTo: selectedDate,
+    onlyWeekdays: true,
+    weekdays: [defaultWeekday]
+  };
+};
 
 const weekdayButtons = [
   { label: 'Mo', value: 1 },
@@ -26,56 +38,38 @@ const weekdayButtons = [
   { label: 'So', value: 0 }
 ];
 
-export function BookingForm({
-  selectedDate,
-  onSubmit,
-  onCancel
-}: {
-  selectedDate: string;
+export function BookingForm({ values, onChange, onSubmit, onCancel, isSubmitting, disabled, errorMessage }: {
+  values: BookingFormValues;
+  onChange: (next: BookingFormValues) => void;
   onSubmit: (payload: BookingFormSubmitPayload) => Promise<void>;
   onCancel: () => void;
+  isSubmitting: boolean;
+  disabled: boolean;
+  errorMessage?: string;
 }) {
-  const defaultWeekday = useMemo(() => new Date(`${selectedDate}T00:00:00.000Z`).getUTCDay(), [selectedDate]);
-  const [values, setValues] = useState<BookingFormValues>({
-    type: 'single',
-    date: selectedDate,
-    dateFrom: selectedDate,
-    dateTo: selectedDate,
-    onlyWeekdays: true,
-    weekdays: [defaultWeekday]
-  });
-  const [isSubmitting, setIsSubmitting] = useState(false);
   const [localError, setLocalError] = useState('');
 
   const toggleWeekday = (weekday: number) => {
-    setValues((current) => {
-      if (current.weekdays.includes(weekday)) {
-        return { ...current, weekdays: current.weekdays.filter((value) => value !== weekday) };
-      }
-      return { ...current, weekdays: [...current.weekdays, weekday].sort((a, b) => a - b) };
-    });
+    if (values.weekdays.includes(weekday)) {
+      onChange({ ...values, weekdays: values.weekdays.filter((value) => value !== weekday) });
+      return;
+    }
+
+    onChange({ ...values, weekdays: [...values.weekdays, weekday].sort((a, b) => a - b) });
   };
 
   const handleSubmit = async (event: FormEvent) => {
     event.preventDefault();
     setLocalError('');
 
-    if (values.type === 'range') {
-      if (!values.dateFrom || !values.dateTo || values.dateFrom > values.dateTo) {
-        setLocalError('Für den Zeitraum muss „Von“ vor oder gleich „Bis“ liegen.');
-        return;
-      }
+    if (values.type !== 'single' && (!values.dateFrom || !values.dateTo || values.dateFrom > values.dateTo)) {
+      setLocalError('Startdatum muss vor oder gleich Enddatum liegen.');
+      return;
     }
 
-    if (values.type === 'recurring') {
-      if (!values.dateFrom || !values.dateTo || values.dateFrom > values.dateTo) {
-        setLocalError('Für Serienbuchungen muss der Zeitraum korrekt gesetzt sein.');
-        return;
-      }
-      if (values.weekdays.length === 0) {
-        setLocalError('Bitte mindestens einen Wochentag für die Serienbuchung auswählen.');
-        return;
-      }
+    if (values.type === 'recurring' && values.weekdays.length === 0) {
+      setLocalError('Bitte mindestens einen Wochentag für die Serienbuchung auswählen.');
+      return;
     }
 
     const payload: BookingFormSubmitPayload = values.type === 'single'
@@ -84,12 +78,7 @@ export function BookingForm({
         ? { type: 'range', dateFrom: values.dateFrom, dateTo: values.dateTo, onlyWeekdays: values.onlyWeekdays }
         : { type: 'recurring', dateFrom: values.dateFrom, dateTo: values.dateTo, weekdays: values.weekdays };
 
-    setIsSubmitting(true);
-    try {
-      await onSubmit(payload);
-    } finally {
-      setIsSubmitting(false);
-    }
+    await onSubmit(payload);
   };
 
   return (
@@ -98,9 +87,10 @@ export function BookingForm({
         <label>Typ</label>
         <select
           value={values.type}
+          disabled={disabled}
           onChange={(event) => {
             const nextType = event.target.value === 'range' ? 'range' : event.target.value === 'recurring' ? 'recurring' : 'single';
-            setValues((current) => ({ ...current, type: nextType }));
+            onChange({ ...values, type: nextType });
           }}
         >
           <option value="single">Einzelbuchung ganzer Tag</option>
@@ -112,7 +102,7 @@ export function BookingForm({
       {values.type === 'single' && (
         <div className="stack-xs">
           <label>Datum</label>
-          <input type="date" value={values.date} readOnly />
+          <input type="date" value={values.date} readOnly disabled />
         </div>
       )}
 
@@ -121,18 +111,19 @@ export function BookingForm({
           <div className="inline-grid-two">
             <div className="stack-xs">
               <label>Von</label>
-              <input type="date" value={values.dateFrom} autoFocus onChange={(event) => setValues((current) => ({ ...current, dateFrom: event.target.value }))} />
+              <input type="date" value={values.dateFrom} autoFocus disabled={disabled} onChange={(event) => onChange({ ...values, dateFrom: event.target.value })} />
             </div>
             <div className="stack-xs">
               <label>Bis</label>
-              <input type="date" value={values.dateTo} onChange={(event) => setValues((current) => ({ ...current, dateTo: event.target.value }))} />
+              <input type="date" value={values.dateTo} disabled={disabled} onChange={(event) => onChange({ ...values, dateTo: event.target.value })} />
             </div>
           </div>
           <label className="checkbox-label">
             <input
               type="checkbox"
               checked={values.onlyWeekdays}
-              onChange={(event) => setValues((current) => ({ ...current, onlyWeekdays: event.target.checked }))}
+              disabled={disabled}
+              onChange={(event) => onChange({ ...values, onlyWeekdays: event.target.checked })}
             />
             Nur Werktage (Mo–Fr)
           </label>
@@ -144,11 +135,11 @@ export function BookingForm({
           <div className="inline-grid-two">
             <div className="stack-xs">
               <label>Start</label>
-              <input type="date" value={values.dateFrom} autoFocus onChange={(event) => setValues((current) => ({ ...current, dateFrom: event.target.value }))} />
+              <input type="date" value={values.dateFrom} autoFocus disabled={disabled} onChange={(event) => onChange({ ...values, dateFrom: event.target.value })} />
             </div>
             <div className="stack-xs">
               <label>Ende</label>
-              <input type="date" value={values.dateTo} onChange={(event) => setValues((current) => ({ ...current, dateTo: event.target.value }))} />
+              <input type="date" value={values.dateTo} disabled={disabled} onChange={(event) => onChange({ ...values, dateTo: event.target.value })} />
             </div>
           </div>
           <div className="stack-xs">
@@ -159,6 +150,7 @@ export function BookingForm({
                   key={weekday.value}
                   type="button"
                   className={`weekday-toggle ${values.weekdays.includes(weekday.value) ? 'active' : ''}`}
+                  disabled={disabled}
                   onClick={() => toggleWeekday(weekday.value)}
                 >
                   {weekday.label}
@@ -169,11 +161,11 @@ export function BookingForm({
         </>
       )}
 
-      {localError && <p className="muted error-inline">{localError}</p>}
+      {(errorMessage || localError) && <div className="error-banner" role="alert">{errorMessage || localError}</div>}
 
-      <div className="inline-end">
-        <button type="button" className="btn btn-outline" onClick={onCancel}>Abbrechen</button>
-        <button className="btn" type="submit" disabled={isSubmitting}>{isSubmitting ? 'Speichere…' : 'Buchen'}</button>
+      <div className="inline-between">
+        <button type="button" className="btn btn-outline" onClick={onCancel} disabled={disabled}>Abbrechen</button>
+        <button className="btn" type="submit" disabled={disabled || isSubmitting}>{isSubmitting ? 'Buchen…' : 'Buchen'}</button>
       </div>
     </form>
   );
