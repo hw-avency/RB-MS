@@ -209,6 +209,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
 
   const [selectedDeskId, setSelectedDeskId] = useState('');
   const [hoveredDeskId, setHoveredDeskId] = useState('');
+  const [floorplanZoom, setFloorplanZoom] = useState(1);
 
   const [isBootstrapping, setIsBootstrapping] = useState(true);
   const [isUpdatingOccupancy, setIsUpdatingOccupancy] = useState(false);
@@ -249,6 +250,8 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
   const filteredDesks = useMemo(() => (onlyFree ? desks.filter((desk) => desk.status === 'free') : desks).map((desk) => ({ ...desk, isHighlighted: desk.id === highlightedDeskId })), [desks, onlyFree, highlightedDeskId]);
   const bookingsForSelectedDate = useMemo<OccupantForDay[]>(() => mapBookingsForDay(desks), [desks]);
   const bookingsForToday = useMemo<OccupantForDay[]>(() => mapBookingsForDay(desksToday), [desksToday]);
+  const visibleTodayAvatars = useMemo(() => bookingsForToday.slice(0, 5), [bookingsForToday]);
+  const hiddenTodayCount = Math.max(0, bookingsForToday.length - visibleTodayAvatars.length);
   const activeDialogDeskRef = bookingDialogState === 'CONFLICT_REVIEW' ? conflictReview : deskPopup;
   const popupDesk = useMemo(() => (activeDialogDeskRef ? desks.find((desk) => desk.id === activeDialogDeskRef.deskId) ?? null : null), [desks, activeDialogDeskRef]);
   const popupDeskState = popupDesk ? (!popupDesk.booking ? 'FREE' : popupDesk.isCurrentUsersDesk ? 'MINE' : 'TAKEN') : null;
@@ -600,7 +603,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
 
   const sidebar = (
     <div className="stack">
-      <section className="card">
+      <section className="card compact-card">
         <div className="calendar-header">
           <button className="btn btn-ghost" onClick={() => setVisibleMonth((prev) => new Date(Date.UTC(prev.getUTCFullYear(), prev.getUTCMonth() - 1, 1)))}>‹</button>
           <strong>{monthLabel(visibleMonth)}</strong>
@@ -622,11 +625,11 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
         </div>
       </section>
 
-      <section className="card stack-sm">
-        <h3 className="section-title">Legende</h3>
+      <section className="card compact-card stack-sm">
+        <h3 className="section-title">Filter &amp; Legende</h3>
         <label className="toggle">
           <input type="checkbox" checked={onlyFree} onChange={(event) => setOnlyFree(event.target.checked)} />
-          <span>Nur freie Plätze anzeigen</span>
+          <span>Nur freie Plätze</span>
         </label>
         <div className="legend">
           <span><i className="dot free" /> Frei</span>
@@ -670,6 +673,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
                 <p className="muted">{occupant.email}</p>
               </div>
             </div>
+            {occupant.deskLabel && <span className="occupant-desk-label">{occupant.deskLabel}</span>}
           </div>
         ))}
       </div>
@@ -677,19 +681,35 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
   };
 
   const todayPanel = (
-    <section className="card stack-sm full-width-occupancy-panel">
-      <h3>Heute im Büro ({bookingsForToday.length})</h3>
-      {renderOccupancyList(bookingsForToday, 'today', 'Heute im Büro', 'Heute ist niemand eingeplant.')}
+    <section className="card compact-card today-compact-panel">
+      <button
+        type="button"
+        className="today-summary-btn"
+        onClick={() => {
+          setSelectedDate(today);
+          setVisibleMonth(startOfMonth(today));
+        }}
+      >
+        <div>
+          <strong>Heute im Büro</strong>
+          <p className="muted">{bookingsForToday.length} anwesend</p>
+        </div>
+        <div className="today-avatar-row" aria-label="Anwesende heute">
+          {visibleTodayAvatars.map((person) => (
+            <Avatar key={`today-${person.userId}-${person.deskId}`} displayName={person.name} email={person.email} photoUrl={person.photoUrl} size={28} />
+          ))}
+          {hiddenTodayCount > 0 && <span className="avatar-overflow">+{hiddenTodayCount}</span>}
+        </div>
+      </button>
     </section>
   );
 
   const detailPanel = (
     <div className="stack">
-      <section className="card stack-sm details-panel">
+      <section className="card compact-card stack-sm details-panel">
         <div className="stack-sm">
-          <h3>Anwesenheiten</h3>
-          <p className="muted">{formatDate(selectedDate)}</p>
-          {renderOccupancyList(bookingsForSelectedDate, 'selected', 'Anwesenheit am ausgewählten Datum', 'An diesem Tag ist niemand eingeplant.')}
+          <h3>Anwesend am {formatDate(selectedDate)}</h3>
+          {renderOccupancyList(bookingsForSelectedDate, 'selected', 'Anwesenheit am ausgewählten Datum', 'Noch keine Anwesenheiten')}
         </div>
       </section>
     </div>
@@ -712,19 +732,23 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
 
   return (
     <main className="app-shell">
-      <header className="app-header simplified-header">
+      <header className="app-header simplified-header compact-topbar">
         <div className="header-left">
+          <span className="brand-mark" aria-hidden="true">A</span>
           <h1>{APP_TITLE}</h1>
-          <select value={selectedFloorplanId} onChange={(event) => setSelectedFloorplanId(event.target.value)}>
+          <label className="field-inline">
+            <span>Standort</span>
+            <select value={selectedFloorplanId} onChange={(event) => setSelectedFloorplanId(event.target.value)}>
             {floorplans.map((floorplan) => <option key={floorplan.id} value={floorplan.id}>{floorplan.name}</option>)}
-          </select>
+            </select>
+          </label>
         </div>
         <div className="header-right">
           <UserMenu user={currentUser} onLogout={onLogout} onOpenAdmin={onOpenAdmin} showAdminAction={canOpenAdmin} />
         </div>
       </header>
 
-      {errorMessage && <div className="toast toast-error">{errorMessage} <button className="btn btn-ghost" onClick={reloadBookings}>Retry</button></div>}
+      {errorMessage && <div className="inline-alert">{errorMessage} <button className="btn btn-ghost" onClick={reloadBookings}>Retry</button></div>}
       {toastMessage && <div className="toast toast-success">{toastMessage}</div>}
 
       {isBootstrapping ? <div className="card skeleton h-120" /> : todayPanel}
@@ -734,12 +758,20 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
         <section className="center-col">
           <article className="card canvas-card">
             <div className="card-header-row">
-              <h2>{selectedFloorplan?.name ?? 'Floorplan'}</h2>
+              <div>
+                <h2>{selectedFloorplan?.name ?? 'Floorplan'} · {formatDate(selectedDate)}</h2>
+                <p className="muted">Klicke auf einen Platz zum Buchen</p>
+              </div>
+              <div className="toolbar">
+                <button className="btn btn-ghost" type="button" onClick={() => setFloorplanZoom((prev) => Math.max(0.8, Number((prev - 0.1).toFixed(2))))}>−</button>
+                <button className="btn btn-ghost" type="button" onClick={() => setFloorplanZoom(1)}>Reset</button>
+                <button className="btn btn-ghost" type="button" onClick={() => setFloorplanZoom((prev) => Math.min(1.8, Number((prev + 0.1).toFixed(2))))}>＋</button>
+              </div>
             </div>
             <div className={`refresh-progress ${isUpdatingOccupancy ? "is-active" : ""}`} aria-hidden={!isUpdatingOccupancy}>
               <span className="refresh-progress-bar" />
             </div>
-            <div className="canvas-body">
+            <div className="canvas-body canvas-body-focus" style={{ ['--floorplan-zoom' as string]: floorplanZoom }}>
               {isBootstrapping ? (
                 <div className="skeleton h-420" />
               ) : selectedFloorplan ? (
