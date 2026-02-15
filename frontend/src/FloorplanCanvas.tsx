@@ -1,9 +1,11 @@
 import { Fragment, MouseEvent, RefObject, memo, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { resourceKindLabel } from './resourceKinds';
 
 type FloorplanDesk = {
   id: string;
   name: string;
+  kind?: string;
   x: number;
   y: number;
   status: 'free' | 'booked';
@@ -154,7 +156,7 @@ const DeskOverlay = memo(function DeskOverlay({ desks, selectedDeskId, hoveredDe
                   onDeskDoubleClick?.(desk.id);
                 }}
                 tabIndex={isClickable ? 0 : -1}
-                aria-label={`Tisch: ${deskLabel} · ${pinState === 'FREE' ? 'Frei' : pinState === 'MINE' ? 'Eigene Buchung' : desk.booking?.userDisplayName ?? desk.booking?.userEmail ?? 'Belegt'}`}
+                aria-label={`${resourceKindLabel(desk.kind)}: ${deskLabel} · ${pinState === 'FREE' ? 'Frei' : pinState === 'MINE' ? 'Eigene Buchung' : desk.booking?.userDisplayName ?? desk.booking?.userEmail ?? 'Belegt'}`}
               >
                 <span className={`pin-ring ${showDebugCross ? 'debug-outline' : ''}`} aria-hidden="true" />
                 <span className={`pin-avatar-clip ${showDebugCross ? 'debug-outline' : ''}`}>
@@ -185,7 +187,7 @@ const DeskOverlay = memo(function DeskOverlay({ desks, selectedDeskId, hoveredDe
       {tooltip && tooltipDesk && createPortal(
         <div className="desk-tooltip" style={{ left: tooltip.left, top: tooltip.top }} role="tooltip">
           <strong>{tooltipDesk.booking?.userDisplayName ?? tooltipDesk.booking?.userEmail ?? 'Freier Platz'}</strong>
-          <span>Tisch: {getDeskLabel(tooltipDesk)}</span>
+          <span>{resourceKindLabel(tooltipDesk.kind)}: {getDeskLabel(tooltipDesk)}</span>
           <span>{new Date(`${selectedDate ?? new Date().toISOString().slice(0, 10)}T00:00:00.000Z`).toLocaleDateString('de-DE')}</span>
         </div>,
         document.body

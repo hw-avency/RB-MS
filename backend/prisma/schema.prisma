@@ -47,6 +47,7 @@ model Desk {
   id                String             @id @default(cuid())
   floorplanId       String
   name              String
+  kind              ResourceKind       @default(TISCH)
   x                 Float
   y                 Float
   createdAt         DateTime           @default(now())
@@ -55,6 +56,13 @@ model Desk {
   recurringBookings RecurringBooking[]
 
   @@index([floorplanId])
+}
+
+enum ResourceKind {
+  TISCH
+  PARKPLATZ
+  RAUM
+  SONSTIGES
 }
 
 model Booking {

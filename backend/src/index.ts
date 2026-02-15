@@ -2,7 +2,7 @@ import cors from 'cors';
 import express from 'express';
 import crypto from 'crypto';
 import bcrypt from 'bcryptjs';
-import { Prisma } from '@prisma/client';
+import { Prisma, ResourceKind } from '@prisma/client';
 import { prisma } from './prisma';
 
 const app = express();
@@ -67,6 +67,13 @@ app.use((req, res, next) => {
 });
 
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+const RESOURCE_KINDS = new Set<ResourceKind>(['TISCH', 'PARKPLATZ', 'RAUM', 'SONSTIGES']);
+
+const parseResourceKind = (value: unknown): ResourceKind | null => {
+  if (typeof value !== 'string') return null;
+  const normalized = value.trim().toUpperCase() as ResourceKind;
+  return RESOURCE_KINDS.has(normalized) ? normalized : null;
+};
 
 type EmployeeRole = 'admin' | 'user';
 type SessionRecord = {
@@ -2181,6 +2188,7 @@ app.get('/occupancy', async (req, res) => {
       return {
         id: desk.id,
         name: desk.name,
+        kind: desk.kind,
         x: desk.x,
         y: desk.y,
         status: 'booked' as const,
@@ -2200,6 +2208,7 @@ app.get('/occupancy', async (req, res) => {
     return {
       id: desk.id,
       name: desk.name,
+      kind: desk.kind,
       x: desk.x,
       y: desk.y,
       status: 'free' as const,
@@ -2609,10 +2618,16 @@ app.post('/admin/floorplans/:id/desks', requireAdmin, async (req, res) => {
     return;
   }
 
-  const { name, x, y } = req.body as { name?: string; x?: number; y?: number };
+  const { name, x, y, kind } = req.body as { name?: string; x?: number; y?: number; kind?: ResourceKind };
+  const parsedKind = typeof kind === 'undefined' ? 'TISCH' : parseResourceKind(kind);
 
   if (!name || typeof x !== 'number' || typeof y !== 'number') {
     res.status(400).json({ error: 'validation', message: 'name, x and y are required' });
+    return;
+  }
+
+  if (!parsedKind) {
+    res.status(400).json({ error: 'validation', message: 'kind must be one of TISCH, PARKPLATZ, RAUM, SONSTIGES' });
     return;
   }
 
@@ -2622,7 +2637,7 @@ app.post('/admin/floorplans/:id/desks', requireAdmin, async (req, res) => {
     return;
   }
 
-  const desk = await prisma.desk.create({ data: { floorplanId: id, name, x, y } });
+  const desk = await prisma.desk.create({ data: { floorplanId: id, name: name.slice(0, 60), x, y, kind: parsedKind } });
   res.status(201).json(desk);
 });
 
@@ -2663,13 +2678,15 @@ app.patch('/admin/desks/:id', requireAdmin, async (req, res) => {
     return;
   }
 
-  const { name, x, y } = req.body as { name?: string; x?: number; y?: number };
+  const { name, x, y, kind } = req.body as { name?: string; x?: number; y?: number; kind?: ResourceKind };
   const hasName = typeof name !== 'undefined';
   const hasX = typeof x !== 'undefined';
   const hasY = typeof y !== 'undefined';
+  const hasKind = typeof kind !== 'undefined';
+  const parsedKind = hasKind ? parseResourceKind(kind) : null;
 
-  if (!hasName && !hasX && !hasY) {
-    res.status(400).json({ error: 'validation', message: 'name, x or y must be provided' });
+  if (!hasName && !hasX && !hasY && !hasKind) {
+    res.status(400).json({ error: 'validation', message: 'name, x, y or kind must be provided' });
     return;
   }
 
@@ -2688,10 +2705,16 @@ app.patch('/admin/desks/:id', requireAdmin, async (req, res) => {
     return;
   }
 
-  const data: { name?: string; x?: number; y?: number } = {};
-  if (hasName) data.name = name.trim();
+  if (hasKind && !parsedKind) {
+    res.status(400).json({ error: 'validation', message: 'kind must be one of TISCH, PARKPLATZ, RAUM, SONSTIGES' });
+    return;
+  }
+
+  const data: { name?: string; x?: number; y?: number; kind?: ResourceKind } = {};
+  if (hasName) data.name = name.trim().slice(0, 60);
   if (hasX) data.x = x;
   if (hasY) data.y = y;
+  if (hasKind && parsedKind) data.kind = parsedKind;
 
   try {
     const updatedDesk = await prisma.desk.update({ where: { id }, data });

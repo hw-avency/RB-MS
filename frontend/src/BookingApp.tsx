@@ -9,11 +9,13 @@ import { FloorplanCanvas } from './FloorplanCanvas';
 import { APP_TITLE } from './config';
 import type { AuthUser } from './auth/AuthProvider';
 import { useToast } from './components/toast';
+import { resourceKindLabel } from './resourceKinds';
 
 type Floorplan = { id: string; name: string; imageUrl: string };
 type OccupancyDesk = {
   id: string;
   name: string;
+  kind?: string;
   x: number;
   y: number;
   status: 'free' | 'booked';
@@ -24,12 +26,13 @@ type OccupancyDesk = {
 type OccupancyPerson = { email: string; displayName?: string; deskName?: string; deskId?: string };
 type OccupancyResponse = { date: string; floorplanId: string; desks: OccupancyDesk[]; people: OccupancyPerson[] };
 type BookingEmployee = { id: string; email: string; firstName?: string; displayName: string; photoUrl?: string };
-type OccupantForDay = { deskId: string; deskLabel: string; userId: string; name: string; firstName: string; email: string; employeeId?: string; photoUrl?: string };
+type OccupantForDay = { deskId: string; deskLabel: string; deskKindLabel: string; userId: string; name: string; firstName: string; email: string; employeeId?: string; photoUrl?: string };
 type BookingSubmitPayload = BookingFormSubmitPayload;
 type BookingDialogState = 'IDLE' | 'BOOKING_OPEN' | 'SUBMITTING' | 'CONFLICT_REVIEW';
 type RebookConfirmState = {
   deskId: string;
   deskLabel: string;
+  deskKindLabel: string;
   existingDeskLabel?: string;
   date: string;
   retryPayload: BookingSubmitPayload;
@@ -172,6 +175,7 @@ const mapBookingsForDay = (desks: OccupancyDesk[]): OccupantForDay[] => desks
     return {
       deskId: desk.id,
       deskLabel: desk.name,
+      deskKindLabel: resourceKindLabel(desk.kind),
       userId: desk.booking?.id ?? desk.booking?.employeeId ?? desk.booking?.userEmail ?? `${desk.id}-occupant`,
       name: fullName,
       firstName: getFirstName({ firstName: desk.booking?.userFirstName, displayName: fullName, email: desk.booking?.userEmail }),
@@ -537,6 +541,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
         setRebookConfirm({
           deskId: popupDesk.id,
           deskLabel: popupDesk.name,
+          deskKindLabel: resourceKindLabel(popupDesk.kind),
           existingDeskLabel: getConflictExistingDeskLabel(error),
           date: payload.type === 'single' ? payload.date : selectedDate,
           retryPayload: payload,
@@ -694,7 +699,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
                 <p className="muted">{occupant.email}</p>
               </div>
             </div>
-            {occupant.deskLabel && <span className="occupant-desk-label" title={occupant.deskLabel}>{occupant.deskLabel}</span>}
+            {occupant.deskLabel && <span className="occupant-desk-label" title={`${occupant.deskKindLabel}: ${occupant.deskLabel}`}>{occupant.deskKindLabel}: {occupant.deskLabel}</span>}
           </div>
         ))}
       </div>
@@ -846,7 +851,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
               <>
                 <div className="desk-popup-header">
                   <div className="stack-xxs">
-                    <h3>Tisch: {popupDesk.name}</h3>
+                    <h3>{resourceKindLabel(popupDesk.kind)}: {popupDesk.name}</h3>
                     <p className="muted">Buchung anlegen</p>
                   </div>
                   <button type="button" className="btn btn-ghost desk-popup-close" aria-label="Popover schließen" onClick={closeBookingFlow}>✕</button>
@@ -864,7 +869,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
               </>
             ) : (
               <>
-                <h3>Tisch: {popupDesk.name}</h3>
+                <h3>{resourceKindLabel(popupDesk.kind)}: {popupDesk.name}</h3>
                 <div className="stack-sm">
                   <p className="muted">Datum: {new Date(`${selectedDate}T00:00:00.000Z`).toLocaleDateString('de-DE')}</p>
                   <p className="muted">Zeitraum: Ganztägig</p>
@@ -882,7 +887,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
                   </div>
                   {cancelConfirmOpen && (
                     <div className="stack-xs desk-popup-confirm">
-                      <p className="muted">Möchtest du die Buchung für diesen Tisch wirklich stornieren?</p>
+                      <p className="muted">Möchtest du die Buchung für diese(n) {resourceKindLabel(popupDesk.kind)} wirklich stornieren?</p>
                       <div className="inline-end">
                         <button type="button" className="btn btn-outline" onClick={() => setCancelConfirmOpen(false)}>Abbrechen</button>
                         <button type="button" className="btn btn-danger" onClick={() => void submitPopupCancel()}>Stornierung bestätigen</button>
@@ -905,9 +910,9 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
             <p>
               Du hast am <strong className="rebook-date">{formatDate(rebookConfirm.date)}</strong> bereits eine Buchung.
               <br />
-              Möchtest du diese auf Tisch {rebookConfirm.deskLabel} umbuchen?
+              Möchtest du diese auf {rebookConfirm.deskKindLabel} {rebookConfirm.deskLabel} umbuchen?
             </p>
-            {rebookConfirm.existingDeskLabel && <p className="muted rebook-subline">Aktueller Tisch: {rebookConfirm.existingDeskLabel}</p>}
+            {rebookConfirm.existingDeskLabel && <p className="muted rebook-subline">Aktuelle Ressource: {rebookConfirm.existingDeskLabel}</p>}
             <div className="inline-end rebook-actions">
               <button type="button" className="btn btn-outline" onClick={cancelRebook} disabled={isRebooking}>Abbrechen</button>
               <button type="button" className="btn btn-danger" onClick={() => void confirmRebook()} disabled={isRebooking}>
