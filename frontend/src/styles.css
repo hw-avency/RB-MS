@@ -315,6 +315,17 @@ tr{cursor:pointer}.row-selected{background:hsl(var(--muted))}
 
 .admin-split-layout{display:grid;grid-template-columns:minmax(0,1.4fr) minmax(320px,.9fr);gap:12px;align-items:start}
 .admin-split-layout > *{min-width:0}
+.bookings-layout{display:grid;grid-template-columns:minmax(0,1.4fr) minmax(320px,.9fr);grid-template-areas:"filters floor" "list floor";gap:12px;align-items:start}
+.bookings-filter-card{grid-area:filters;padding:18px}
+.bookings-list-card{grid-area:list;display:flex;flex-direction:column;min-height:0}
+.bookings-floorplan-card{grid-area:floor;min-height:0}
+.bookings-filter-toolbar{display:grid;gap:12px}
+.bookings-filter-row{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;align-items:center}
+.bookings-filter-row-search{grid-template-columns:minmax(220px,1fr) auto auto}
+.bookings-filter-row input,.bookings-filter-row select{height:40px}
+.bookings-new-button{margin-left:auto}
+.bookings-active-filters{display:flex;flex-wrap:wrap;gap:10px}
+.booking-table-wrap{max-height:min(62vh,620px);overflow:auto;flex:1}
 .admin-floor-canvas{min-height:460px}
 .admin-floor-canvas.is-active-mode{cursor:crosshair}
 .admin-search{display:flex;align-items:center;gap:8px;border:1px solid hsl(var(--border));border-radius:12px;padding:0 10px;background:white;min-width:240px}
@@ -358,6 +369,19 @@ tr{cursor:pointer}.row-selected{background:hsl(var(--muted))}
 .booking-editor-layout{display:grid;grid-template-columns:minmax(260px,340px) minmax(0,1fr);gap:12px;align-items:start}
 .booking-editor-plan .canvas-body{min-height:320px}
 @media (max-width: 1024px){.admin-split-layout,.booking-editor-layout{grid-template-columns:1fr}.admin-floor-canvas{min-height:360px}}
+
+@media (max-width: 1024px){
+  .bookings-layout{grid-template-columns:1fr;grid-template-areas:"filters" "floor" "list"}
+  .bookings-filter-row{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .bookings-filter-row-search{grid-template-columns:minmax(0,1fr) auto auto}
+}
+
+@media (max-width: 700px){
+  .bookings-layout{grid-template-areas:"filters" "list" "floor"}
+  .bookings-filter-card{padding:16px}
+  .bookings-filter-row,.bookings-filter-row-search{grid-template-columns:1fr}
+  .bookings-new-button{margin-left:0}
+}
 
 .db-editor-textarea{width:100%;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;border:1px solid hsl(var(--border));border-radius:12px;padding:10px;resize:vertical}
 

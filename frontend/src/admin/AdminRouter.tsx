@@ -1094,14 +1094,60 @@ function BookingsPage({ path, navigate, onLogout, currentUser }: RouteProps) {
     }
   };
   const resetFilters = () => { setFloorplanId(''); setDeskId(''); setPersonQuery(''); setSelectedBookingIds([]); };
+  const hasActiveFilters = Boolean(floorplanId || deskId || personQuery.trim());
+  const selectedFloorplan = floorplans.find((plan) => plan.id === floorplanId);
+  const selectedDesk = desks.find((desk) => desk.id === deskId);
 
   return <AdminLayout path={path} navigate={navigate} onLogout={onLogout} title="Buchungen" currentUser={currentUser ?? null}>
-    <AdminSplitLayout
-      leftHeader={<ListToolbar title="Buchungen" count={filtered.length} filters={<><input type="date" value={from} onChange={(e) => setFrom(e.target.value)} /><input type="date" value={to} onChange={(e) => setTo(e.target.value)} /><select value={floorplanId} onChange={(e) => setFloorplanId(e.target.value)}><option value="">Alle Floorpläne</option>{floorplans.map((plan) => <option key={plan.id} value={plan.id}>{plan.name}</option>)}</select><select value={deskId} onChange={(e) => setDeskId(e.target.value)}><option value="">Alle Ressourcen</option>{desks.filter((desk) => (floorplanId ? desk.floorplanId === floorplanId : true)).map((desk) => <option key={desk.id} value={desk.id}>{desk.name}</option>)}</select><div className="admin-search">🔎<input value={personQuery} onChange={(e) => setPersonQuery(e.target.value)} placeholder="Person suchen" /></div></>} actions={<><button className="btn btn-outline" onClick={resetFilters}>Filter zurücksetzen</button><button className="btn" onClick={() => setCreating(true)}>Neu</button></>} />}
-      leftContent={<>{state.error && <ErrorState text={state.error} onRetry={load} />}{selectedBookingIds.length > 0 && <div className="bulk-actions"><strong>{selectedBookingIds.length} ausgewählt</strong><div className="inline-end"><button className="btn btn-danger" disabled={isBulkDeleting} onClick={() => setBulkDeleteOpen(true)}>{isBulkDeleting ? 'Lösche…' : 'Auswahl löschen'}</button><button className="btn btn-outline" disabled={isBulkDeleting} onClick={() => setSelectedBookingIds([])}>Abbrechen</button></div></div>}<div className="table-wrap"><table className="admin-table"><thead><tr><th><input type="checkbox" checked={isAllVisibleSelected} onChange={toggleAllVisibleBookings} aria-label="Alle sichtbaren Buchungen auswählen" /></th><th>Datum</th><th>Person</th><th>Ressource</th><th>Floorplan</th><th>Erstellt</th><th className="align-right">Aktionen</th></tr></thead>{state.loading && !state.ready ? <SkeletonRows columns={7} /> : <tbody>{filtered.map((booking) => { const desk = desks.find((item) => item.id === booking.deskId); const floorplan = floorplans.find((plan) => plan.id === desk?.floorplanId); return <tr key={booking.id} className={focusedBooking?.id === booking.id ? 'row-selected' : ''} onClick={() => setFocusedBookingId(booking.id)}><td><input type="checkbox" checked={selectedBookingIds.includes(booking.id)} onClick={(e) => e.stopPropagation()} onChange={() => toggleBookingSelection(booking.id)} aria-label={`Buchung ${booking.id} auswählen`} /></td><td>{formatDateOnly(booking.date)}</td><td>{booking.userDisplayName || booking.userEmail}</td><td>{desk?.name ?? booking.deskId}</td><td>{floorplan?.name ?? '—'}</td><td>{formatDate(booking.createdAt)}</td><td className="align-right"><RowMenu items={[{ label: 'Bearbeiten', onSelect: () => setEditing(booking) }, { label: 'Löschen', onSelect: () => setDeleteBooking(booking), danger: true }]} /></td></tr>; })}</tbody>}</table></div></>}
-      rightHeader={<div className="inline-between"><h3>Floorplan</h3>{focusedDesk && <Badge tone="ok">Ressource: {focusedDesk.name}</Badge>}</div>}
-      rightContent={focusedFloor ? <div className="canvas-body"><FloorplanCanvas imageUrl={resolveApiUrl(focusedFloor.imageUrl) ?? focusedFloor.imageUrl} imageAlt={focusedFloor.name} desks={focusedDesks} selectedDeskId={focusedDesk?.id ?? ''} hoveredDeskId="" onHoverDesk={() => undefined} onSelectDesk={() => undefined} /></div> : <EmptyState text="Buchung auswählen, um die Ressource im Floorplan zu sehen." />}
-    />
+    <section className="bookings-layout">
+      <section className="card stack-sm bookings-filter-card">
+        <h3>Filter &amp; Suche</h3>
+        <div className="bookings-filter-toolbar">
+          <div className="bookings-filter-row">
+            <input type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
+            <input type="date" value={to} onChange={(e) => setTo(e.target.value)} />
+            <select value={floorplanId} onChange={(e) => setFloorplanId(e.target.value)}>
+              <option value="">Alle Floorpläne</option>
+              {floorplans.map((plan) => <option key={plan.id} value={plan.id}>{plan.name}</option>)}
+            </select>
+            <select value={deskId} onChange={(e) => setDeskId(e.target.value)}>
+              <option value="">Alle Ressourcen</option>
+              {desks.filter((desk) => (floorplanId ? desk.floorplanId === floorplanId : true)).map((desk) => <option key={desk.id} value={desk.id}>{desk.name}</option>)}
+            </select>
+          </div>
+          <div className="bookings-filter-row bookings-filter-row-search">
+            <div className="admin-search">
+              🔎
+              <input value={personQuery} onChange={(e) => setPersonQuery(e.target.value)} placeholder="Person suchen" />
+            </div>
+            <button className="btn btn-outline" onClick={resetFilters} disabled={!hasActiveFilters}>Filter zurücksetzen</button>
+            <button className="btn bookings-new-button" onClick={() => setCreating(true)}>Neu</button>
+          </div>
+        </div>
+        {hasActiveFilters && (
+          <div className="bookings-active-filters" aria-label="Aktive Filter">
+            {selectedFloorplan && <Badge>Floorplan: {selectedFloorplan.name}</Badge>}
+            {selectedDesk && <Badge>Ressource: {selectedDesk.name}</Badge>}
+            {personQuery.trim() && <Badge>Person: {personQuery.trim()}</Badge>}
+          </div>
+        )}
+      </section>
+
+      <section className="card stack-sm bookings-list-card">
+        <div className="inline-between">
+          <h3>Buchungen</h3>
+          <Badge>{filtered.length}</Badge>
+        </div>
+        {state.error && <ErrorState text={state.error} onRetry={load} />}
+        {selectedBookingIds.length > 0 && <div className="bulk-actions"><strong>{selectedBookingIds.length} ausgewählt</strong><div className="inline-end"><button className="btn btn-danger" disabled={isBulkDeleting} onClick={() => setBulkDeleteOpen(true)}>{isBulkDeleting ? 'Lösche…' : 'Auswahl löschen'}</button><button className="btn btn-outline" disabled={isBulkDeleting} onClick={() => setSelectedBookingIds([])}>Abbrechen</button></div></div>}
+        <div className="table-wrap booking-table-wrap"><table className="admin-table"><thead><tr><th><input type="checkbox" checked={isAllVisibleSelected} onChange={toggleAllVisibleBookings} aria-label="Alle sichtbaren Buchungen auswählen" /></th><th>Datum</th><th>Person</th><th>Ressource</th><th>Floorplan</th><th>Erstellt</th><th className="align-right">Aktionen</th></tr></thead>{state.loading && !state.ready ? <SkeletonRows columns={7} /> : <tbody>{filtered.map((booking) => { const desk = desks.find((item) => item.id === booking.deskId); const floorplan = floorplans.find((plan) => plan.id === desk?.floorplanId); return <tr key={booking.id} className={focusedBooking?.id === booking.id ? 'row-selected' : ''} onClick={() => setFocusedBookingId(booking.id)}><td><input type="checkbox" checked={selectedBookingIds.includes(booking.id)} onClick={(e) => e.stopPropagation()} onChange={() => toggleBookingSelection(booking.id)} aria-label={`Buchung ${booking.id} auswählen`} /></td><td>{formatDateOnly(booking.date)}</td><td>{booking.userDisplayName || booking.userEmail}</td><td>{desk?.name ?? booking.deskId}</td><td>{floorplan?.name ?? '—'}</td><td>{formatDate(booking.createdAt)}</td><td className="align-right"><RowMenu items={[{ label: 'Bearbeiten', onSelect: () => setEditing(booking) }, { label: 'Löschen', onSelect: () => setDeleteBooking(booking), danger: true }]} /></td></tr>; })}</tbody>}</table></div>
+      </section>
+
+      <aside className="card stack-sm admin-split-floor-preview bookings-floorplan-card">
+        <div className="inline-between"><h3>Floorplan</h3>{focusedDesk && <Badge tone="ok">Ressource: {focusedDesk.name}</Badge>}</div>
+        {focusedFloor ? <div className="canvas-body"><FloorplanCanvas imageUrl={resolveApiUrl(focusedFloor.imageUrl) ?? focusedFloor.imageUrl} imageAlt={focusedFloor.name} desks={focusedDesks} selectedDeskId={focusedDesk?.id ?? ''} hoveredDeskId="" onHoverDesk={() => undefined} onSelectDesk={() => undefined} /></div> : <EmptyState text="Buchung auswählen, um die Ressource im Floorplan zu sehen." />}
+      </aside>
+    </section>
     {(creating || editing) && <BookingEditor booking={editing} desks={desks} employees={employees} floorplans={floorplans} onClose={() => { setCreating(false); setEditing(null); navigate('/admin/bookings'); }} onSaved={async (m) => { toasts.success(m); setCreating(false); setEditing(null); await load(); }} onError={toasts.error} />}
     {deleteBooking && <ConfirmDialog title="Buchung löschen?" description="Die ausgewählte Buchung wird entfernt." onCancel={() => setDeleteBooking(null)} onConfirm={async (event) => { const anchorRect = event.currentTarget.getBoundingClientRect(); await del(`/admin/bookings/${deleteBooking.id}`); setDeleteBooking(null); toasts.success('Buchung gelöscht', { anchorRect }); await load(); }} />}
     {bulkDeleteOpen && <ConfirmDialog title={`${selectedBookingIds.length} Einträge löschen?`} description="Dieser Vorgang ist irreversibel." onCancel={() => setBulkDeleteOpen(false)} onConfirm={(event) => void runBulkDelete(event.currentTarget.getBoundingClientRect())} confirmDisabled={isBulkDeleting} confirmLabel={isBulkDeleting ? 'Lösche…' : 'Löschen'} />}
