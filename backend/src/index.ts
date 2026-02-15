@@ -1509,13 +1509,14 @@ app.delete('/bookings/:id', async (req, res) => {
 });
 
 app.post('/bookings/range', async (req, res) => {
-  const { deskId, userEmail, from, to, weekdaysOnly, replaceExisting } = req.body as {
+  const { deskId, userEmail, from, to, weekdaysOnly, replaceExisting, overrideExisting } = req.body as {
     deskId?: string;
     userEmail?: string;
     from?: string;
     to?: string;
     weekdaysOnly?: boolean;
     replaceExisting?: boolean;
+    overrideExisting?: boolean;
   };
 
   if (!deskId || !userEmail || !from || !to) {
@@ -1542,6 +1543,7 @@ app.post('/bookings/range', async (req, res) => {
   }
 
   const includeWeekdaysOnly = weekdaysOnly !== false;
+  const shouldOverrideExisting = overrideExisting ?? replaceExisting ?? false;
   const targetDates = datesInRange(parsedFrom, parsedTo).filter((date) => {
     if (!includeWeekdaysOnly) {
       return true;
@@ -1552,20 +1554,26 @@ app.post('/bookings/range', async (req, res) => {
   });
 
   if (targetDates.length === 0) {
-    res.status(201).json({ createdCount: 0, dates: [] });
+    res.status(201).json({ createdCount: 0, updatedCount: 0, skippedCount: 0, skippedDates: [], dates: [] });
     return;
   }
 
   const normalizedUserEmail = normalizeEmail(userEmail);
-  const [singleBookings, recurringRules] = await Promise.all([
+  const [existingUserBookings, deskSingleConflicts, recurringRules] = await Promise.all([
     prisma.booking.findMany({
       where: {
-        OR: [
-          { deskId, date: { in: targetDates } },
-          { userEmail: normalizedUserEmail, date: { in: targetDates } }
-        ]
+        userEmail: normalizedUserEmail,
+        date: { in: targetDates }
       },
       include: { desk: { select: { name: true } } },
+      orderBy: { date: 'asc' }
+    }),
+    prisma.booking.findMany({
+      where: {
+        deskId,
+        date: { in: targetDates },
+        userEmail: { not: normalizedUserEmail }
+      },
       orderBy: { date: 'asc' }
     }),
     prisma.recurringBooking.findMany({
@@ -1577,9 +1585,8 @@ app.post('/bookings/range', async (req, res) => {
     })
   ]);
 
-  const deskConflicts = singleBookings.filter((booking) => booking.deskId === deskId && booking.userEmail !== normalizedUserEmail);
-  if (deskConflicts.length > 0) {
-    const conflictDates = deskConflicts.map((booking) => toISODateOnly(booking.date));
+  if (deskSingleConflicts.length > 0) {
+    const conflictDates = deskSingleConflicts.map((booking) => toISODateOnly(booking.date));
     sendConflict(res, 'Range booking has conflicting dates', {
       deskId,
       from,
@@ -1607,41 +1614,45 @@ app.post('/bookings/range', async (req, res) => {
     return;
   }
 
-  const existingUserOnOtherDesks = singleBookings.filter((booking) => booking.userEmail === normalizedUserEmail && booking.deskId !== deskId);
-  if (existingUserOnOtherDesks.length > 0 && !replaceExisting) {
-    sendConflict(res, 'User already has bookings for part of the selected range', {
-      deskId,
-      from,
-      to,
-      weekdaysOnly: includeWeekdaysOnly,
-      replaceableDates: existingUserOnOtherDesks.map((booking) => toISODateOnly(booking.date)),
-      replaceableDeskNames: existingUserOnOtherDesks.map((booking) => booking.desk?.name ?? booking.deskId)
+  const existingByDate = new Map(existingUserBookings.map((booking) => [toISODateOnly(booking.date), booking]));
+  const existingDates = targetDates.filter((date) => existingByDate.has(toISODateOnly(date)));
+  const missingDates = targetDates.filter((date) => !existingByDate.has(toISODateOnly(date)));
+
+  if (!shouldOverrideExisting) {
+    if (missingDates.length > 0) {
+      await prisma.booking.createMany({
+        data: missingDates.map((date) => ({ deskId, userEmail: normalizedUserEmail, date }))
+      });
+    }
+
+    res.status(201).json({
+      createdCount: missingDates.length,
+      updatedCount: 0,
+      skippedCount: existingDates.length,
+      skippedDates: existingDates.map((date) => toISODateOnly(date)),
+      dates: targetDates.map((date) => toISODateOnly(date))
     });
     return;
   }
 
-  const existingUserOnSameDesk = new Set(
-    singleBookings
-      .filter((booking) => booking.userEmail === normalizedUserEmail && booking.deskId === deskId)
-      .map((booking) => toISODateOnly(booking.date))
-  );
-
-  const created = await prisma.$transaction(async (tx) => {
-    if (replaceExisting && existingUserOnOtherDesks.length > 0) {
-      await tx.booking.deleteMany({ where: { id: { in: existingUserOnOtherDesks.map((booking) => booking.id) } } });
+  await prisma.$transaction(async (tx) => {
+    if (existingUserBookings.length > 0) {
+      await tx.booking.updateMany({ where: { id: { in: existingUserBookings.map((booking) => booking.id) } }, data: { deskId } });
     }
 
-    const datesToCreate = targetDates.filter((date) => !existingUserOnSameDesk.has(toISODateOnly(date)));
-    if (datesToCreate.length > 0) {
-      await tx.booking.createMany({
-        data: datesToCreate.map((date) => ({ deskId, userEmail: normalizedUserEmail, date }))
-      });
+    if (missingDates.length > 0) {
+      await tx.booking.createMany({ data: missingDates.map((date) => ({ deskId, userEmail: normalizedUserEmail, date })) });
     }
-
-    return targetDates.map((date) => toISODateOnly(date));
   });
 
-  res.status(201).json({ createdCount: created.length, dates: created });
+  res.status(201).json({
+    createdCount: missingDates.length,
+    updatedCount: existingDates.length,
+    skippedCount: 0,
+    skippedDates: [],
+    updatedDates: existingDates.map((date) => toISODateOnly(date)),
+    dates: targetDates.map((date) => toISODateOnly(date))
+  });
 });
 
 app.get('/bookings', async (req, res) => {
@@ -1919,13 +1930,14 @@ app.post('/recurring-bookings', async (req, res) => {
 });
 
 app.post('/recurring-bookings/bulk', async (req, res) => {
-  const { deskId, userEmail, weekdays, validFrom, validTo, replaceExisting } = req.body as {
+  const { deskId, userEmail, weekdays, validFrom, validTo, replaceExisting, overrideExisting } = req.body as {
     deskId?: string;
     userEmail?: string;
     weekdays?: number[];
     validFrom?: string;
     validTo?: string;
     replaceExisting?: boolean;
+    overrideExisting?: boolean;
   };
 
   if (!deskId || !userEmail || !Array.isArray(weekdays) || !validFrom) {
@@ -1962,6 +1974,7 @@ app.post('/recurring-bookings/bulk', async (req, res) => {
     return;
   }
 
+  const shouldOverrideExisting = overrideExisting ?? replaceExisting ?? false;
   const overlappingRecurring = await prisma.recurringBooking.findMany({
     where: {
       deskId,
@@ -1990,21 +2003,27 @@ app.post('/recurring-bookings/bulk', async (req, res) => {
 
   const targetDates = datesInRange(parsedValidFrom, parsedValidTo).filter((date) => uniqueWeekdays.includes(date.getUTCDay()));
   const normalizedUserEmail = normalizeEmail(userEmail);
-  const bookingsForTargets = await prisma.booking.findMany({
+  const [bookingsForTargets, deskSingleConflicts] = await Promise.all([
+    prisma.booking.findMany({
+      where: {
+        date: { in: targetDates },
+        userEmail: normalizedUserEmail
+      },
+      include: { desk: { select: { name: true } } },
+      orderBy: { date: 'asc' }
+    }),
+    prisma.booking.findMany({
     where: {
       date: { in: targetDates },
-      OR: [
-        { deskId },
-        { userEmail: normalizedUserEmail }
-      ]
+      deskId,
+      userEmail: { not: normalizedUserEmail }
     },
-    include: { desk: { select: { name: true } } },
     orderBy: { date: 'asc' }
-  });
+    })
+  ]);
 
-  const deskConflicts = bookingsForTargets.filter((booking) => booking.deskId === deskId && booking.userEmail !== normalizedUserEmail);
-  if (deskConflicts.length > 0) {
-    const conflictingDates = deskConflicts.map((booking) => toISODateOnly(booking.date));
+  if (deskSingleConflicts.length > 0) {
+    const conflictingDates = deskSingleConflicts.map((booking) => toISODateOnly(booking.date));
     sendConflict(res, 'Recurring series conflicts with existing single-day bookings', {
       deskId,
       weekdays: uniqueWeekdays,
@@ -2016,22 +2035,21 @@ app.post('/recurring-bookings/bulk', async (req, res) => {
     return;
   }
 
-  const existingUserOnOtherDesks = bookingsForTargets.filter((booking) => booking.userEmail === normalizedUserEmail && booking.deskId !== deskId);
-  if (existingUserOnOtherDesks.length > 0 && !replaceExisting) {
-    sendConflict(res, 'User already has bookings for part of the selected series', {
-      deskId,
-      weekdays: uniqueWeekdays,
-      validFrom,
-      validTo: toISODateOnly(parsedValidTo),
-      replaceableDates: existingUserOnOtherDesks.map((booking) => toISODateOnly(booking.date)),
-      replaceableDeskNames: existingUserOnOtherDesks.map((booking) => booking.desk?.name ?? booking.deskId)
-    });
-    return;
-  }
+  const existingByDate = new Map(bookingsForTargets.map((booking) => [toISODateOnly(booking.date), booking]));
+  const existingDates = targetDates.filter((date) => existingByDate.has(toISODateOnly(date)));
+  const missingDates = targetDates.filter((date) => !existingByDate.has(toISODateOnly(date)));
 
   const recurringBookings = await prisma.$transaction(async (tx) => {
-    if (replaceExisting && existingUserOnOtherDesks.length > 0) {
-      await tx.booking.deleteMany({ where: { id: { in: existingUserOnOtherDesks.map((booking) => booking.id) } } });
+    if (shouldOverrideExisting && bookingsForTargets.length > 0) {
+      await tx.booking.updateMany({ where: { id: { in: bookingsForTargets.map((booking) => booking.id) } }, data: { deskId } });
+    }
+
+    if (!shouldOverrideExisting && missingDates.length > 0) {
+      await tx.booking.createMany({ data: missingDates.map((date) => ({ deskId, userEmail: normalizedUserEmail, date })) });
+    }
+
+    if (shouldOverrideExisting && missingDates.length > 0) {
+      await tx.booking.createMany({ data: missingDates.map((date) => ({ deskId, userEmail: normalizedUserEmail, date })) });
     }
 
     return Promise.all(
@@ -2047,7 +2065,14 @@ app.post('/recurring-bookings/bulk', async (req, res) => {
     );
   });
 
-  res.status(201).json(recurringBookings);
+  res.status(201).json({
+    recurringBookings,
+    createdCount: missingDates.length,
+    updatedCount: shouldOverrideExisting ? existingDates.length : 0,
+    skippedCount: shouldOverrideExisting ? 0 : existingDates.length,
+    skippedDates: shouldOverrideExisting ? [] : existingDates.map((date) => toISODateOnly(date)),
+    updatedDates: shouldOverrideExisting ? existingDates.map((date) => toISODateOnly(date)) : []
+  });
 });
 
 app.get('/recurring-bookings', async (req, res) => {

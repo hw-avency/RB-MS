@@ -29,8 +29,13 @@ type BookingSubmitPayload =
 type OverrideDialogState = {
   requestedDeskName: string;
   dates: string[];
-  existingDeskNames: string[];
   retryPayload: BookingSubmitPayload;
+};
+type BulkBookingResponse = {
+  createdCount?: number;
+  updatedCount?: number;
+  skippedCount?: number;
+  skippedDates?: string[];
 };
 type DeskPopupState = { deskId: string; anchorRect: DOMRect };
 
@@ -285,7 +290,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
     setToastMessage('Buchung storniert.');
   };
 
-  const submitPopupBooking = async (payload: BookingSubmitPayload, replaceExisting = false) => {
+  const submitPopupBooking = async (payload: BookingSubmitPayload, overrideExisting = false) => {
     if (!popupDesk || !popupDeskState) return;
     try {
       if (!selectedEmployeeEmail) {
@@ -297,27 +302,57 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
       }
 
       if (payload.type === 'single') {
-        await createSingleBooking(popupDesk.id, payload.date, replaceExisting);
+        await createSingleBooking(popupDesk.id, payload.date, overrideExisting);
       } else if (payload.type === 'range') {
-        await post('/bookings/range', {
+        const response = await post<BulkBookingResponse>('/bookings/range', {
           deskId: popupDesk.id,
           userEmail: selectedEmployeeEmail,
           from: payload.dateFrom,
           to: payload.dateTo,
           weekdaysOnly: payload.onlyWeekdays,
-          replaceExisting
+          overrideExisting
         });
-        setToastMessage('Zeitraumbuchung erstellt.');
+
+        if (!overrideExisting && (response.skippedCount ?? 0) > 0) {
+          setOverrideDialog({
+            requestedDeskName: popupDesk.name,
+            dates: response.skippedDates ?? [],
+            retryPayload: payload
+          });
+          setErrorMessage('');
+          return;
+        }
+
+        setToastMessage(
+          overrideExisting
+            ? `${response.createdCount ?? 0} Tage gebucht, ${response.updatedCount ?? 0} Tage umgebucht.`
+            : `${response.createdCount ?? 0} Tage gebucht, ${response.skippedCount ?? 0} Tage übersprungen.`
+        );
       } else {
-        await post('/recurring-bookings/bulk', {
+        const response = await post<BulkBookingResponse>('/recurring-bookings/bulk', {
           deskId: popupDesk.id,
           userEmail: selectedEmployeeEmail,
           weekdays: payload.weekdays,
           validFrom: payload.dateFrom,
           validTo: payload.dateTo,
-          replaceExisting
+          overrideExisting
         });
-        setToastMessage('Serienbuchung erstellt.');
+
+        if (!overrideExisting && (response.skippedCount ?? 0) > 0) {
+          setOverrideDialog({
+            requestedDeskName: popupDesk.name,
+            dates: response.skippedDates ?? [],
+            retryPayload: payload
+          });
+          setErrorMessage('');
+          return;
+        }
+
+        setToastMessage(
+          overrideExisting
+            ? `${response.createdCount ?? 0} Tage gebucht, ${response.updatedCount ?? 0} Tage umgebucht.`
+            : `${response.createdCount ?? 0} Tage gebucht, ${response.skippedCount ?? 0} Tage übersprungen.`
+        );
       }
 
       setErrorMessage('');
@@ -330,17 +365,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
       }
 
       if (error instanceof ApiError && error.status === 409) {
-        const details = (error.details as { conflictingDates?: string[]; conflictingDatesPreview?: string[]; replaceableDates?: string[]; replaceableDeskNames?: string[] } | undefined) ?? {};
-        if (details.replaceableDates && details.replaceableDates.length > 0 && !replaceExisting) {
-          setOverrideDialog({
-            requestedDeskName: popupDesk.name,
-            dates: details.replaceableDates,
-            existingDeskNames: details.replaceableDeskNames ?? [],
-            retryPayload: payload
-          });
-          setErrorMessage('');
-          return;
-        }
+        const details = (error.details as { conflictingDates?: string[]; conflictingDatesPreview?: string[] } | undefined) ?? {};
         const list = details.conflictingDates ?? details.conflictingDatesPreview ?? [];
         const info = list.length > 0 ? ` Konflikte: ${list.slice(0, 8).join(', ')}` : '';
         setErrorMessage(`${error.message}${info}`);
@@ -359,7 +384,6 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
       await submitPopupBooking(overrideDialog.retryPayload, true);
       setOverrideDialog(null);
       setSelectedDeskId(popupDesk?.id ?? '');
-      setToastMessage(`Buchung überschrieben (${overrideDialog.dates.length} Tage).`);
     } catch (error) {
       setErrorMessage(getApiErrorMessage(error, 'Buchung überschreiben fehlgeschlagen.'));
     } finally {
@@ -614,16 +638,12 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
       {overrideDialog && createPortal(
         <div className="overlay" onClick={() => setOverrideDialog(null)}>
           <div className="dialog card stack-sm" onClick={(event) => event.stopPropagation()}>
-            <h3>Buchung überschreiben?</h3>
+            <h3>Buchungen überschreiben?</h3>
             <p>
-              Du hast im ausgewählten Zeitraum bereits Buchungen auf anderen Tischen.
-              Wenn du fortfährst, werden {overrideDialog.dates.length} bestehende Buchungen mit Tisch {overrideDialog.requestedDeskName} überschrieben.
+              Für {overrideDialog.dates.length} Tage existieren bereits Buchungen. Soll auf Tisch: {overrideDialog.requestedDeskName} umgebucht werden?
             </p>
             {overrideDialog.dates.length > 0 && (
               <p className="muted">Betroffene Tage: {overrideDialog.dates.slice(0, 6).join(', ')}{overrideDialog.dates.length > 6 ? ' …' : ''}</p>
-            )}
-            {overrideDialog.existingDeskNames.length > 0 && (
-              <p className="muted">Bisherige Tische: {Array.from(new Set(overrideDialog.existingDeskNames)).slice(0, 3).join(', ')}</p>
             )}
             <div className="inline-end">
               <button type="button" className="btn btn-outline" onClick={() => setOverrideDialog(null)} disabled={isOverrideSubmitting}>Abbrechen</button>
