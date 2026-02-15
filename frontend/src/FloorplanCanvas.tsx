@@ -31,15 +31,17 @@ type FloorplanDesk = {
 
 type OverlayRect = { left: number; top: number; width: number; height: number };
 type PixelPoint = { x: number; y: number };
-
 type SlotKey = 'AM' | 'PM';
 
-const PIN_CONTAINER_SIZE = 40;
-const RING_RADIUS = 19;
+const PIN_HITBOX_SIZE = 44;
+const PIN_VISUAL_SIZE = 36;
+const RING_RADIUS = 16;
 const RING_WIDTH = 4;
 const CENTER_SIZE = 28;
+const START_ANGLE = -90;
 
 const clamp01 = (value: number): number => Math.min(1, Math.max(0, value));
+const isTodayDateKey = (value?: string): boolean => Boolean(value && value === new Date().toISOString().slice(0, 10));
 
 const toNormalized = (raw: number, size: number): number => {
   if (!Number.isFinite(raw)) return 0;
@@ -81,17 +83,20 @@ const hhmmToMinutes = (value?: string): number | null => {
   return h * 60 + m;
 };
 
+const angleToPoint = (deg: number, radius: number): { x: number; y: number } => {
+  const radians = (deg * Math.PI) / 180;
+  return { x: PIN_VISUAL_SIZE / 2 + radius * Math.cos(radians), y: PIN_VISUAL_SIZE / 2 + radius * Math.sin(radians) };
+};
+
 const arcPath = (startDeg: number, endDeg: number, radius: number): string => {
-  const startRad = (startDeg - 90) * (Math.PI / 180);
-  const endRad = (endDeg - 90) * (Math.PI / 180);
-  const x1 = 20 + radius * Math.cos(startRad);
-  const y1 = 20 + radius * Math.sin(startRad);
-  const x2 = 20 + radius * Math.cos(endRad);
-  const y2 = 20 + radius * Math.sin(endRad);
+  const start = angleToPoint(startDeg, radius);
+  const end = angleToPoint(endDeg, radius);
   const sweep = endDeg - startDeg;
   const largeArc = Math.abs(sweep) > 180 ? 1 : 0;
-  return `M ${x1} ${y1} A ${radius} ${radius} 0 ${largeArc} 1 ${x2} ${y2}`;
+  return `M ${start.x} ${start.y} A ${radius} ${radius} 0 ${largeArc} 1 ${end.x} ${end.y}`;
 };
+
+const minuteToAngle = (minutes: number): number => START_ANGLE + (minutes / 1440) * 360;
 
 type FloorplanCanvasProps = {
   imageUrl: string;
@@ -100,6 +105,7 @@ type FloorplanCanvasProps = {
   selectedDeskId: string;
   hoveredDeskId: string;
   selectedDate?: string;
+  bookingVersion?: number;
   onHoverDesk: (deskId: string) => void;
   onSelectDesk: (deskId: string, anchorEl?: HTMLElement) => void;
   onCanvasClick?: (coords: { xPct: number; yPct: number }) => void;
@@ -112,7 +118,7 @@ const FloorplanImage = memo(function FloorplanImage({ imageUrl, imageAlt, imgRef
   return <img ref={imgRef} src={imageUrl} alt={imageAlt} className="floorplan-image" onLoad={onLoad} />;
 });
 
-const DeskOverlay = memo(function DeskOverlay({ desks, selectedDeskId, hoveredDeskId, selectedDate, overlayRect, onHoverDesk, onSelectDesk, onDeskDoubleClick, onDeskAnchorChange, disablePulseAnimation = false }: { desks: FloorplanDesk[]; selectedDeskId: string; hoveredDeskId: string; selectedDate?: string; overlayRect: OverlayRect; onHoverDesk: (deskId: string) => void; onSelectDesk: (deskId: string, anchorEl?: HTMLElement) => void; onDeskDoubleClick?: (deskId: string) => void; onDeskAnchorChange?: (deskId: string, element: HTMLElement | null) => void; disablePulseAnimation?: boolean; }) {
+const DeskOverlay = memo(function DeskOverlay({ desks, selectedDeskId, hoveredDeskId, selectedDate, bookingVersion, overlayRect, onHoverDesk, onSelectDesk, onDeskDoubleClick, onDeskAnchorChange, disablePulseAnimation = false }: { desks: FloorplanDesk[]; selectedDeskId: string; hoveredDeskId: string; selectedDate?: string; bookingVersion?: number; overlayRect: OverlayRect; onHoverDesk: (deskId: string) => void; onSelectDesk: (deskId: string, anchorEl?: HTMLElement) => void; onDeskDoubleClick?: (deskId: string) => void; onDeskAnchorChange?: (deskId: string, element: HTMLElement | null) => void; disablePulseAnimation?: boolean; }) {
   const [imageStates, setImageStates] = useState<Record<string, boolean>>({});
   const [tooltip, setTooltip] = useState<{ deskId: string; left: number; top: number } | null>(null);
 
@@ -131,32 +137,25 @@ const DeskOverlay = memo(function DeskOverlay({ desks, selectedDeskId, hoveredDe
 
   return (
     <>
-      <div className="desk-overlay" style={{ left: overlayRect.left, top: overlayRect.top, width: overlayRect.width, height: overlayRect.height }}>
+      <div className="desk-overlay" style={{ left: overlayRect.left, top: overlayRect.top, width: overlayRect.width, height: overlayRect.height }} data-version={bookingVersion}>
         {desks.map((desk) => {
           const point = toPixelPoint(desk, overlayRect);
           const bookings = normalizeBookings(desk);
           const isRoom = desk.kind === 'RAUM';
-          const amBooking = bookings.find((booking) => {
-            const slot = slotFromBooking(booking);
-            return slot === 'AM' || slot === 'FULL';
-          });
-          const pmBooking = bookings.find((booking) => {
-            const slot = slotFromBooking(booking);
-            return slot === 'PM' || slot === 'FULL';
-          });
           const fullBooking = bookings.find((booking) => slotFromBooking(booking) === 'FULL');
+          const amBooking = fullBooking ?? bookings.find((booking) => slotFromBooking(booking) === 'AM');
+          const pmBooking = fullBooking ?? bookings.find((booking) => slotFromBooking(booking) === 'PM');
           const isInteracting = selectedDeskId === desk.id || hoveredDeskId === desk.id || Boolean(desk.isSelected);
           const shouldShowPulse = bookings.length === 0 && !isInteracting && !disablePulseAnimation;
           const isClickable = !(amBooking && pmBooking && !bookings.some((booking) => booking.isCurrentUser));
-
           const centerBooking = fullBooking ?? bookings[0];
           const initials = getInitials(centerBooking?.userDisplayName, centerBooking?.userEmail);
           const hasPhoto = Boolean(centerBooking?.userPhotoUrl);
           const imgOk = hasPhoto && (imageStates[desk.id] ?? true);
 
           const slotColor = (booking?: FloorplanBooking): string => {
-            if (!booking) return '#cbd5e1';
-            if (booking.isCurrentUser) return '#a855f7';
+            if (!booking) return '#d5dce7';
+            if (booking.isCurrentUser) return '#0ea5e9';
             return 'hsl(var(--primary))';
           };
 
@@ -164,19 +163,21 @@ const DeskOverlay = memo(function DeskOverlay({ desks, selectedDeskId, hoveredDe
             const startMinutes = hhmmToMinutes(booking.startTime);
             const endMinutes = hhmmToMinutes(booking.endTime);
             if (startMinutes === null || endMinutes === null || endMinutes <= startMinutes) return [];
-            const angleStart = (startMinutes / 1440) * 360;
-            const angleEnd = (endMinutes / 1440) * 360;
-            return [{ id: `${booking.id ?? booking.userEmail}-${angleStart}`, d: arcPath(angleStart, angleEnd, RING_RADIUS), color: slotColor(booking) }];
+            return [{ id: `${booking.id ?? booking.userEmail}-${startMinutes}`, d: arcPath(minuteToAngle(startMinutes), minuteToAngle(endMinutes), RING_RADIUS), color: slotColor(booking) }];
           });
+
+          const nowTickAngle = minuteToAngle(new Date().getHours() * 60 + new Date().getMinutes());
+          const tickStart = angleToPoint(nowTickAngle, RING_RADIUS - 1);
+          const tickEnd = angleToPoint(nowTickAngle, RING_RADIUS + 2);
 
           return (
             <button
-              key={desk.id}
+              key={`${desk.id}-${bookingVersion ?? 0}`}
               ref={(element) => onDeskAnchorChange?.(desk.id, element)}
               type="button"
               data-desk-id={desk.id}
               className={`desk-pin ${selectedDeskId === desk.id ? 'selected' : ''} ${hoveredDeskId === desk.id ? 'hovered' : ''} ${desk.isCurrentUsersDesk ? 'is-own-desk' : ''} ${desk.isHighlighted ? 'is-highlighted' : ''} ${desk.isSelected ? 'is-selected' : ''} ${!isClickable ? 'is-click-disabled' : ''}`}
-              style={{ left: `${point.x - PIN_CONTAINER_SIZE / 2}px`, top: `${point.y - PIN_CONTAINER_SIZE / 2}px` }}
+              style={{ left: `${point.x - PIN_HITBOX_SIZE / 2}px`, top: `${point.y - PIN_HITBOX_SIZE / 2}px` }}
               onMouseEnter={(event) => {
                 const rect = event.currentTarget.getBoundingClientRect();
                 setTooltip({ deskId: desk.id, left: rect.left + rect.width / 2, top: rect.top - 10 });
@@ -195,27 +196,29 @@ const DeskOverlay = memo(function DeskOverlay({ desks, selectedDeskId, hoveredDe
                 onDeskDoubleClick?.(desk.id);
               }}
               tabIndex={0}
+              title={bookings.length === 2 && !fullBooking ? '2 Buchungen' : undefined}
               aria-label={`${resourceKindLabel(desk.kind)}: ${getDeskLabel(desk)}`}
             >
               {shouldShowPulse && <span className="resource-pulse-ring" aria-hidden="true" />}
-              <svg className="pin-ring-svg" viewBox="0 0 40 40" aria-hidden="true">
+              <svg className="pin-ring-svg" viewBox={`0 0 ${PIN_VISUAL_SIZE} ${PIN_VISUAL_SIZE}`} aria-hidden="true">
                 {isRoom ? (
                   <>
-                    <circle cx="20" cy="20" r={RING_RADIUS} className="pin-ring-track" />
+                    <circle cx={PIN_VISUAL_SIZE / 2} cy={PIN_VISUAL_SIZE / 2} r={RING_RADIUS} className="pin-ring-track" />
                     {roomArcs.map((arc) => <path key={arc.id} d={arc.d} className="pin-ring-arc" style={{ stroke: arc.color }} />)}
+                    {isTodayDateKey(selectedDate) && <line x1={tickStart.x} y1={tickStart.y} x2={tickEnd.x} y2={tickEnd.y} className="pin-ring-now-tick" />}
                   </>
                 ) : (
                   <>
-                    <path d={arcPath(0, 180, RING_RADIUS)} className="pin-ring-arc" style={{ stroke: slotColor(amBooking) }} />
-                    <path d={arcPath(180, 360, RING_RADIUS)} className="pin-ring-arc" style={{ stroke: slotColor(pmBooking) }} />
+                    <path d={arcPath(START_ANGLE, START_ANGLE + 180, RING_RADIUS)} className="pin-ring-arc" style={{ stroke: slotColor(amBooking) }} />
+                    <path d={arcPath(START_ANGLE + 180, START_ANGLE + 360, RING_RADIUS)} className="pin-ring-arc" style={{ stroke: slotColor(pmBooking) }} />
                   </>
                 )}
               </svg>
 
               <span className="pin-center" style={{ width: CENTER_SIZE, height: CENTER_SIZE }}>
                 {isRoom ? (
-                  <span className="room-center-label">🏢<small>{getDeskLabel(desk).slice(0, 3).toUpperCase()}</small></span>
-                ) : bookings.length === 2 && !fullBooking ? (
+                  <span className="room-center-label"><span>🕒</span><small>MR</small></span>
+                ) : bookings.length >= 2 && !fullBooking ? (
                   <span className="desk-pin-count">2</span>
                 ) : centerBooking ? (
                   <>
@@ -235,6 +238,7 @@ const DeskOverlay = memo(function DeskOverlay({ desks, selectedDeskId, hoveredDe
                   <span className="desk-pin-free-dot" aria-hidden="true" />
                 )}
               </span>
+              {bookings.some((booking) => booking.isCurrentUser) && <span className="desk-pin-status-dot" aria-label="Deine Buchung" />}
             </button>
           );
         })}
@@ -269,7 +273,7 @@ const DeskOverlay = memo(function DeskOverlay({ desks, selectedDeskId, hoveredDe
   );
 });
 
-export function FloorplanCanvas({ imageUrl, imageAlt, desks, selectedDeskId, hoveredDeskId, selectedDate, onHoverDesk, onSelectDesk, onCanvasClick, onDeskDoubleClick, onDeskAnchorChange, disablePulseAnimation = false }: FloorplanCanvasProps) {
+export function FloorplanCanvas({ imageUrl, imageAlt, desks, selectedDeskId, hoveredDeskId, selectedDate, bookingVersion, onHoverDesk, onSelectDesk, onCanvasClick, onDeskDoubleClick, onDeskAnchorChange, disablePulseAnimation = false }: FloorplanCanvasProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const imgRef = useRef<HTMLImageElement | null>(null);
   const [overlayRect, setOverlayRect] = useState<OverlayRect>({ left: 0, top: 0, width: 1, height: 1 });
@@ -300,7 +304,7 @@ export function FloorplanCanvas({ imageUrl, imageAlt, desks, selectedDeskId, hov
   return (
     <div ref={containerRef} className="floorplan-canvas" role="presentation" onClick={handleCanvasClick}>
       <FloorplanImage imageUrl={imageUrl} imageAlt={imageAlt} imgRef={imgRef} onLoad={sync} />
-      <DeskOverlay desks={desks} selectedDeskId={selectedDeskId} hoveredDeskId={hoveredDeskId} selectedDate={selectedDate} overlayRect={overlayRect} onHoverDesk={onHoverDesk} onSelectDesk={onSelectDesk} onDeskDoubleClick={onDeskDoubleClick} onDeskAnchorChange={onDeskAnchorChange} disablePulseAnimation={disablePulseAnimation} />
+      <DeskOverlay desks={desks} selectedDeskId={selectedDeskId} hoveredDeskId={hoveredDeskId} selectedDate={selectedDate} bookingVersion={bookingVersion} overlayRect={overlayRect} onHoverDesk={onHoverDesk} onSelectDesk={onSelectDesk} onDeskDoubleClick={onDeskDoubleClick} onDeskAnchorChange={onDeskAnchorChange} disablePulseAnimation={disablePulseAnimation} />
     </div>
   );
 }

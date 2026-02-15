@@ -2,6 +2,8 @@ import { FormEvent, KeyboardEvent, useEffect, useMemo, useRef, useState } from '
 
 type BookingType = 'single' | 'recurring';
 type BookingSlot = 'FULL_DAY' | 'MORNING' | 'AFTERNOON';
+type RoomScheduleItem = { id: string; label: string; person: string };
+type RoomFreeSlot = { label: string; startTime: string; endTime: string };
 
 export type BookingFormValues = {
   type: BookingType;
@@ -42,7 +44,7 @@ const weekdayButtons = [
   { label: 'So', value: 0 }
 ];
 
-export function BookingForm({ values, onChange, onSubmit, onCancel, isSubmitting, disabled, errorMessage, allowRecurring = true, resourceKind }: {
+export function BookingForm({ values, onChange, onSubmit, onCancel, isSubmitting, disabled, errorMessage, allowRecurring = true, resourceKind, roomSchedule }: {
   values: BookingFormValues;
   onChange: (next: BookingFormValues) => void;
   onSubmit: (payload: BookingFormSubmitPayload) => Promise<void>;
@@ -52,11 +54,16 @@ export function BookingForm({ values, onChange, onSubmit, onCancel, isSubmitting
   errorMessage?: string;
   allowRecurring?: boolean;
   resourceKind?: string;
+  roomSchedule?: {
+    bookings: RoomScheduleItem[];
+    freeSlots: RoomFreeSlot[];
+    conflictMessage?: string;
+    onSelectFreeSlot: (startTime: string, endTime: string) => void;
+  };
 }) {
   const [localError, setLocalError] = useState('');
   const typeSelectRef = useRef<HTMLSelectElement | null>(null);
   const isRoom = resourceKind === 'RAUM';
-
   useEffect(() => {
     typeSelectRef.current?.focus();
   }, []);
@@ -86,7 +93,7 @@ export function BookingForm({ values, onChange, onSubmit, onCancel, isSubmitting
     return nextErrors;
   }, [values, isRoom]);
 
-  const isFormInvalid = Object.values(fieldErrors).some(Boolean);
+  const isFormInvalid = Object.values(fieldErrors).some(Boolean) || Boolean(roomSchedule?.conflictMessage);
 
   const toggleWeekday = (weekday: number) => {
     if (values.weekdays.includes(weekday)) {
@@ -143,18 +150,43 @@ export function BookingForm({ values, onChange, onSubmit, onCancel, isSubmitting
           </div>
 
           {isRoom ? (
-            <div className="split">
-              <div className="stack-xs">
-                <label htmlFor="booking-start-time">Von</label>
-                <input id="booking-start-time" type="time" value={values.startTime} disabled={disabled} onChange={(event) => onChange({ ...values, startTime: event.target.value })} />
-                {fieldErrors.startTime && <p className="field-error" role="alert">{fieldErrors.startTime}</p>}
+            <>
+              <section className="room-schedule-block stack-xs">
+                <strong className="room-schedule-title">Heute belegt</strong>
+                {roomSchedule && roomSchedule.bookings.length > 0 ? (
+                  <div className="room-bookings-list" role="list" aria-label="Raumbelegung heute">
+                    {roomSchedule.bookings.map((booking) => (
+                      <div key={booking.id} className="room-booking-row" role="listitem">
+                        <span>{booking.label}</span>
+                        <span>{booking.person}</span>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="room-free-hint">Heute frei</p>
+                )}
+                {roomSchedule && roomSchedule.freeSlots.length > 0 && (
+                  <div className="room-free-slots" role="group" aria-label="Freie Zeitfenster">
+                    {roomSchedule.freeSlots.map((slot) => (
+                      <button key={slot.label} type="button" className="free-slot-chip" disabled={disabled || isSubmitting} onClick={() => roomSchedule.onSelectFreeSlot(slot.startTime, slot.endTime)}>{slot.label}</button>
+                    ))}
+                  </div>
+                )}
+              </section>
+              <div className="split">
+                <div className="stack-xs">
+                  <label htmlFor="booking-start-time">Von</label>
+                  <input id="booking-start-time" type="time" value={values.startTime} disabled={disabled} onChange={(event) => onChange({ ...values, startTime: event.target.value })} />
+                  {fieldErrors.startTime && <p className="field-error" role="alert">{fieldErrors.startTime}</p>}
+                </div>
+                <div className="stack-xs">
+                  <label htmlFor="booking-end-time">Bis</label>
+                  <input id="booking-end-time" type="time" value={values.endTime} disabled={disabled} onChange={(event) => onChange({ ...values, endTime: event.target.value })} />
+                  {fieldErrors.endTime && <p className="field-error" role="alert">{fieldErrors.endTime}</p>}
+                </div>
               </div>
-              <div className="stack-xs">
-                <label htmlFor="booking-end-time">Bis</label>
-                <input id="booking-end-time" type="time" value={values.endTime} disabled={disabled} onChange={(event) => onChange({ ...values, endTime: event.target.value })} />
-                {fieldErrors.endTime && <p className="field-error" role="alert">{fieldErrors.endTime}</p>}
-              </div>
-            </div>
+              {roomSchedule?.conflictMessage && <p className="field-error" role="alert">{roomSchedule.conflictMessage}</p>}
+            </>
           ) : (
             <div className="stack-xs">
               <label htmlFor="booking-slot">Zeitraum</label>
