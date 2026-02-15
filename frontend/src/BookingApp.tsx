@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { API_BASE, ApiError, checkBackendHealth, del, get, markBackendAvailable, post, resolveApiUrl } from './api';
 import { Avatar } from './components/Avatar';
@@ -31,7 +31,7 @@ type ConflictReviewState = {
   deskLabel: string;
   conflictDates: string[];
   retryPayload: BookingSubmitPayload;
-  anchorRect: DOMRect;
+  anchorEl: HTMLElement;
 };
 type BulkBookingResponse = {
   createdCount?: number;
@@ -39,8 +39,73 @@ type BulkBookingResponse = {
   skippedCount?: number;
   skippedDates?: string[];
 };
-type DeskPopupState = { deskId: string; anchorRect: DOMRect };
+type DeskPopupState = { deskId: string; anchorEl: HTMLElement };
 type OccupancyBooking = NonNullable<OccupancyDesk['booking']>;
+type PopupPlacement = 'top' | 'right' | 'bottom' | 'left';
+type PopupCoordinates = { left: number; top: number; placement: PopupPlacement };
+
+const POPUP_OFFSET = 12;
+const POPUP_PADDING = 8;
+
+const clamp = (value: number, min: number, max: number): number => Math.min(max, Math.max(min, value));
+
+const getCandidatePosition = (placement: PopupPlacement, anchorRect: DOMRect, popupWidth: number, popupHeight: number): { left: number; top: number } => {
+  const anchorCenterX = anchorRect.left + anchorRect.width / 2;
+  const anchorCenterY = anchorRect.top + anchorRect.height / 2;
+
+  if (placement === 'right') {
+    return { left: anchorRect.right + POPUP_OFFSET, top: anchorCenterY - popupHeight / 2 };
+  }
+  if (placement === 'left') {
+    return { left: anchorRect.left - popupWidth - POPUP_OFFSET, top: anchorCenterY - popupHeight / 2 };
+  }
+  if (placement === 'top') {
+    return { left: anchorCenterX - popupWidth / 2, top: anchorRect.top - popupHeight - POPUP_OFFSET };
+  }
+
+  return { left: anchorCenterX - popupWidth / 2, top: anchorRect.bottom + POPUP_OFFSET };
+};
+
+const calculatePopupCoordinates = (anchorRect: DOMRect, popupRect: DOMRect): PopupCoordinates => {
+  const viewportWidth = window.innerWidth;
+  const viewportHeight = window.innerHeight;
+  const spaces = {
+    right: viewportWidth - anchorRect.right,
+    left: anchorRect.left,
+    bottom: viewportHeight - anchorRect.bottom,
+    top: anchorRect.top,
+  };
+
+  const placements = (Object.keys(spaces) as PopupPlacement[]).sort((a, b) => spaces[b] - spaces[a]);
+  const minLeft = POPUP_PADDING;
+  const maxLeft = Math.max(POPUP_PADDING, viewportWidth - popupRect.width - POPUP_PADDING);
+  const minTop = POPUP_PADDING;
+  const maxTop = Math.max(POPUP_PADDING, viewportHeight - popupRect.height - POPUP_PADDING);
+
+  for (const placement of placements) {
+    const candidate = getCandidatePosition(placement, anchorRect, popupRect.width, popupRect.height);
+    const overflowLeft = Math.max(0, minLeft - candidate.left);
+    const overflowRight = Math.max(0, candidate.left + popupRect.width - (viewportWidth - POPUP_PADDING));
+    const overflowTop = Math.max(0, minTop - candidate.top);
+    const overflowBottom = Math.max(0, candidate.top + popupRect.height - (viewportHeight - POPUP_PADDING));
+    const overflow = overflowLeft + overflowRight + overflowTop + overflowBottom;
+
+    if (overflow <= 0.5) {
+      return {
+        left: clamp(candidate.left, minLeft, maxLeft),
+        top: clamp(candidate.top, minTop, maxTop),
+        placement,
+      };
+    }
+  }
+
+  const fallback = getCandidatePosition(placements[0] ?? 'right', anchorRect, popupRect.width, popupRect.height);
+  return {
+    left: clamp(fallback.left, minLeft, maxLeft),
+    top: clamp(fallback.top, minTop, maxTop),
+    placement: placements[0] ?? 'right',
+  };
+};
 
 const toLocalDateKey = (value: Date): string => {
   const year = value.getFullYear();
@@ -156,10 +221,13 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
   const [bookingFormValues, setBookingFormValues] = useState<BookingFormValues>(createDefaultBookingFormValues(today));
   const [dialogErrorMessage, setDialogErrorMessage] = useState('');
   const [conflictReview, setConflictReview] = useState<ConflictReviewState | null>(null);
+  const [cancelConfirmOpen, setCancelConfirmOpen] = useState(false);
 
   const [highlightedDeskId, setHighlightedDeskId] = useState('');
+  const [deskPopupCoords, setDeskPopupCoords] = useState<PopupCoordinates | null>(null);
   const occupantRowRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const highlightTimerRef = useRef<number | null>(null);
+  const popupRef = useRef<HTMLElement | null>(null);
 
   const selectedFloorplan = useMemo(() => floorplans.find((f) => f.id === selectedFloorplanId) ?? null, [floorplans, selectedFloorplanId]);
   const employeesByEmail = useMemo(() => new Map(employees.map((employee) => [employee.email.toLowerCase(), employee])), [employees]);
@@ -184,22 +252,6 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
   const activeDialogDeskRef = bookingDialogState === 'CONFLICT_REVIEW' ? conflictReview : deskPopup;
   const popupDesk = useMemo(() => (activeDialogDeskRef ? desks.find((desk) => desk.id === activeDialogDeskRef.deskId) ?? null : null), [desks, activeDialogDeskRef]);
   const popupDeskState = popupDesk ? (!popupDesk.booking ? 'FREE' : popupDesk.isCurrentUsersDesk ? 'MINE' : 'TAKEN') : null;
-  const deskPopupPosition = useMemo(() => {
-    if (!activeDialogDeskRef) return null;
-    const viewportPadding = 12;
-    const popupWidth = 460;
-    const popupHeight = 500;
-    const preferRight = activeDialogDeskRef.anchorRect.right + 10;
-    const preferLeft = activeDialogDeskRef.anchorRect.left - popupWidth - 10;
-    const canUseRight = preferRight + popupWidth <= window.innerWidth - viewportPadding;
-    const left = canUseRight
-      ? preferRight
-      : Math.max(viewportPadding, Math.min(window.innerWidth - popupWidth - viewportPadding, preferLeft));
-    const centeredTop = activeDialogDeskRef.anchorRect.top + activeDialogDeskRef.anchorRect.height / 2 - popupHeight / 2;
-    const top = Math.max(viewportPadding, Math.min(window.innerHeight - popupHeight - viewportPadding, centeredTop));
-    return { left, top };
-  }, [activeDialogDeskRef]);
-
   const calendarDays = useMemo(() => buildCalendarDays(visibleMonth), [visibleMonth]);
 
   const loadOccupancy = async (floorplanId: string, date: string) => {
@@ -282,17 +334,58 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
     };
   }, []);
 
+  useLayoutEffect(() => {
+    if (!activeDialogDeskRef || !popupRef.current) {
+      setDeskPopupCoords(null);
+      return;
+    }
+
+    const anchorRect = activeDialogDeskRef.anchorEl.getBoundingClientRect();
+    const popupRect = popupRef.current.getBoundingClientRect();
+    setDeskPopupCoords(calculatePopupCoordinates(anchorRect, popupRect));
+  }, [activeDialogDeskRef, bookingDialogState, popupDeskState, dialogErrorMessage]);
+
   useEffect(() => {
     if (!activeDialogDeskRef) return;
+
+    const closePopup = () => {
+      setDeskPopup(null);
+      setConflictReview(null);
+      setBookingDialogState('IDLE');
+      setDeskPopupCoords(null);
+      setDialogErrorMessage('');
+      setCancelConfirmOpen(false);
+    };
+
     const closeOnEscape = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
-        setDeskPopup(null);
-        setConflictReview(null);
-        setBookingDialogState('IDLE');
+        closePopup();
       }
     };
+
+    const closeOnOutsideClick = (event: MouseEvent) => {
+      const target = event.target;
+      if (!(target instanceof Node)) return;
+      if (popupRef.current?.contains(target)) return;
+      if (activeDialogDeskRef.anchorEl.contains(target)) return;
+      closePopup();
+    };
+
+    const closeOnViewportChange = () => closePopup();
+
     window.addEventListener('keydown', closeOnEscape);
-    return () => window.removeEventListener('keydown', closeOnEscape);
+    window.addEventListener('mousedown', closeOnOutsideClick, true);
+    window.addEventListener('scroll', closeOnViewportChange, true);
+    window.addEventListener('wheel', closeOnViewportChange, { passive: true });
+    window.addEventListener('resize', closeOnViewportChange);
+
+    return () => {
+      window.removeEventListener('keydown', closeOnEscape);
+      window.removeEventListener('mousedown', closeOnOutsideClick, true);
+      window.removeEventListener('scroll', closeOnViewportChange, true);
+      window.removeEventListener('wheel', closeOnViewportChange);
+      window.removeEventListener('resize', closeOnViewportChange);
+    };
   }, [activeDialogDeskRef]);
 
   const triggerDeskHighlight = (deskId: string, hold = 1300) => {
@@ -306,18 +399,25 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
     }, hold);
   };
 
-  const selectDeskFromCanvas = (deskId: string, pinRect?: DOMRect) => {
+  const selectDeskFromCanvas = (deskId: string, anchorEl?: HTMLElement) => {
     const desk = desks.find((entry) => entry.id === deskId);
-    if (!desk) return;
+    if (!desk || !anchorEl) return;
+
     const state = !desk.booking ? 'FREE' : desk.isCurrentUsersDesk ? 'MINE' : 'TAKEN';
-    if (state === 'TAKEN' || !pinRect) {
+    if (state === 'TAKEN') {
+      return;
+    }
+
+    if (deskPopup?.deskId === deskId && bookingDialogState !== 'CONFLICT_REVIEW') {
+      closeBookingFlow();
       return;
     }
 
     setSelectedDeskId(deskId);
     triggerDeskHighlight(deskId);
-    setDeskPopup({ deskId, anchorRect: pinRect });
+    setDeskPopup({ deskId, anchorEl });
     setConflictReview(null);
+    setCancelConfirmOpen(false);
     setDialogErrorMessage('');
     if (state === 'FREE') {
       setBookingFormValues(createDefaultBookingFormValues(selectedDate));
@@ -341,6 +441,8 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
     setConflictReview(null);
     setBookingDialogState('IDLE');
     setDialogErrorMessage('');
+    setDeskPopupCoords(null);
+    setCancelConfirmOpen(false);
   };
 
   const submitPopupBooking = async (deskId: string, payload: BookingSubmitPayload, overwrite = false) => {
@@ -414,7 +516,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
           deskLabel: popupDesk.name,
           conflictDates: conflictResult.conflictDates,
           retryPayload: payload,
-          anchorRect: deskPopup.anchorRect
+          anchorEl: deskPopup.anchorEl
         });
         setBookingDialogState('CONFLICT_REVIEW');
         return;
@@ -667,16 +769,14 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
         <aside className="right-col desktop-right">{isBootstrapping ? <div className="card skeleton h-480" /> : detailPanel}</aside>
       </section>
 
-      {activeDialogDeskRef && popupDesk && popupDeskState && deskPopupPosition && createPortal(
-        <>
-          <div className="desk-popup-backdrop" onClick={() => {
-            if (bookingDialogState === 'CONFLICT_REVIEW') {
-              setBookingDialogState('BOOKING_OPEN');
-            } else {
-              closeBookingFlow();
-            }
-          }} />
-          <section className="card desk-popup" style={{ left: deskPopupPosition.left, top: deskPopupPosition.top }} role="dialog" aria-modal="true">
+      {activeDialogDeskRef && popupDesk && popupDeskState && createPortal(
+        <section
+          ref={popupRef}
+          className="card desk-popup"
+          style={{ left: deskPopupCoords?.left ?? POPUP_PADDING, top: deskPopupCoords?.top ?? POPUP_PADDING, visibility: deskPopupCoords ? 'visible' : 'hidden' }}
+          role="menu"
+          data-placement={deskPopupCoords?.placement ?? 'right'}
+        >
             {(popupDeskState === 'FREE' && (!conflictReview || bookingDialogState === 'BOOKING_OPEN' || (bookingDialogState === 'SUBMITTING' && !conflictReview))) ? (
               <>
                 <h3>Tisch: {popupDesk.name} buchen</h3>
@@ -738,18 +838,26 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
                     <button
                       type="button"
                       className="btn btn-danger"
-                      onClick={() => void submitPopupCancel()}
+                      onClick={() => setCancelConfirmOpen(true)}
                       disabled={popupDesk.booking?.type === 'recurring'}
                     >
                       Buchung stornieren
                     </button>
                   </div>
+                  {cancelConfirmOpen && (
+                    <div className="stack-xs desk-popup-confirm">
+                      <p className="muted">Möchtest du die Buchung für diesen Tisch wirklich stornieren?</p>
+                      <div className="inline-end">
+                        <button type="button" className="btn btn-outline" onClick={() => setCancelConfirmOpen(false)}>Abbrechen</button>
+                        <button type="button" className="btn btn-danger" onClick={() => void submitPopupCancel()}>Stornierung bestätigen</button>
+                      </div>
+                    </div>
+                  )}
                   {popupDesk.booking?.type === 'recurring' && <p className="muted">Serienbuchungen können derzeit nur im Admin-Modus storniert werden.</p>}
                 </div>
               </>
             )}
-          </section>
-        </>,
+          </section>,
         document.body
       )}
 
