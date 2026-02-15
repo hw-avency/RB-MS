@@ -157,6 +157,13 @@ tr{cursor:pointer}.row-selected{background:hsl(var(--muted))}
 
 .overlay{position:fixed;inset:0;background:rgba(15,23,42,.3);display:grid;place-items:center;padding:16px;z-index:50}
 .dialog{width:min(560px,100%)}.inline-end{display:flex;justify-content:flex-end;gap:8px}
+.rebook-dialog{width:min(420px,100%);padding:22px;gap:10px}
+.rebook-dialog h3{margin:0;font-size:17px;line-height:1.25}
+.rebook-dialog p{margin:0;font-size:14px;line-height:1.45}
+.rebook-date{font-weight:700}
+.rebook-subline{font-size:13px}
+.rebook-actions{margin-top:2px}
+.rebook-actions .btn{min-height:38px}
 .inline-grid-two{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
 .weekday-toggle-group{display:flex;gap:6px;flex-wrap:wrap}
 .weekday-toggle{border:1px solid hsl(var(--border));background:hsl(var(--card));padding:6px 10px;border-radius:999px;cursor:pointer}
