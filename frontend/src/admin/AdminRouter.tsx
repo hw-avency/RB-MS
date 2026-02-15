@@ -99,9 +99,28 @@ function ErrorState({ text, onRetry }: { text: string; onRetry: () => void }) {
   return <div className="error-banner stack-sm"><span>{text}</span><button className="btn btn-outline" onClick={onRetry}>Retry</button></div>;
 }
 
-function ConfirmDialog({ title, description, onConfirm, onCancel, confirmDisabled = false, confirmLabel = 'Löschen' }: { title: string; description: string; onConfirm: () => void; onCancel: () => void; confirmDisabled?: boolean; confirmLabel?: string }) {
+function ConfirmDialog({
+  title,
+  description,
+  onConfirm,
+  onCancel,
+  confirmDisabled = false,
+  cancelDisabled = false,
+  confirmLabel = 'Löschen',
+  confirmVariant = 'danger'
+}: {
+  title: string;
+  description: ReactNode;
+  onConfirm: () => void;
+  onCancel: () => void;
+  confirmDisabled?: boolean;
+  cancelDisabled?: boolean;
+  confirmLabel?: ReactNode;
+  confirmVariant?: 'danger' | 'primary';
+}) {
+  const confirmClassName = confirmVariant === 'danger' ? 'btn btn-danger' : 'btn';
   return (
-    <div className="overlay"><section className="card dialog stack-sm" role="dialog" aria-modal="true"><h3>{title}</h3><p className="muted">{description}</p><div className="inline-end"><button className="btn btn-outline" disabled={confirmDisabled} onClick={onCancel}>Abbrechen</button><button className="btn btn-danger" disabled={confirmDisabled} onClick={onConfirm}>{confirmLabel}</button></div></section></div>
+    <div className="overlay"><section className="card dialog stack-sm" role="dialog" aria-modal="true"><h3>{title}</h3>{typeof description === "string" ? <p className="muted">{description}</p> : description}<div className="inline-end"><button className="btn btn-outline" disabled={cancelDisabled} onClick={onCancel}>Abbrechen</button><button className={confirmClassName} disabled={confirmDisabled} onClick={onConfirm}>{confirmLabel}</button></div></section></div>
   );
 }
 
@@ -616,8 +635,11 @@ function DesksPage({ path, navigate, onLogout, currentUser }: RouteProps) {
   const [selectedDeskIds, setSelectedDeskIds] = useState<Set<string>>(new Set());
   const [selectedDeskId, setSelectedDeskId] = useState('');
   const [hoveredDeskId, setHoveredDeskId] = useState('');
-  const [canvasMode, setCanvasMode] = useState<'idle' | 'create' | 'reposition'>('idle');
+  const [canvasMode, setCanvasMode] = useState<'idle' | 'create' | 'reposition' | 'CONFIRM_SAVE_POSITION'>('idle');
   const [pendingRepositionDesk, setPendingRepositionDesk] = useState<Desk | null>(null);
+  const [pendingRepositionCoords, setPendingRepositionCoords] = useState<{ x: number; y: number } | null>(null);
+  const [savePositionError, setSavePositionError] = useState('');
+  const [isSavingPosition, setIsSavingPosition] = useState(false);
   const [zoom, setZoom] = useState(1);
   const rowRefs = useRef<Record<string, HTMLTableRowElement | null>>({});
 
@@ -664,6 +686,8 @@ function DesksPage({ path, navigate, onLogout, currentUser }: RouteProps) {
       if (event.key === 'Escape') {
         setCanvasMode('idle');
         setPendingRepositionDesk(null);
+        setPendingRepositionCoords(null);
+        setSavePositionError('');
       }
     };
     window.addEventListener('keydown', onKey);
@@ -690,12 +714,16 @@ function DesksPage({ path, navigate, onLogout, currentUser }: RouteProps) {
   const startCreateMode = () => {
     setEditingDesk(null);
     setPendingRepositionDesk(null);
+    setPendingRepositionCoords(null);
+    setSavePositionError('');
     setCanvasMode('create');
   };
 
   const cancelModes = () => {
     setCanvasMode('idle');
     setPendingRepositionDesk(null);
+    setPendingRepositionCoords(null);
+    setSavePositionError('');
   };
 
   const onCanvasClick = async ({ xPct, yPct }: { xPct: number; yPct: number }) => {
@@ -707,15 +735,26 @@ function DesksPage({ path, navigate, onLogout, currentUser }: RouteProps) {
       return;
     }
     if (canvasMode === 'reposition' && pendingRepositionDesk) {
-      if (!window.confirm('Position speichern?')) return;
-      try {
-        await patch(`/admin/desks/${pendingRepositionDesk.id}`, { x, y });
-        toasts.success('Position aktualisiert');
-        cancelModes();
-        await loadDesks(floorplanId);
-      } catch (err) {
-        toasts.error(err instanceof Error ? err.message : 'Position konnte nicht gespeichert werden');
-      }
+      setPendingRepositionCoords({ x, y });
+      setSavePositionError('');
+      setCanvasMode('CONFIRM_SAVE_POSITION');
+    }
+  };
+
+  const confirmSavePosition = async () => {
+    if (!pendingRepositionDesk || !pendingRepositionCoords || isSavingPosition) return;
+    setIsSavingPosition(true);
+    setSavePositionError('');
+    try {
+      await patch(`/admin/desks/${pendingRepositionDesk.id}`, pendingRepositionCoords);
+      toasts.success('Position gespeichert');
+      cancelModes();
+      await loadDesks(floorplanId);
+    } catch (err) {
+      setSavePositionError(err instanceof Error ? err.message : 'Position konnte nicht gespeichert werden');
+      setCanvasMode('CONFIRM_SAVE_POSITION');
+    } finally {
+      setIsSavingPosition(false);
     }
   };
 
@@ -766,6 +805,8 @@ function DesksPage({ path, navigate, onLogout, currentUser }: RouteProps) {
     }
   };
 
+  const isSavePositionDialogOpen = canvasMode === 'CONFIRM_SAVE_POSITION' && Boolean(pendingRepositionDesk && pendingRepositionCoords);
+
   const tableBody = state.loading && !state.ready
     ? <SkeletonRows columns={4} />
     : (
@@ -794,7 +835,7 @@ function DesksPage({ path, navigate, onLogout, currentUser }: RouteProps) {
               <RowMenu items={[
                 { label: 'Bearbeiten', onSelect: () => setEditingDesk(desk) },
                 { label: 'Auf Floorplan anzeigen', onSelect: () => setSelectedDeskId(desk.id) },
-                { label: 'Position ändern', onSelect: () => { setSelectedDeskId(desk.id); setPendingRepositionDesk(desk); setCanvasMode('reposition'); } },
+                { label: 'Position ändern', onSelect: () => { setSelectedDeskId(desk.id); setPendingRepositionDesk(desk); setPendingRepositionCoords(null); setSavePositionError(''); setCanvasMode('reposition'); } },
                 { label: 'Löschen', onSelect: () => setDeleteDesk(desk), danger: true }
               ]}
               />
@@ -882,7 +923,7 @@ function DesksPage({ path, navigate, onLogout, currentUser }: RouteProps) {
               <button type="button" className="btn btn-outline btn-icon" title="Zoom vergrößern" onClick={() => setZoom((value) => Math.min(1.7, Number((value + 0.1).toFixed(2))))}>＋</button>
             </div>
           </div>
-          {(canvasMode === 'create' || (canvasMode === 'reposition' && pendingRepositionDesk)) && (
+          {(canvasMode === 'create' || ((canvasMode === 'reposition' || canvasMode === 'CONFIRM_SAVE_POSITION') && pendingRepositionDesk)) && (
             <Badge tone="warn">{canvasMode === 'create' ? 'Klicke auf den Plan, um den Tisch zu platzieren' : `Neue Position für ${pendingRepositionDesk?.name ?? ''} wählen`}</Badge>
           )}
           {state.loading && !state.ready && <div className="skeleton admin-floor-skeleton" aria-hidden="true" />}
@@ -929,7 +970,7 @@ function DesksPage({ path, navigate, onLogout, currentUser }: RouteProps) {
                   <p className="muted">Zuletzt aktualisiert: {formatDateTimeShort(selectedDesk.updatedAt ?? selectedDesk.createdAt)}</p>
                   <div className="inline-end">
                     <button className="btn btn-outline" onClick={() => setEditingDesk(selectedDesk)}>Bearbeiten</button>
-                    <button className="btn btn-outline" onClick={() => { setPendingRepositionDesk(selectedDesk); setCanvasMode('reposition'); }}>Position ändern</button>
+                    <button className="btn btn-outline" onClick={() => { setPendingRepositionDesk(selectedDesk); setPendingRepositionCoords(null); setSavePositionError(''); setCanvasMode('reposition'); }}>Position ändern</button>
                     <button className="btn btn-danger" onClick={() => setDeleteDesk(selectedDesk)}>Löschen</button>
                   </div>
                 </section>
@@ -939,9 +980,21 @@ function DesksPage({ path, navigate, onLogout, currentUser }: RouteProps) {
         </aside>
       </section>
 
-      {(createRequest || editingDesk) && <DeskEditor desk={editingDesk} floorplans={floorplans} defaultFloorplanId={floorplanId} initialPosition={createRequest} lockFloorplan={Boolean(createRequest)} onRequestPositionMode={editingDesk ? () => { setPendingRepositionDesk(editingDesk); setCanvasMode('reposition'); } : undefined} onClose={() => { setCreateRequest(null); setEditingDesk(null); navigate('/admin/desks'); }} onSaved={async () => { setCreateRequest(null); setEditingDesk(null); toasts.success('Tisch gespeichert'); await loadDesks(floorplanId); }} onError={toasts.error} />}
-      {deleteDesk && <ConfirmDialog title="Tisch löschen?" description={`Tisch "${deleteDesk.name}" wird entfernt.`} onCancel={() => setDeleteDesk(null)} onConfirm={async () => { await del(`/admin/desks/${deleteDesk.id}`); setDeleteDesk(null); toasts.success('Tisch gelöscht'); await loadDesks(floorplanId); }} />}
-      {bulkDeleteOpen && <ConfirmDialog title={`${selectedDeskIds.size} Einträge löschen?`} description="Dieser Vorgang ist irreversibel." onCancel={() => setBulkDeleteOpen(false)} onConfirm={() => void runBulkDelete()} confirmDisabled={isBulkDeleting} confirmLabel={isBulkDeleting ? 'Lösche…' : 'Löschen'} />}
+      {(createRequest || editingDesk) && <DeskEditor desk={editingDesk} floorplans={floorplans} defaultFloorplanId={floorplanId} initialPosition={createRequest} lockFloorplan={Boolean(createRequest)} onRequestPositionMode={editingDesk ? () => { setPendingRepositionDesk(editingDesk); setPendingRepositionCoords(null); setSavePositionError(''); setCanvasMode('reposition'); } : undefined} onClose={() => { setCreateRequest(null); setEditingDesk(null); navigate('/admin/desks'); }} onSaved={async () => { setCreateRequest(null); setEditingDesk(null); toasts.success('Tisch gespeichert'); await loadDesks(floorplanId); }} onError={toasts.error} />}
+      {!isSavePositionDialogOpen && deleteDesk && <ConfirmDialog title="Tisch löschen?" description={`Tisch "${deleteDesk.name}" wird entfernt.`} onCancel={() => setDeleteDesk(null)} onConfirm={async () => { await del(`/admin/desks/${deleteDesk.id}`); setDeleteDesk(null); toasts.success('Tisch gelöscht'); await loadDesks(floorplanId); }} />}
+      {!isSavePositionDialogOpen && bulkDeleteOpen && <ConfirmDialog title={`${selectedDeskIds.size} Einträge löschen?`} description="Dieser Vorgang ist irreversibel." onCancel={() => setBulkDeleteOpen(false)} onConfirm={() => void runBulkDelete()} confirmDisabled={isBulkDeleting} confirmLabel={isBulkDeleting ? 'Lösche…' : 'Löschen'} />}
+      {isSavePositionDialogOpen && pendingRepositionDesk && pendingRepositionCoords && (
+        <ConfirmDialog
+          title="Position speichern?"
+          description={<><p>Möchtest du die neue Position für diesen Tisch speichern?</p><p>Die bisherige Position wird überschrieben.</p>{savePositionError && <p className="error-banner">{savePositionError}</p>}</>}
+          onCancel={() => { setCanvasMode('reposition'); setSavePositionError(''); }}
+          onConfirm={() => void confirmSavePosition()}
+          confirmDisabled={isSavingPosition}
+          cancelDisabled={isSavingPosition}
+          confirmLabel={isSavingPosition ? <><span className="btn-spinner" aria-hidden />Speichern…</> : 'Speichern'}
+          confirmVariant="primary"
+        />
+      )}
       <ToastViewport toasts={toasts.toasts} />
     </AdminLayout>
   );
