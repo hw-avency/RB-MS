@@ -21,7 +21,7 @@ type OccupancyDesk = {
   x: number;
   y: number;
   status: 'free' | 'booked';
-  booking: { id?: string; employeeId?: string; userEmail: string; userDisplayName?: string; userFirstName?: string; userPhotoUrl?: string; type?: 'single' | 'recurring' } | null;
+  booking: { id?: string; employeeId?: string; userEmail: string; userDisplayName?: string; userFirstName?: string; userPhotoUrl?: string; type?: 'single' | 'recurring'; slot?: 'FULL_DAY' | 'MORNING' | 'AFTERNOON' | 'CUSTOM'; startTime?: string; endTime?: string } | null;
   isCurrentUsersDesk?: boolean;
   isHighlighted?: boolean;
 };
@@ -506,27 +506,10 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
     }
 
     if (payload.type === 'single') {
-      await post('/bookings', { deskId, userEmail: selectedEmployeeEmail, date: payload.date, replaceExisting: overwrite });
+      await post('/bookings', { deskId, userEmail: selectedEmployeeEmail, date: payload.date, slot: payload.slot, startTime: payload.startTime, endTime: payload.endTime, replaceExisting: overwrite });
       toast.success(overwrite ? 'Umbuchung durchgeführt.' : 'Gebucht', { deskId });
       return;
     }
-
-    if (payload.type === 'range') {
-      const response = await post<BulkBookingResponse>('/bookings/range', {
-        deskId,
-        userEmail: selectedEmployeeEmail,
-        from: payload.dateFrom,
-        to: payload.dateTo,
-        weekdaysOnly: payload.onlyWeekdays,
-        overrideExisting: overwrite
-      });
-
-      toast.success(overwrite
-        ? `${response.createdCount ?? 0} Tage gebucht, ${response.updatedCount ?? 0} Tage umgebucht.`
-        : 'Gebucht', { deskId });
-      return;
-    }
-
     const response = await post<BulkBookingResponse>('/recurring-bookings/bulk', {
       deskId,
       userEmail: selectedEmployeeEmail,
@@ -900,6 +883,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
                   disabled={bookingDialogState === 'SUBMITTING'}
                   errorMessage={dialogErrorMessage}
                   allowRecurring={popupDesk.effectiveAllowSeries !== false}
+                  resourceKind={popupDesk.kind}
                 />
               </>
             ) : (
@@ -907,7 +891,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
                 <h3>{resourceKindLabel(popupDesk.kind)}: {popupDesk.name}</h3>
                 <div className="stack-sm">
                   <p className="muted">Datum: {new Date(`${selectedDate}T00:00:00.000Z`).toLocaleDateString('de-DE')}</p>
-                  <p className="muted">Zeitraum: Ganztägig</p>
+                  <p className="muted">Zeitraum: {popupDesk.booking?.slot === 'MORNING' ? 'Vormittag' : popupDesk.booking?.slot === 'AFTERNOON' ? 'Nachmittag' : popupDesk.booking?.slot === 'CUSTOM' ? `${popupDesk.booking?.startTime ?? '--:--'}–${popupDesk.booking?.endTime ?? '--:--'}` : 'Ganztägig'}</p>
                   {popupDesk.booking?.type === 'recurring' && <p className="muted">Typ: Serienbuchung (wöchentlich)</p>}
                   <div className="inline-end">
                     <button type="button" className="btn btn-outline" onClick={closeBookingFlow}>Abbrechen</button>

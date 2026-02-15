@@ -2,7 +2,7 @@ import cors from 'cors';
 import express from 'express';
 import crypto from 'crypto';
 import bcrypt from 'bcryptjs';
-import { Prisma, ResourceKind } from '@prisma/client';
+import { BookingSlot, Prisma, ResourceKind } from '@prisma/client';
 import { prisma } from './prisma';
 
 const app = express();
@@ -435,6 +435,61 @@ const datesInRange = (from: Date, to: Date): Date[] => {
   return dates;
 };
 
+const BOOKING_SLOTS = new Set<BookingSlot>(['FULL_DAY', 'MORNING', 'AFTERNOON', 'CUSTOM']);
+type BookingWindowInput = { slot: BookingSlot; startMinute: number | null; endMinute: number | null };
+
+const parseBookingSlot = (value: unknown): BookingSlot | null => {
+  if (typeof value !== 'string') return null;
+  const normalized = value.trim().toUpperCase() as BookingSlot;
+  return BOOKING_SLOTS.has(normalized) ? normalized : null;
+};
+
+const parseTimeToMinute = (value: unknown): number | null => {
+  if (typeof value !== 'string') return null;
+  const m = value.match(/^(\d{2}):(\d{2})$/);
+  if (!m) return null;
+  const hour = Number(m[1]);
+  const minute = Number(m[2]);
+  if (!Number.isInteger(hour) || !Number.isInteger(minute) || hour < 0 || hour > 23 || minute < 0 || minute > 59) return null;
+  return hour * 60 + minute;
+};
+
+const minuteToHHMM = (value: number | null | undefined): string | undefined => {
+  if (typeof value !== 'number' || Number.isNaN(value)) return undefined;
+  const hour = Math.floor(value / 60);
+  const minute = value % 60;
+  return `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
+};
+
+const windowsOverlap = (left: BookingWindowInput, right: BookingWindowInput): boolean => {
+  const leftStart = left.slot === 'FULL_DAY' ? 0 : left.slot === 'MORNING' ? 0 : left.slot === 'AFTERNOON' ? 720 : left.startMinute ?? 0;
+  const leftEnd = left.slot === 'FULL_DAY' ? 1440 : left.slot === 'MORNING' ? 720 : left.slot === 'AFTERNOON' ? 1440 : left.endMinute ?? 1440;
+  const rightStart = right.slot === 'FULL_DAY' ? 0 : right.slot === 'MORNING' ? 0 : right.slot === 'AFTERNOON' ? 720 : right.startMinute ?? 0;
+  const rightEnd = right.slot === 'FULL_DAY' ? 1440 : right.slot === 'MORNING' ? 720 : right.slot === 'AFTERNOON' ? 1440 : right.endMinute ?? 1440;
+  return leftStart < rightEnd && rightStart < leftEnd;
+};
+
+const resolveBookingWindow = ({ deskKind, slot, startTime, endTime }: { deskKind: ResourceKind; slot?: unknown; startTime?: unknown; endTime?: unknown }): { ok: true; value: BookingWindowInput } | { ok: false; message: string } => {
+  if (deskKind === 'RAUM') {
+    const startMinute = parseTimeToMinute(startTime);
+    const endMinute = parseTimeToMinute(endTime);
+    if (startMinute === null || endMinute === null) {
+      return { ok: false, message: 'Für Räume sind startTime und endTime im Format HH:MM erforderlich.' };
+    }
+    if (startMinute >= endMinute) {
+      return { ok: false, message: 'endTime muss nach startTime liegen.' };
+    }
+    return { ok: true, value: { slot: 'CUSTOM', startMinute, endMinute } };
+  }
+
+  const parsedSlot = parseBookingSlot(slot ?? 'FULL_DAY');
+  if (!parsedSlot || parsedSlot === 'CUSTOM') {
+    return { ok: false, message: 'Für diesen Ressourcentyp sind nur slot=FULL_DAY|MORNING|AFTERNOON erlaubt.' };
+  }
+
+  return { ok: true, value: { slot: parsedSlot, startMinute: null, endMinute: null } };
+};
+
 const getRouteId = (value: string | string[] | undefined): string | null => {
   if (!value) return null;
   return Array.isArray(value) ? value[0] ?? null : value;
@@ -606,28 +661,27 @@ const findBookingIdentity = async (userEmail: string): Promise<BookingIdentity> 
   };
 };
 
-const buildUserBookingWhere = (identity: BookingIdentity, date: Date, targetKind?: ResourceKind): Prisma.BookingWhereInput => {
-  return {
-    date,
-    userEmail: { in: identity.emailAliases },
-    ...(targetKind ? { desk: { kind: targetKind } } : {})
-  };
-};
-
-const dedupeAndPickActiveBooking = async (tx: BookingTx, where: Prisma.BookingWhereInput): Promise<BookingWithDeskContext | null> => {
+const findOverlappingBooking = async (tx: BookingTx, params: {
+  identity: BookingIdentity;
+  date: Date;
+  targetKind: ResourceKind;
+  window: BookingWindowInput;
+}): Promise<BookingWithDeskContext | null> => {
   const matches = await tx.booking.findMany({
-    where,
+    where: {
+      date: params.date,
+      userEmail: { in: params.identity.emailAliases },
+      desk: { kind: params.targetKind }
+    },
     include: { desk: { select: { name: true, kind: true } } },
     orderBy: [{ createdAt: 'desc' }, { id: 'desc' }]
   });
 
-  if (matches.length <= 1) {
-    return matches[0] ?? null;
-  }
-
-  const [keep, ...duplicates] = matches;
-  await tx.booking.deleteMany({ where: { id: { in: duplicates.map((row) => row.id) } } });
-  return keep;
+  return matches.find((booking) => windowsOverlap(params.window, {
+    slot: booking.slot,
+    startMinute: booking.startMinute,
+    endMinute: booking.endMinute
+  })) ?? null;
 };
 
 const findDuplicateUserDateGroups = (bookings: Array<{ id: string; userEmail: string; date: Date; desk: { kind: ResourceKind } }>) => {
@@ -1658,7 +1712,7 @@ app.get('/floorplans/:id/desks', async (req, res) => {
 });
 
 app.post('/bookings', async (req, res) => {
-  const { deskId, userEmail, date, replaceExisting } = req.body as { deskId?: string; userEmail?: string; date?: string; replaceExisting?: boolean };
+  const { deskId, userEmail, date, replaceExisting, slot, startTime, endTime } = req.body as { deskId?: string; userEmail?: string; date?: string; replaceExisting?: boolean; slot?: string; startTime?: string; endTime?: string };
 
   if (!deskId || !userEmail || !date) {
     res.status(400).json({ error: 'validation', message: 'deskId, userEmail and date are required' });
@@ -1677,6 +1731,13 @@ app.post('/bookings', async (req, res) => {
     return;
   }
 
+  const bookingWindowResult = resolveBookingWindow({ deskKind: desk.kind, slot, startTime, endTime });
+  if (!bookingWindowResult.ok) {
+    res.status(400).json({ error: 'validation', message: bookingWindowResult.message });
+    return;
+  }
+
+  const bookingWindow = bookingWindowResult.value;
   const identity = await findBookingIdentity(userEmail);
   const shouldReplaceExisting = replaceExisting ?? false;
 
@@ -1684,7 +1745,7 @@ app.post('/bookings', async (req, res) => {
     await acquireBookingLock(tx, bookingUserKeyForDate(identity.userKey, parsedDate));
     await acquireBookingLock(tx, bookingDeskKeyForDate(deskId, parsedDate));
 
-    const existingUserBooking = await dedupeAndPickActiveBooking(tx, buildUserBookingWhere(identity, parsedDate, desk.kind));
+    const existingUserBooking = await findOverlappingBooking(tx, { identity, date: parsedDate, targetKind: desk.kind, window: bookingWindow });
 
     if (existingUserBooking && existingUserBooking.deskId !== deskId && !shouldReplaceExisting) {
       return {
@@ -1701,30 +1762,23 @@ app.post('/bookings', async (req, res) => {
             id: deskId,
             name: desk.name
           },
-          date,
-          replaceableDates: [date],
-          replaceableDeskNames: [existingUserBooking.desk?.name ?? existingUserBooking.deskId]
+          date
         }
       };
     }
 
-    const targetDeskBooking = await tx.booking.findFirst({
-      where: {
-        deskId,
-        date: parsedDate,
-        ...(existingUserBooking ? { id: { not: existingUserBooking.id } } : {})
-      }
-    });
+    const deskBookings = await tx.booking.findMany({ where: { deskId, date: parsedDate }, orderBy: [{ createdAt: 'desc' }] });
+    const targetDeskBooking = deskBookings.find((candidate) => windowsOverlap(bookingWindow, {
+      slot: candidate.slot,
+      startMinute: candidate.startMinute,
+      endMinute: candidate.endMinute
+    }) && (!existingUserBooking || candidate.id !== existingUserBooking.id));
 
     if (targetDeskBooking) {
       return {
         kind: 'conflict' as const,
-        message: 'Desk is already booked for this date',
-        details: {
-          deskId,
-          date,
-          bookingId: targetDeskBooking.id
-        }
+        message: 'Desk is already booked for this Zeitraum',
+        details: { deskId, date, bookingId: targetDeskBooking.id }
       };
     }
 
@@ -1733,45 +1787,9 @@ app.post('/bookings', async (req, res) => {
         return { kind: 'ok' as const, status: 200, booking: existingUserBooking };
       }
 
-      if (existingUserBooking.desk.kind !== desk.kind) {
-        return {
-          kind: 'conflict' as const,
-          message: 'Overwrite is only allowed for matching resource kinds',
-          details: {
-            code: 'OVERWRITE_KIND_MISMATCH',
-            conflictKind: existingUserBooking.desk.kind,
-            requestedKind: desk.kind,
-            date
-          }
-        };
-      }
-
-      const conflictingSameKindBookings = await tx.booking.findMany({
-        where: {
-          id: { not: existingUserBooking.id },
-          date: parsedDate,
-          userEmail: { in: identity.emailAliases },
-          desk: { kind: desk.kind }
-        },
-        select: { id: true }
-      });
-
-      if (conflictingSameKindBookings.length > 0) {
-        return {
-          kind: 'conflict' as const,
-          message: 'Multiple same-kind bookings found for user and date',
-          details: {
-            code: 'MULTIPLE_KIND_CONFLICTS',
-            date,
-            conflictKind: desk.kind,
-            conflictBookingIds: [existingUserBooking.id, ...conflictingSameKindBookings.map((booking) => booking.id)]
-          }
-        };
-      }
-
       const updated = await tx.booking.update({
         where: { id: existingUserBooking.id },
-        data: { deskId, userEmail: identity.normalizedEmail }
+        data: { deskId, userEmail: identity.normalizedEmail, slot: bookingWindow.slot, startMinute: bookingWindow.startMinute, endMinute: bookingWindow.endMinute }
       });
       return { kind: 'ok' as const, status: 200, booking: updated };
     }
@@ -1780,7 +1798,10 @@ app.post('/bookings', async (req, res) => {
       data: {
         deskId,
         userEmail: identity.normalizedEmail,
-        date: parsedDate
+        date: parsedDate,
+        slot: bookingWindow.slot,
+        startMinute: bookingWindow.startMinute,
+        endMinute: bookingWindow.endMinute
       }
     });
 
@@ -1836,7 +1857,7 @@ app.put('/bookings/:id', async (req, res) => {
     return;
   }
 
-  const conflict = await prisma.booking.findUnique({ where: { deskId_date: { deskId, date: bookingDate } } });
+  const conflict = await prisma.booking.findFirst({ where: { deskId, date: bookingDate, slot: existing.slot } });
   if (conflict && conflict.id !== existing.id) {
     sendConflict(res, 'Desk is already booked for this date', { deskId, date: toISODateOnly(bookingDate), bookingId: conflict.id });
     return;
@@ -2190,6 +2211,9 @@ app.get('/bookings', async (req, res) => {
       deskId: true,
       userEmail: true,
       date: true,
+      slot: true,
+      startMinute: true,
+      endMinute: true,
       createdAt: true,
       desk: { select: { kind: true } }
     },
@@ -2210,6 +2234,9 @@ app.get('/bookings', async (req, res) => {
     userEmail: booking.userEmail,
     date: booking.date,
     createdAt: booking.createdAt,
+    slot: booking.slot,
+    startTime: minuteToHHMM(booking.startMinute),
+    endTime: minuteToHHMM(booking.endMinute),
     employeeId: employeesByEmail.get(normalizeEmail(booking.userEmail))?.id,
     userDisplayName: employeesByEmail.get(normalizeEmail(booking.userEmail))?.displayName,
     userPhotoUrl: employeesByEmail.get(normalizeEmail(booking.userEmail))?.photoUrl ?? undefined
@@ -2249,7 +2276,18 @@ app.get('/occupancy', async (req, res) => {
 
   const employeesByEmail = await getActiveEmployeesByEmail(singleBookings.map((booking) => booking.userEmail));
 
-  const singleByDeskId = new Map(singleBookings.map((booking) => [booking.deskId, booking]));
+  const bookingPriority: BookingSlot[] = ['FULL_DAY', 'MORNING', 'AFTERNOON', 'CUSTOM'];
+  const singleByDeskId = new Map<string, (typeof singleBookings)[number]>();
+  for (const booking of singleBookings) {
+    const existing = singleByDeskId.get(booking.deskId);
+    if (!existing) {
+      singleByDeskId.set(booking.deskId, booking);
+      continue;
+    }
+    if (bookingPriority.indexOf(booking.slot) < bookingPriority.indexOf(existing.slot)) {
+      singleByDeskId.set(booking.deskId, booking);
+    }
+  }
 
   const occupancyDesks = desks.map((desk) => {
     const single = singleByDeskId.get(desk.id);
@@ -2271,7 +2309,10 @@ app.get('/occupancy', async (req, res) => {
           userPhotoUrl: employeesByEmail.get(normalizeEmail(single.userEmail))?.photoUrl ?? undefined,
           deskName: desk.name,
         deskId: desk.id,
-          type: 'single' as const
+          type: 'single' as const,
+          slot: single.slot,
+          startTime: minuteToHHMM(single.startMinute),
+          endTime: minuteToHHMM(single.endMinute)
         }
       };
     }
@@ -2381,8 +2422,8 @@ app.post('/recurring-bookings', async (req, res) => {
     let createdCount = 0;
     let updatedCount = 0;
     for (const targetDate of targetDates) {
-      const existingUserBooking = await dedupeAndPickActiveBooking(tx, buildUserBookingWhere(identity, targetDate, desk.kind));
-      const existingDeskBooking = await tx.booking.findUnique({ where: { deskId_date: { deskId, date: targetDate } } });
+      const existingUserBooking = await findOverlappingBooking(tx, { identity, date: targetDate, targetKind: desk.kind, window: { slot: 'FULL_DAY', startMinute: null, endMinute: null } });
+      const existingDeskBooking = await tx.booking.findFirst({ where: { deskId, date: targetDate, slot: 'FULL_DAY' } });
 
       if (existingUserBooking) {
         if (existingUserBooking.deskId === deskId) {
@@ -2988,6 +3029,9 @@ app.get('/admin/bookings', requireAdmin, async (req, res) => {
     userEmail: booking.userEmail,
     date: booking.date,
     createdAt: booking.createdAt,
+    slot: booking.slot,
+    startTime: minuteToHHMM(booking.startMinute),
+    endTime: minuteToHHMM(booking.endMinute),
     employeeId: employeesByEmail.get(normalizeEmail(booking.userEmail))?.id,
     userDisplayName: employeesByEmail.get(normalizeEmail(booking.userEmail))?.displayName
   }));
@@ -3065,10 +3109,10 @@ app.patch('/admin/bookings/:id', requireAdmin, async (req, res) => {
     return;
   }
 
-  const { userEmail, date, deskId } = req.body as { userEmail?: string; date?: string; deskId?: string };
+  const { userEmail, date, deskId, slot, startTime, endTime } = req.body as { userEmail?: string; date?: string; deskId?: string; slot?: string; startTime?: string; endTime?: string };
 
-  if (!userEmail && !date && !deskId) {
-    res.status(400).json({ error: 'validation', message: 'userEmail, deskId or date must be provided' });
+  if (!userEmail && !date && !deskId && typeof slot === 'undefined' && typeof startTime === 'undefined' && typeof endTime === 'undefined') {
+    res.status(400).json({ error: 'validation', message: 'userEmail, deskId, date, slot or time fields must be provided' });
     return;
   }
 
@@ -3094,6 +3138,18 @@ app.patch('/admin/bookings/:id', requireAdmin, async (req, res) => {
     return;
   }
 
+  const bookingWindowResult = resolveBookingWindow({
+    deskKind: nextDesk.kind,
+    slot: typeof slot === 'undefined' ? existing.slot : slot,
+    startTime: typeof startTime === 'undefined' ? minuteToHHMM(existing.startMinute) : startTime,
+    endTime: typeof endTime === 'undefined' ? minuteToHHMM(existing.endMinute) : endTime
+  });
+  if (!bookingWindowResult.ok) {
+    res.status(400).json({ error: 'validation', message: bookingWindowResult.message });
+    return;
+  }
+  const nextWindow = bookingWindowResult.value;
+
   if (nextDate.getTime() !== existing.date.getTime() || nextDeskId !== existing.deskId) {
     const conflictingBooking = await prisma.booking.findFirst({
       where: {
@@ -3103,12 +3159,10 @@ app.patch('/admin/bookings/:id', requireAdmin, async (req, res) => {
       }
     });
 
-    if (conflictingBooking) {
-      sendConflict(res, 'Desk is already booked for this date', {
-        deskId: nextDeskId,
-        date,
-        bookingId: conflictingBooking.id
-      });
+    const overlappingDeskConflict = conflictingBooking && windowsOverlap(nextWindow, { slot: conflictingBooking.slot, startMinute: conflictingBooking.startMinute, endMinute: conflictingBooking.endMinute });
+
+    if (overlappingDeskConflict) {
+      sendConflict(res, 'Desk is already booked for this Zeitraum', { deskId: nextDeskId, date, bookingId: conflictingBooking.id });
       return;
     }
 
@@ -3124,7 +3178,7 @@ app.patch('/admin/bookings/:id', requireAdmin, async (req, res) => {
     include: { desk: { select: { id: true, name: true } } }
   });
 
-  if (userDateConflict) {
+  if (userDateConflict && windowsOverlap(nextWindow, { slot: userDateConflict.slot, startMinute: userDateConflict.startMinute, endMinute: userDateConflict.endMinute })) {
     sendConflict(res, 'User already has a booking for this date and resource kind', {
       conflictKind: nextDesk.kind,
       existingBooking: {
@@ -3141,7 +3195,10 @@ app.patch('/admin/bookings/:id', requireAdmin, async (req, res) => {
     data: {
       ...(userEmail ? { userEmail: nextUserEmail } : {}),
       ...(date ? { date: nextDate } : {}),
-      ...(deskId ? { deskId: nextDeskId } : {})
+      ...(deskId ? { deskId: nextDeskId } : {}),
+      slot: nextWindow.slot,
+      startMinute: nextWindow.startMinute,
+      endMinute: nextWindow.endMinute
     }
   });
 

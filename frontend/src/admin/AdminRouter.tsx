@@ -11,7 +11,7 @@ type SeriesPolicy = 'DEFAULT' | 'ALLOW' | 'DISALLOW';
 type Floorplan = { id: string; name: string; imageUrl: string; isDefault?: boolean; defaultResourceKind?: ResourceKind; defaultAllowSeries?: boolean; createdAt?: string; updatedAt?: string };
 type Desk = { id: string; floorplanId: string; name: string; kind?: ResourceKind; allowSeriesOverride?: boolean | null; effectiveAllowSeries?: boolean; x: number; y: number; createdAt?: string; updatedAt?: string };
 type Employee = { id: string; email: string; displayName: string; role: 'admin' | 'user'; isActive: boolean; photoUrl?: string | null; createdAt?: string; updatedAt?: string };
-type Booking = { id: string; deskId: string; userEmail: string; userDisplayName?: string; employeeId?: string; date: string; createdAt?: string; updatedAt?: string };
+type Booking = { id: string; deskId: string; userEmail: string; userDisplayName?: string; employeeId?: string; date: string; slot?: 'FULL_DAY' | 'MORNING' | 'AFTERNOON' | 'CUSTOM'; startTime?: string; endTime?: string; createdAt?: string; updatedAt?: string };
 type DbColumn = { name: string; type: string; required: boolean; id: boolean; hasDefaultValue: boolean };
 type DbTable = { name: string; model: string; columns: DbColumn[] };
 type RouteProps = { path: string; navigate: (to: string) => void; onRoleStateChanged: () => Promise<void>; onLogout: () => Promise<void>; currentUser?: AdminSession | null };
@@ -1162,8 +1162,13 @@ function BookingEditor({ booking, desks, employees, floorplans, onClose, onSaved
   const [deskId, setDeskId] = useState(booking?.deskId ?? initialDesk?.id ?? '');
   const [date, setDate] = useState(booking?.date?.slice(0, 10) ?? today);
   const [userEmail, setUserEmail] = useState(booking?.userEmail ?? employees[0]?.email ?? '');
+  const [slot, setSlot] = useState<'FULL_DAY' | 'MORNING' | 'AFTERNOON'>(booking?.slot === 'MORNING' || booking?.slot === 'AFTERNOON' ? booking.slot : 'FULL_DAY');
+  const [startTime, setStartTime] = useState(booking?.startTime ?? '09:00');
+  const [endTime, setEndTime] = useState(booking?.endTime ?? '10:00');
   const floorDesks = desks.filter((desk) => desk.floorplanId === floorplanId);
   const selectedFloor = floorplans.find((floor) => floor.id === floorplanId) ?? null;
+  const selectedDesk = floorDesks.find((desk) => desk.id === deskId) ?? null;
+  const isRoomDesk = selectedDesk?.kind === 'RAUM';
 
   useEffect(() => {
     if (deskId && floorDesks.some((desk) => desk.id === deskId)) return;
@@ -1174,10 +1179,10 @@ function BookingEditor({ booking, desks, employees, floorplans, onClose, onSaved
     event.preventDefault();
     try {
       if (booking) {
-        await patch(`/admin/bookings/${booking.id}`, { deskId, date, userEmail });
+        await patch(`/admin/bookings/${booking.id}`, { deskId, date, userEmail, slot: isRoomDesk ? undefined : slot, startTime: isRoomDesk ? startTime : undefined, endTime: isRoomDesk ? endTime : undefined });
         await onSaved('Buchung aktualisiert');
       } else {
-        await post('/bookings', { deskId, date, userEmail });
+        await post('/bookings', { deskId, date, userEmail, slot: isRoomDesk ? undefined : slot, startTime: isRoomDesk ? startTime : undefined, endTime: isRoomDesk ? endTime : undefined });
         await onSaved('Buchung angelegt');
       }
     } catch (err) {
@@ -1185,7 +1190,7 @@ function BookingEditor({ booking, desks, employees, floorplans, onClose, onSaved
     }
   };
 
-  return <div className="overlay"><section className="card dialog stack-sm booking-editor-dialog"><h3>{booking ? 'Buchung bearbeiten' : 'Buchung anlegen'}</h3><div className="booking-editor-layout"><form className="stack-sm" onSubmit={submit}><label className="field"><span>Floorplan</span><select required value={floorplanId} onChange={(e) => setFloorplanId(e.target.value)}>{floorplans.map((plan) => <option key={plan.id} value={plan.id}>{plan.name}</option>)}</select></label><label className="field"><span>Ressource</span><select required value={deskId} onChange={(e) => setDeskId(e.target.value)}>{floorDesks.map((desk) => <option key={desk.id} value={desk.id}>{desk.name}</option>)}</select></label><input required type="date" value={date} onChange={(e) => setDate(e.target.value)} /><select required value={userEmail} onChange={(e) => setUserEmail(e.target.value)}>{employees.map((employee) => <option key={employee.id} value={employee.email}>{employee.displayName} ({employee.email})</option>)}</select><div className="inline-end"><button className="btn btn-outline" type="button" onClick={onClose}>Abbrechen</button><button className="btn">Speichern</button></div></form><div className="booking-editor-plan">{selectedFloor ? <div className="canvas-body"><FloorplanCanvas imageUrl={resolveApiUrl(selectedFloor.imageUrl) ?? selectedFloor.imageUrl} imageAlt={selectedFloor.name} desks={floorDesks.map((desk) => ({ id: desk.id, name: desk.name, kind: desk.kind, x: desk.x, y: desk.y, status: 'free' as const, booking: null, isSelected: desk.id === deskId, isHighlighted: desk.id === deskId }))} selectedDeskId={deskId} hoveredDeskId="" onHoverDesk={() => undefined} onSelectDesk={setDeskId} /></div> : <EmptyState text="Kein Floorplan ausgewählt." />}</div></div></section></div>;
+  return <div className="overlay"><section className="card dialog stack-sm booking-editor-dialog"><h3>{booking ? 'Buchung bearbeiten' : 'Buchung anlegen'}</h3><div className="booking-editor-layout"><form className="stack-sm" onSubmit={submit}><label className="field"><span>Floorplan</span><select required value={floorplanId} onChange={(e) => setFloorplanId(e.target.value)}>{floorplans.map((plan) => <option key={plan.id} value={plan.id}>{plan.name}</option>)}</select></label><label className="field"><span>Ressource</span><select required value={deskId} onChange={(e) => setDeskId(e.target.value)}>{floorDesks.map((desk) => <option key={desk.id} value={desk.id}>{desk.name}</option>)}</select></label><input required type="date" value={date} onChange={(e) => setDate(e.target.value)} />{isRoomDesk ? <div className="split"><input required type="time" value={startTime} onChange={(e) => setStartTime(e.target.value)} /><input required type="time" value={endTime} onChange={(e) => setEndTime(e.target.value)} /></div> : <select value={slot} onChange={(e) => setSlot(e.target.value as 'FULL_DAY' | 'MORNING' | 'AFTERNOON')}><option value="FULL_DAY">Ganzer Tag</option><option value="MORNING">Vormittag</option><option value="AFTERNOON">Nachmittag</option></select>}<select required value={userEmail} onChange={(e) => setUserEmail(e.target.value)}>{employees.map((employee) => <option key={employee.id} value={employee.email}>{employee.displayName} ({employee.email})</option>)}</select><div className="inline-end"><button className="btn btn-outline" type="button" onClick={onClose}>Abbrechen</button><button className="btn">Speichern</button></div></form><div className="booking-editor-plan">{selectedFloor ? <div className="canvas-body"><FloorplanCanvas imageUrl={resolveApiUrl(selectedFloor.imageUrl) ?? selectedFloor.imageUrl} imageAlt={selectedFloor.name} desks={floorDesks.map((desk) => ({ id: desk.id, name: desk.name, kind: desk.kind, x: desk.x, y: desk.y, status: 'free' as const, booking: null, isSelected: desk.id === deskId, isHighlighted: desk.id === deskId }))} selectedDeskId={deskId} hoveredDeskId="" onHoverDesk={() => undefined} onSelectDesk={setDeskId} /></div> : <EmptyState text="Kein Floorplan ausgewählt." />}</div></div></section></div>;
 }
 
 function EmployeesPage({ path, navigate, onRoleStateChanged, onLogout, currentAdminEmail, currentUser }: RouteProps & { currentAdminEmail: string }) {

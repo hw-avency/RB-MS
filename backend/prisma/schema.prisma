@@ -74,13 +74,22 @@ model Booking {
   deskId    String
   userEmail String
   date      DateTime @db.Date
+  slot      BookingSlot @default(FULL_DAY)
+  startMinute Int?
+  endMinute Int?
   createdAt DateTime @default(now())
   desk      Desk     @relation(fields: [deskId], references: [id], onDelete: Cascade)
 
-  @@unique([deskId, date])
   @@index([userEmail, date])
   @@index([date])
   @@index([deskId])
+}
+
+enum BookingSlot {
+  FULL_DAY
+  MORNING
+  AFTERNOON
+  CUSTOM
 }
 
 model RecurringBooking {
