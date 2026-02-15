@@ -324,6 +324,7 @@ tr{cursor:pointer}.row-selected{background:hsl(var(--muted))}
   .admin-shell-v2 > .admin-sidebar-v2{display:none}
   .desks-page-header{flex-direction:column}
   .desks-toolbar{grid-template-columns:1fr}
+}
 
 .db-editor-panel{gap:14px}
 .db-editor-header{display:flex;justify-content:space-between;gap:12px;align-items:flex-start;flex-wrap:wrap}
@@ -343,3 +344,5 @@ tr{cursor:pointer}.row-selected{background:hsl(var(--muted))}
   .db-editor-controls{width:100%;justify-content:flex-start}
   .db-editor-table .db-col-deskid,.db-editor-table .db-col-createdat,.db-editor-table .db-col-updatedat{display:none}
 }
+
+.subtle-divider{border:0;border-top:1px solid hsl(var(--border));margin:4px 0}
