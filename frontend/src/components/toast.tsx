@@ -1,10 +1,9 @@
-import { createContext, ReactNode, useCallback, useContext, useMemo, useState } from 'react';
+import { createContext, ReactNode, useCallback, useContext, useMemo, useRef, useState } from 'react';
 
-type ToastVariant = 'success' | 'destructive';
+type ToastVariant = 'success' | 'error';
 
 type ToastInput = {
-  title: string;
-  description?: string;
+  message: string;
   variant?: ToastVariant;
   durationMs?: number;
 };
@@ -12,44 +11,99 @@ type ToastInput = {
 type ToastItem = ToastInput & {
   id: number;
   variant: ToastVariant;
+  expiresAt: number;
+  remainingMs: number;
+  isLeaving: boolean;
 };
 
 type ToastContextValue = {
   toast: (input: ToastInput) => void;
-  success: (title: string, description?: string) => void;
-  error: (title: string, description?: string) => void;
+  success: (message: string) => void;
+  error: (message: string) => void;
 };
 
+const EXIT_ANIMATION_MS = 180;
+
 const DEFAULT_DURATION_MS: Record<ToastVariant, number> = {
-  success: 3000,
-  destructive: 6000,
+  success: 2800,
+  error: 6500,
 };
 
 const ToastContext = createContext<ToastContextValue | null>(null);
 
 export function ToastProvider({ children }: { children: ReactNode }) {
   const [toasts, setToasts] = useState<ToastItem[]>([]);
+  const timersRef = useRef<Map<number, number>>(new Map());
+
+  const clearTimer = useCallback((toastId: number) => {
+    const timer = timersRef.current.get(toastId);
+    if (timer) {
+      window.clearTimeout(timer);
+      timersRef.current.delete(toastId);
+    }
+  }, []);
+
+  const removeToast = useCallback((toastId: number) => {
+    clearTimer(toastId);
+    setToasts((current) => current.filter((toast) => toast.id !== toastId));
+  }, [clearTimer]);
 
   const dismiss = useCallback((toastId: number) => {
-    setToasts((current) => current.filter((toast) => toast.id !== toastId));
-  }, []);
+    clearTimer(toastId);
+    setToasts((current) => current.map((toast) => (
+      toast.id === toastId ? { ...toast, isLeaving: true } : toast
+    )));
+    window.setTimeout(() => {
+      removeToast(toastId);
+    }, EXIT_ANIMATION_MS);
+  }, [clearTimer, removeToast]);
+
+  const scheduleDismiss = useCallback((toastId: number, delayMs: number) => {
+    clearTimer(toastId);
+    const timer = window.setTimeout(() => dismiss(toastId), Math.max(0, delayMs));
+    timersRef.current.set(toastId, timer);
+  }, [clearTimer, dismiss]);
+
+  const pauseDismiss = useCallback((toastId: number) => {
+    clearTimer(toastId);
+    setToasts((current) => current.map((toast) => {
+      if (toast.id !== toastId || toast.isLeaving) return toast;
+      return { ...toast, remainingMs: Math.max(0, toast.expiresAt - Date.now()) };
+    }));
+  }, [clearTimer]);
+
+  const resumeDismiss = useCallback((toastId: number) => {
+    let nextDelay = 0;
+    setToasts((current) => current.map((toast) => {
+      if (toast.id !== toastId || toast.isLeaving) return toast;
+      nextDelay = toast.remainingMs;
+      return { ...toast, expiresAt: Date.now() + toast.remainingMs };
+    }));
+    scheduleDismiss(toastId, nextDelay);
+  }, [scheduleDismiss]);
 
   const toast = useCallback((input: ToastInput) => {
     const id = Date.now() + Math.floor(Math.random() * 10000);
     const variant = input.variant ?? 'success';
     const durationMs = input.durationMs ?? DEFAULT_DURATION_MS[variant];
+    const now = Date.now();
 
-    setToasts((current) => [...current, { ...input, id, variant }]);
+    setToasts((current) => [...current, {
+      ...input,
+      id,
+      variant,
+      expiresAt: now + durationMs,
+      remainingMs: durationMs,
+      isLeaving: false,
+    }]);
 
-    window.setTimeout(() => {
-      dismiss(id);
-    }, durationMs);
-  }, [dismiss]);
+    scheduleDismiss(id, durationMs);
+  }, [scheduleDismiss]);
 
   const value = useMemo<ToastContextValue>(() => ({
     toast,
-    success: (title: string, description?: string) => toast({ title, description, variant: 'success' }),
-    error: (title: string, description?: string) => toast({ title, description, variant: 'destructive' }),
+    success: (message: string) => toast({ message, variant: 'success' }),
+    error: (message: string) => toast({ message, variant: 'error' }),
   }), [toast]);
 
   return (
@@ -57,10 +111,16 @@ export function ToastProvider({ children }: { children: ReactNode }) {
       {children}
       <div className="toast-viewport" aria-live="polite" aria-atomic="false">
         {toasts.map((item) => (
-          <article key={item.id} className={`toast toast-${item.variant}`} role="status">
-            <div className="toast-content">
-              <strong>{item.title}</strong>
-              {item.description && <p>{item.description}</p>}
+          <article
+            key={item.id}
+            className={`toast toast-${item.variant} ${item.isLeaving ? 'toast-leave' : 'toast-enter'}`}
+            role="status"
+            onMouseEnter={() => pauseDismiss(item.id)}
+            onMouseLeave={() => resumeDismiss(item.id)}
+          >
+            <div className="toast-message-wrap">
+              <span className="toast-icon" aria-hidden="true">{item.variant === 'success' ? '✓' : '!'}</span>
+              <p className="toast-message">{item.message}</p>
             </div>
             <button
               type="button"

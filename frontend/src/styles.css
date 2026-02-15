@@ -164,11 +164,19 @@ tr{cursor:pointer}.row-selected{background:hsl(var(--muted))}
 .checkbox-label{display:flex;align-items:center;gap:8px;font-size:14px}
 .sheet{position:fixed;left:16px;top:16px;bottom:16px;width:min(360px,calc(100% - 32px));overflow:auto}.sheet-right{left:auto;right:16px}
 
-.toast-viewport{position:fixed;top:16px;right:16px;z-index:220;display:grid;gap:8px;max-width:min(380px,calc(100vw - 32px));pointer-events:none}
-.toast{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;border-radius:12px;padding:10px 12px;font-size:14px;box-shadow:0 12px 24px rgba(15,23,42,.16);border:1px solid transparent;pointer-events:auto}
-.toast-content{display:grid;gap:2px}.toast-content strong{font-size:14px;line-height:1.3}.toast-content p{margin:0;font-size:13px;line-height:1.3}
-.toast-success{background:#dcfce7;color:#166534;border-color:#86efac}.toast-destructive{background:#fee2e2;color:#991b1b;border-color:#fca5a5}
-.toast-close{border:0;background:transparent;color:inherit;cursor:pointer;padding:0 2px;font-size:14px;line-height:1}
+.toast-viewport{position:fixed;top:76px;right:16px;z-index:340;display:grid;gap:10px;max-width:min(320px,calc(100vw - 32px));pointer-events:none}
+.toast{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;border-radius:12px;padding:12px 14px;font-size:14px;pointer-events:auto;backdrop-filter:blur(3px);animation:toast-in .18s ease-out both;box-shadow:0 10px 24px rgba(15,23,42,.12)}
+.toast-enter{opacity:1}
+.toast-leave{animation:toast-out .18s ease-out forwards}
+.toast-message-wrap{display:flex;align-items:flex-start;gap:8px;min-width:0}
+.toast-icon{font-size:12px;line-height:1.5;font-weight:700;opacity:.75;margin-top:1px}
+.toast-message{margin:0;font-size:13px;line-height:1.35;font-weight:500;word-break:break-word}
+.toast-success{background:rgba(34,197,94,.12);color:#166534}
+.toast-error{background:rgba(239,68,68,.12);color:#991b1b}
+.toast-close{border:0;background:transparent;color:inherit;cursor:pointer;padding:0 2px;font-size:13px;line-height:1;opacity:.72;transition:opacity .15s ease}
+.toast-close:hover{opacity:1}
+@keyframes toast-in{from{opacity:0;transform:translateY(-6px)}to{opacity:1;transform:translateY(0)}}
+@keyframes toast-out{from{opacity:1;transform:translateY(0)}to{opacity:0;transform:translateY(-6px)}}
 .error-inline{color:#b91c1c;font-size:13px;margin:0}
 .api-base{margin:0;color:hsl(var(--muted-foreground));font-size:12px}
 .mobile-only{display:none}
