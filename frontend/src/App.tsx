@@ -3,6 +3,7 @@ import { API_BASE, ApiError, consumeLastAuthMeFailure } from './api';
 import { BookingApp } from './BookingApp';
 import { AdminRouter } from './admin/AdminRouter';
 import { useAuth } from './auth/AuthProvider';
+import { APP_TITLE } from './config';
 import microsoftLogo from './assets/microsoft.svg';
 
 type Route = '/' | '/admin' | '/login' | '/breakglass' | string;
@@ -36,6 +37,7 @@ function MicrosoftLoginPage() {
   return (
     <main className="ms-login-layout">
       <section className="ms-login-card" aria-label="Login panel">
+        <h1 className="ms-login-title">{APP_TITLE}</h1>
         <button
           className="ms-login-button"
           type="button"
@@ -118,6 +120,10 @@ export function App() {
     const handler = () => setPath(currentPath());
     window.addEventListener('hashchange', handler);
     return () => window.removeEventListener('hashchange', handler);
+  }, []);
+
+  useEffect(() => {
+    document.title = APP_TITLE;
   }, []);
 
   if (loadingAuth) return <LoadingGate />;

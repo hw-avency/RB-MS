@@ -5,6 +5,7 @@ import { Avatar } from './components/Avatar';
 import { BookingForm } from './components/BookingForm';
 import { UserMenu } from './components/UserMenu';
 import { FloorplanCanvas } from './FloorplanCanvas';
+import { APP_TITLE } from './config';
 import type { AuthUser } from './auth/AuthProvider';
 
 type Floorplan = { id: string; name: string; imageUrl: string };
@@ -545,7 +546,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
     <main className="app-shell">
       <header className="app-header simplified-header">
         <div className="header-left">
-          <h1>AVENCY Booking</h1>
+          <h1>{APP_TITLE}</h1>
           <select value={selectedFloorplanId} onChange={(event) => setSelectedFloorplanId(event.target.value)}>
             {floorplans.map((floorplan) => <option key={floorplan.id} value={floorplan.id}>{floorplan.name}</option>)}
           </select>
