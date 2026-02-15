@@ -34,6 +34,7 @@ type RebookConfirmState = {
   deskLabel: string;
   deskKindLabel: string;
   existingDeskLabel?: string;
+  existingKindLabel?: string;
   date: string;
   retryPayload: BookingSubmitPayload;
   anchorEl: HTMLElement;
@@ -156,15 +157,25 @@ const getFirstName = ({ firstName, displayName, email }: { firstName?: string; d
 
 const formatDate = (dateString: string): string => new Date(`${dateString}T00:00:00.000Z`).toLocaleDateString('de-DE');
 
-const isUserBookingConflictError = (error: unknown): error is ApiError => error instanceof ApiError
-  && error.status === 409
-  && error.message.toLowerCase().includes('user already has a booking for this date');
+const isUserBookingConflictError = (error: unknown): error is ApiError => {
+  if (!(error instanceof ApiError) || error.status !== 409) return false;
+  if (!error.details || typeof error.details !== 'object') return false;
+  const payload = error.details as { details?: { conflictKind?: unknown; existingBooking?: unknown } };
+  return typeof payload.details?.conflictKind === 'string' || Boolean(payload.details?.existingBooking);
+};
 
 const getConflictExistingDeskLabel = (error: ApiError): string | undefined => {
   if (!error.details || typeof error.details !== 'object') return undefined;
   const details = error.details as { details?: { existingBooking?: { deskName?: unknown } } };
   const deskName = details.details?.existingBooking?.deskName;
   return typeof deskName === 'string' && deskName.trim() ? deskName : undefined;
+};
+
+const getConflictKindLabel = (error: ApiError): string | undefined => {
+  if (!error.details || typeof error.details !== 'object') return undefined;
+  const details = error.details as { details?: { conflictKind?: unknown } };
+  if (typeof details.details?.conflictKind !== 'string') return undefined;
+  return resourceKindLabel(details.details.conflictKind);
 };
 
 const mapBookingsForDay = (desks: OccupancyDesk[]): OccupantForDay[] => desks
@@ -543,6 +554,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
           deskLabel: popupDesk.name,
           deskKindLabel: resourceKindLabel(popupDesk.kind),
           existingDeskLabel: getConflictExistingDeskLabel(error),
+          existingKindLabel: getConflictKindLabel(error) ?? resourceKindLabel(popupDesk.kind),
           date: payload.type === 'single' ? payload.date : selectedDate,
           retryPayload: payload,
           anchorEl: deskPopup.anchorEl
@@ -908,7 +920,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
           <section className="card dialog stack-sm rebook-dialog" role="dialog" aria-modal="true" aria-labelledby="rebook-title">
             <h3 id="rebook-title">Umbuchen?</h3>
             <p>
-              Du hast am <strong className="rebook-date">{formatDate(rebookConfirm.date)}</strong> bereits eine Buchung.
+              Du hast am <strong className="rebook-date">{formatDate(rebookConfirm.date)}</strong> bereits eine {rebookConfirm.existingKindLabel ?? rebookConfirm.deskKindLabel}-Buchung.
               <br />
               Möchtest du diese auf {rebookConfirm.deskKindLabel} {rebookConfirm.deskLabel} umbuchen?
             </p>
