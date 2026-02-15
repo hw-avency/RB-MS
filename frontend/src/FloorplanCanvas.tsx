@@ -18,6 +18,8 @@ type FloorplanBooking = {
 type FloorplanDesk = {
   id: string;
   name: string;
+  label?: string;
+  shortLabel?: string;
   kind?: string;
   x: number;
   y: number;
@@ -39,6 +41,7 @@ const RING_RADIUS = 16;
 const RING_WIDTH = 4;
 const CENTER_SIZE = 28;
 const START_ANGLE = -90;
+const MAX_ROOM_MARKER_LABEL_LENGTH = 4;
 
 const clamp01 = (value: number): number => Math.min(1, Math.max(0, value));
 const isTodayDateKey = (value?: string): boolean => Boolean(value && value === new Date().toISOString().slice(0, 10));
@@ -63,6 +66,18 @@ const getInitials = (name?: string, email?: string): string => {
 };
 
 const getDeskLabel = (desk: Pick<FloorplanDesk, 'id' | 'name'>): string => desk.name?.toString().trim() || desk.id;
+
+const getRoomMarkerLabel = (desk: Pick<FloorplanDesk, 'label' | 'shortLabel'>): string | null => {
+  const normalizedShortLabel = desk.shortLabel?.trim();
+  if (normalizedShortLabel && normalizedShortLabel.length <= MAX_ROOM_MARKER_LABEL_LENGTH) return normalizedShortLabel;
+
+  const normalizedLabel = desk.label?.trim();
+  if (normalizedLabel && normalizedLabel.length <= MAX_ROOM_MARKER_LABEL_LENGTH) return normalizedLabel;
+
+  return null;
+};
+
+const getRoomName = (desk: Pick<FloorplanDesk, 'id' | 'name' | 'label'>): string => desk.name?.trim() || desk.label?.trim() || desk.id;
 
 const normalizeBookings = (desk: FloorplanDesk): FloorplanBooking[] => {
   if (desk.bookings && desk.bookings.length > 0) return desk.bookings;
@@ -142,6 +157,7 @@ const DeskOverlay = memo(function DeskOverlay({ desks, selectedDeskId, hoveredDe
           const point = toPixelPoint(desk, overlayRect);
           const bookings = normalizeBookings(desk);
           const isRoom = desk.kind === 'RAUM';
+          const roomMarkerLabel = isRoom ? getRoomMarkerLabel(desk) : null;
           const fullBooking = bookings.find((booking) => slotFromBooking(booking) === 'FULL');
           const amBooking = fullBooking ?? bookings.find((booking) => slotFromBooking(booking) === 'AM');
           const pmBooking = fullBooking ?? bookings.find((booking) => slotFromBooking(booking) === 'PM');
@@ -217,7 +233,10 @@ const DeskOverlay = memo(function DeskOverlay({ desks, selectedDeskId, hoveredDe
 
               <span className="pin-center" style={{ width: CENTER_SIZE, height: CENTER_SIZE }}>
                 {isRoom ? (
-                  <span className="room-center-label"><span>🕒</span><small>MR</small></span>
+                  <span className="room-center-label">
+                    <span className="room-center-icon" aria-hidden="true">⌂</span>
+                    {roomMarkerLabel && <small>{roomMarkerLabel}</small>}
+                  </span>
                 ) : bookings.length >= 2 && !fullBooking ? (
                   <span className="desk-pin-count">2</span>
                 ) : centerBooking ? (
@@ -245,7 +264,7 @@ const DeskOverlay = memo(function DeskOverlay({ desks, selectedDeskId, hoveredDe
       </div>
       {tooltip && tooltipDesk && createPortal(
         <div className="desk-tooltip" style={{ left: tooltip.left, top: tooltip.top }} role="tooltip">
-          <strong>{resourceKindLabel(tooltipDesk.kind)}: {getDeskLabel(tooltipDesk)}</strong>
+          <strong>{tooltipDesk.kind === 'RAUM' ? `Raum: ${getRoomName(tooltipDesk)}` : `${resourceKindLabel(tooltipDesk.kind)}: ${getDeskLabel(tooltipDesk)}`}</strong>
           {tooltipDesk.kind === 'RAUM' ? (
             normalizeBookings(tooltipDesk).map((booking) => (
               <span key={booking.id ?? `${booking.userEmail}-${booking.startTime}`}>{`${booking.startTime ?? '--:--'}-${booking.endTime ?? '--:--'}: ${booking.userDisplayName ?? booking.userEmail}`}</span>
