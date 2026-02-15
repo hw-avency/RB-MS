@@ -564,7 +564,7 @@ const bookingUserKeyForDate = (userKey: string, date: Date): string => `booking:
 const bookingDeskKeyForDate = (deskId: string, date: Date): string => `booking:desk:${deskId}:date:${toISODateOnly(date)}`;
 
 const acquireBookingLock = async (tx: BookingTx, key: string) => {
-  await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtext(${key}))`;
+  await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${key}))`;
 };
 
 const findBookingIdentity = async (userEmail: string): Promise<BookingIdentity> => {
