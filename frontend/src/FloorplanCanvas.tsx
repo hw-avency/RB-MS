@@ -75,13 +75,14 @@ type FloorplanCanvasProps = {
   onCanvasClick?: (coords: { xPct: number; yPct: number }) => void;
   onDeskDoubleClick?: (deskId: string) => void;
   onDeskAnchorChange?: (deskId: string, element: HTMLElement | null) => void;
+  disablePulseAnimation?: boolean;
 };
 
 const FloorplanImage = memo(function FloorplanImage({ imageUrl, imageAlt, imgRef, onLoad }: { imageUrl: string; imageAlt: string; imgRef: RefObject<HTMLImageElement>; onLoad: () => void }) {
   return <img ref={imgRef} src={imageUrl} alt={imageAlt} className="floorplan-image" onLoad={onLoad} />;
 });
 
-const DeskOverlay = memo(function DeskOverlay({ desks, selectedDeskId, hoveredDeskId, selectedDate, overlayRect, onHoverDesk, onSelectDesk, onDeskDoubleClick, onDeskAnchorChange }: { desks: FloorplanDesk[]; selectedDeskId: string; hoveredDeskId: string; selectedDate?: string; overlayRect: OverlayRect; onHoverDesk: (deskId: string) => void; onSelectDesk: (deskId: string, anchorEl?: HTMLElement) => void; onDeskDoubleClick?: (deskId: string) => void; onDeskAnchorChange?: (deskId: string, element: HTMLElement | null) => void; }) {
+const DeskOverlay = memo(function DeskOverlay({ desks, selectedDeskId, hoveredDeskId, selectedDate, overlayRect, onHoverDesk, onSelectDesk, onDeskDoubleClick, onDeskAnchorChange, disablePulseAnimation = false }: { desks: FloorplanDesk[]; selectedDeskId: string; hoveredDeskId: string; selectedDate?: string; overlayRect: OverlayRect; onHoverDesk: (deskId: string) => void; onSelectDesk: (deskId: string, anchorEl?: HTMLElement) => void; onDeskDoubleClick?: (deskId: string) => void; onDeskAnchorChange?: (deskId: string, element: HTMLElement | null) => void; disablePulseAnimation?: boolean; }) {
   const [imageStates, setImageStates] = useState<Record<string, boolean>>({});
   const [tooltip, setTooltip] = useState<{ deskId: string; left: number; top: number } | null>(null);
   const showDebugCross = isDeskPinDebugEnabled();
@@ -114,6 +115,8 @@ const DeskOverlay = memo(function DeskOverlay({ desks, selectedDeskId, hoveredDe
               ? 'MINE'
               : 'TAKEN';
           const isClickable = pinState !== 'TAKEN';
+          const isInteracting = selectedDeskId === desk.id || hoveredDeskId === desk.id || Boolean(desk.isSelected);
+          const shouldShowPulse = isClickable && !isInteracting && !disablePulseAnimation;
 
           if (import.meta.env.DEV && desk.status === 'booked') {
             console.log('pin employee', desk.booking?.employeeId, desk.booking?.userDisplayName, desk.booking?.userPhotoUrl);
@@ -158,6 +161,7 @@ const DeskOverlay = memo(function DeskOverlay({ desks, selectedDeskId, hoveredDe
                 tabIndex={isClickable ? 0 : -1}
                 aria-label={`${resourceKindLabel(desk.kind)}: ${deskLabel} · ${pinState === 'FREE' ? 'Frei' : pinState === 'MINE' ? 'Eigene Buchung' : desk.booking?.userDisplayName ?? desk.booking?.userEmail ?? 'Belegt'}`}
               >
+                {shouldShowPulse && <span className={`resource-pulse-ring ${desk.status === 'booked' ? 'is-subtle' : ''}`} aria-hidden="true" />}
                 <span className={`pin-ring ${showDebugCross ? 'debug-outline' : ''}`} aria-hidden="true" />
                 <span className={`pin-avatar-clip ${showDebugCross ? 'debug-outline' : ''}`}>
                   {desk.status === 'booked' ? (
@@ -196,7 +200,7 @@ const DeskOverlay = memo(function DeskOverlay({ desks, selectedDeskId, hoveredDe
   );
 });
 
-export function FloorplanCanvas({ imageUrl, imageAlt, desks, selectedDeskId, hoveredDeskId, selectedDate, onHoverDesk, onSelectDesk, onCanvasClick, onDeskDoubleClick, onDeskAnchorChange }: FloorplanCanvasProps) {
+export function FloorplanCanvas({ imageUrl, imageAlt, desks, selectedDeskId, hoveredDeskId, selectedDate, onHoverDesk, onSelectDesk, onCanvasClick, onDeskDoubleClick, onDeskAnchorChange, disablePulseAnimation = false }: FloorplanCanvasProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const imgRef = useRef<HTMLImageElement | null>(null);
   const [overlayRect, setOverlayRect] = useState<OverlayRect>({ left: 0, top: 0, width: 1, height: 1 });
@@ -227,7 +231,7 @@ export function FloorplanCanvas({ imageUrl, imageAlt, desks, selectedDeskId, hov
   return (
     <div ref={containerRef} className="floorplan-canvas" role="presentation" onClick={handleCanvasClick}>
       <FloorplanImage imageUrl={imageUrl} imageAlt={imageAlt} imgRef={imgRef} onLoad={sync} />
-      <DeskOverlay desks={desks} selectedDeskId={selectedDeskId} hoveredDeskId={hoveredDeskId} selectedDate={selectedDate} overlayRect={overlayRect} onHoverDesk={onHoverDesk} onSelectDesk={onSelectDesk} onDeskDoubleClick={onDeskDoubleClick} onDeskAnchorChange={onDeskAnchorChange} />
+      <DeskOverlay desks={desks} selectedDeskId={selectedDeskId} hoveredDeskId={hoveredDeskId} selectedDate={selectedDate} overlayRect={overlayRect} onHoverDesk={onHoverDesk} onSelectDesk={onSelectDesk} onDeskDoubleClick={onDeskDoubleClick} onDeskAnchorChange={onDeskAnchorChange} disablePulseAnimation={disablePulseAnimation} />
     </div>
   );
 }

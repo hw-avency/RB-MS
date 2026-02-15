@@ -965,6 +965,7 @@ function DesksPage({ path, navigate, onLogout, currentUser }: RouteProps) {
                     hoveredDeskId={hoveredDeskId}
                     onHoverDesk={setHoveredDeskId}
                     onSelectDesk={(deskId) => setSelectedDeskId(deskId)}
+                    disablePulseAnimation={canvasMode !== 'idle'}
                     onCanvasClick={onCanvasClick}
                     onDeskDoubleClick={(deskId) => {
                       const target = desks.find((desk) => desk.id === deskId);
