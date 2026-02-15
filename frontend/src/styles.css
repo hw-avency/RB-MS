@@ -109,6 +109,20 @@ td p{margin:2px 0 0}.occupant-card{border:1px solid hsl(var(--border));border-ra
 tr{cursor:pointer}.row-selected{background:hsl(var(--muted))}
 .people-list{list-style:none;padding:0;margin:0;display:grid;gap:6px}.people-list li{display:flex;justify-content:space-between;padding:8px;border-radius:12px;cursor:pointer}
 
+
+.occupancy-sections{display:grid;gap:12px}
+.occupancy-section h4{margin:0;font-size:14px}
+.occupancy-list{display:grid;gap:6px;max-height:220px;overflow:auto;padding-right:2px}
+.occupant-compact-card{display:flex;align-items:center;justify-content:space-between;gap:8px;min-height:46px;padding:8px 10px;border-radius:10px;background:hsl(var(--muted)/.45);border:1px solid hsl(var(--border));transition:background .15s ease,border-color .15s ease}
+.occupant-compact-card:hover,.occupant-compact-card.is-active{background:hsl(var(--muted)/.85)}
+.occupant-compact-card.is-highlighted{background:hsl(var(--primary)/.14);border-color:hsl(var(--primary)/.35)}
+.occupant-card-main{display:flex;align-items:center;gap:8px;min-width:0}
+.occupant-card-text{min-width:0}
+.occupant-card-text strong{display:block;font-size:13px;line-height:1.2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.occupant-card-text p{margin:1px 0 0;font-size:11px;line-height:1.25;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.occupant-desk{font-size:12px;white-space:nowrap}
+.compact-empty-state{padding:10px}
+
 .empty-state{border:1px dashed hsl(var(--border));border-radius:12px;padding:16px;text-align:center;color:hsl(var(--muted-foreground))}
 .skeleton{border-radius:16px;background:linear-gradient(90deg,#f1f5f9,#e2e8f0,#f1f5f9);background-size:200% 100%;animation:pulse 1.4s infinite}
 .h-420{height:420px}.h-480{height:480px}
