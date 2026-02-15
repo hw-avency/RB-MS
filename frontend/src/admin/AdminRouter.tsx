@@ -67,6 +67,21 @@ function EmptyState({ text, action }: { text: string; action?: ReactNode }) {
   return <div className="empty-state stack-sm"><p>{text}</p>{action}</div>;
 }
 
+function ListToolbar({ title, count, filters, actions }: { title: string; count?: number | string; filters?: ReactNode; actions?: ReactNode }) {
+  return (
+    <div className="list-toolbar">
+      <div className="inline-between">
+        <h3>{title}</h3>
+        {typeof count !== 'undefined' && <Badge>{count}</Badge>}
+      </div>
+      <div className="list-toolbar-controls">
+        {filters}
+        {actions}
+      </div>
+    </div>
+  );
+}
+
 function ErrorState({ text, onRetry }: { text: string; onRetry: () => void }) {
   return <div className="error-banner stack-sm"><span>{text}</span><button className="btn btn-outline" onClick={onRetry}>Retry</button></div>;
 }
@@ -181,7 +196,7 @@ function RowMenu({ items }: { items: RowMenuItem[] }) {
   );
 }
 
-function AdminLayout({ path, navigate, title, actions, children, onLogout, currentUser }: { path: string; navigate: (to: string) => void; title: string; actions?: ReactNode; children: ReactNode; onLogout: () => Promise<void>; currentUser: AdminSession | null }) {
+function AdminLayout({ path, navigate, title, children, onLogout, currentUser }: { path: string; navigate: (to: string) => void; title: string; children: ReactNode; onLogout: () => Promise<void>; currentUser: AdminSession | null }) {
   const current = basePath(path);
   return (
     <main className="app-shell">
@@ -189,10 +204,20 @@ function AdminLayout({ path, navigate, title, actions, children, onLogout, curre
         <aside className="card admin-sidebar-v2 stack-sm">
           <h3>RB-MS Admin</h3>
           {navItems.map((item) => <button key={item.to} className={`btn btn-ghost admin-nav-link ${current === item.to ? 'active' : ''}`} onClick={() => navigate(item.to)}>{item.label}</button>)}
-          {currentUser && <UserMenu user={currentUser} onLogout={async () => { await onLogout(); navigate('/login'); }} />}
         </aside>
         <section className="admin-content-v2 stack-sm">
-          <header className="card admin-topbar-v2"><div><p className="muted">Admin / {title}</p><strong>{title}</strong></div><div className="inline-end"><button className="btn btn-outline" onClick={() => navigate('/')}>Zurück zur App</button>{actions}</div></header>
+          <header className="card app-header simplified-header">
+            <div className="header-left">
+              <div>
+                <p className="muted">Admin / {title}</p>
+                <strong>{title}</strong>
+              </div>
+            </div>
+            <div className="header-right">
+              <button className="btn btn-outline" onClick={() => navigate('/')}>Zurück zur App</button>
+              {currentUser && <UserMenu user={currentUser} onLogout={async () => { await onLogout(); navigate('/login'); }} />}
+            </div>
+          </header>
           {children}
         </section>
       </div>
@@ -321,9 +346,14 @@ function FloorplansPage({ path, navigate, onLogout, currentUser }: RouteProps) {
   const filtered = useMemo(() => floorplans.filter((plan) => plan.name.toLowerCase().includes(query.toLowerCase())), [floorplans, query]);
 
   return (
-    <AdminLayout path={path} navigate={navigate} onLogout={onLogout} title="Floorpläne" actions={<button className="btn" onClick={() => setShowCreate(true)}>Neu</button>} currentUser={currentUser ?? null}>
+    <AdminLayout path={path} navigate={navigate} onLogout={onLogout} title="Floorpläne" currentUser={currentUser ?? null}>
       <section className="card stack-sm">
-        <div className="crud-toolbar"><div className="inline-between"><h3>Floorpläne</h3><Badge>{filtered.length}</Badge></div><div className="admin-search">🔎<input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Floorplan suchen" /></div></div>
+        <ListToolbar
+          title="Floorpläne"
+          count={filtered.length}
+          filters={<div className="admin-search">🔎<input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Floorplan suchen" /></div>}
+          actions={<button className="btn" onClick={() => setShowCreate(true)}>Neu</button>}
+        />
         {state.error && <ErrorState text={state.error} onRetry={load} />}
         <div className="table-wrap"><table className="admin-table"><thead><tr><th>Vorschau</th><th>Name</th><th>Bild URL</th><th>Erstellt</th><th className="align-right">Aktionen</th></tr></thead>{state.loading && !state.ready ? <SkeletonRows columns={5} /> : <tbody>{filtered.map((floorplan) => <tr key={floorplan.id}><td><button className="floor-thumb-btn" onClick={() => setEditing(floorplan)} aria-label={`Floorplan ${floorplan.name} öffnen`}><img className="floor-thumb" src={resolveApiUrl(floorplan.imageUrl)} alt={floorplan.name} loading="lazy" /></button></td><td><button className="btn btn-ghost" onClick={() => setEditing(floorplan)}>{floorplan.name}</button></td><td className="truncate-cell" title={floorplan.imageUrl}>{floorplan.imageUrl}</td><td>{formatDate(floorplan.createdAt)}</td><td className="align-right"><RowMenu items={[{ label: 'Bearbeiten', onSelect: () => setEditing(floorplan) }, { label: 'Löschen', onSelect: () => setPendingDelete(floorplan), danger: true }]} /></td></tr>)}</tbody>}</table></div>
         {!state.loading && filtered.length === 0 && <EmptyState text="Keine Floorpläne vorhanden." action={<button className="btn" onClick={() => setShowCreate(true)}>Neu anlegen</button>} />}
@@ -557,7 +587,7 @@ function DesksPage({ path, navigate, onLogout, currentUser }: RouteProps) {
   return (
     <AdminLayout path={path} navigate={navigate} onLogout={onLogout} title="Tische" currentUser={currentUser ?? null}>
       <AdminSplitLayout
-        leftHeader={<div className="crud-toolbar"><div className="inline-between"><h3>Tische</h3><Badge>{filtered.length}</Badge></div><div className="admin-toolbar admin-toolbar-wrap"><select value={floorplanId} onChange={(e) => { setFloorplanId(e.target.value); setSelectedDeskId(''); cancelModes(); }}><option value="">Floorplan wählen</option>{floorplans.map((plan) => <option key={plan.id} value={plan.id}>{plan.name}</option>)}</select><div className="admin-search">🔎<input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Tisch suchen" /></div><button className="btn" disabled={!floorplanId} onClick={startCreateMode}>Neuer Tisch</button>{canvasMode !== 'idle' && <button className="btn btn-outline" onClick={cancelModes}>Abbrechen</button>}</div></div>}
+        leftHeader={<ListToolbar title="Tische" count={filtered.length} filters={<><select value={floorplanId} onChange={(e) => { setFloorplanId(e.target.value); setSelectedDeskId(''); cancelModes(); }}><option value="">Floorplan wählen</option>{floorplans.map((plan) => <option key={plan.id} value={plan.id}>{plan.name}</option>)}</select><div className="admin-search">🔎<input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Tisch suchen" /></div></>} actions={<><button className="btn" disabled={!floorplanId} onClick={startCreateMode}>Neuer Tisch</button>{canvasMode !== 'idle' && <button className="btn btn-outline" onClick={cancelModes}>Abbrechen</button>}</>} />}
         leftContent={<>{state.error && <ErrorState text={state.error} onRetry={() => void loadDesks(floorplanId)} />}{selectedDeskIds.size > 0 && <div className="bulk-actions"><strong>{selectedDeskIds.size} ausgewählt</strong><div className="inline-end"><button className="btn btn-danger" disabled={isBulkDeleting} onClick={() => setBulkDeleteOpen(true)}>{isBulkDeleting ? 'Lösche…' : 'Auswahl löschen'}</button><button className="btn btn-outline" disabled={isBulkDeleting} onClick={clearSelection}>Abbrechen</button></div></div>}<div className="table-wrap"><table className="admin-table"><thead><tr><th><input type="checkbox" checked={isAllVisibleSelected} onChange={toggleAllVisibleDesks} aria-label="Alle sichtbaren Tische auswählen" /></th><th>Label</th><th>Aktualisiert</th><th className="align-right">Aktionen</th></tr></thead>{state.loading && !state.ready ? <SkeletonRows columns={4} /> : <tbody>{filtered.map((desk) => <tr key={desk.id} ref={(row) => { rowRefs.current[desk.id] = row; }} className={selectedDeskId === desk.id ? 'row-selected' : ''} onClick={() => setSelectedDeskId(desk.id)}><td><input type="checkbox" checked={selectedDeskIds.has(desk.id)} onClick={(e) => e.stopPropagation()} onChange={() => toggleDeskSelection(desk.id)} aria-label={`${desk.name} auswählen`} /></td><td>{desk.name}</td><td>{formatDate(desk.updatedAt ?? desk.createdAt)}</td><td className="align-right"><RowMenu items={[{ label: 'Position ändern', onSelect: () => { setSelectedDeskId(desk.id); setPendingRepositionDesk(desk); setCanvasMode('reposition'); } }, { label: 'Bearbeiten', onSelect: () => setEditingDesk(desk) }, { label: 'Löschen', onSelect: () => setDeleteDesk(desk), danger: true }]} /></td></tr>)}</tbody>}</table></div>{!state.loading && filtered.length === 0 && <EmptyState text="Keine Tische gefunden." action={<button className="btn" onClick={startCreateMode}>Neuen Tisch platzieren</button>} />}</>}
         rightHeader={<div className="inline-between"><h3>Floorplan</h3>{canvasMode === 'create' && <Badge tone="warn">Klicke auf den Plan, um den Tisch zu platzieren</Badge>}{canvasMode === 'reposition' && pendingRepositionDesk && <Badge tone="warn">Neue Position für {pendingRepositionDesk.name} wählen</Badge>}</div>}
         rightContent={<>{!floorplan && <EmptyState text="Bitte Floorplan wählen." />}{floorplan && <div className={`canvas-body admin-floor-canvas ${canvasMode !== 'idle' ? 'is-active-mode' : ''}`}><FloorplanCanvas imageUrl={floorplan.imageUrl} imageAlt={floorplan.name} desks={desks.map((desk) => ({ id: desk.id, name: desk.name, x: desk.x, y: desk.y, status: 'free', booking: null, isSelected: selectedDeskIds.has(desk.id) }))} selectedDeskId={selectedDeskId} hoveredDeskId={hoveredDeskId} onHoverDesk={setHoveredDeskId} onSelectDesk={(deskId) => { setSelectedDeskId(deskId); toggleDeskSelection(deskId); }} onCanvasClick={onCanvasClick} onDeskDoubleClick={(deskId) => { const target = desks.find((desk) => desk.id === deskId); if (target) setEditingDesk(target); }} /></div>}</>}
@@ -649,9 +679,9 @@ function BookingsPage({ path, navigate, onLogout, currentUser }: RouteProps) {
   };
   const resetFilters = () => { setFloorplanId(''); setDeskId(''); setPersonQuery(''); setSelectedBookingIds([]); };
 
-  return <AdminLayout path={path} navigate={navigate} onLogout={onLogout} title="Buchungen" actions={<button className="btn" onClick={() => setCreating(true)}>Neu</button>} currentUser={currentUser ?? null}>
+  return <AdminLayout path={path} navigate={navigate} onLogout={onLogout} title="Buchungen" currentUser={currentUser ?? null}>
     <AdminSplitLayout
-      leftHeader={<div className="crud-toolbar"><div className="inline-between"><h3>Buchungen</h3><Badge>{filtered.length}</Badge></div><div className="admin-toolbar admin-toolbar-wrap"><input type="date" value={from} onChange={(e) => setFrom(e.target.value)} /><input type="date" value={to} onChange={(e) => setTo(e.target.value)} /><select value={floorplanId} onChange={(e) => setFloorplanId(e.target.value)}><option value="">Alle Floorpläne</option>{floorplans.map((plan) => <option key={plan.id} value={plan.id}>{plan.name}</option>)}</select><select value={deskId} onChange={(e) => setDeskId(e.target.value)}><option value="">Alle Tische</option>{desks.filter((desk) => (floorplanId ? desk.floorplanId === floorplanId : true)).map((desk) => <option key={desk.id} value={desk.id}>{desk.name}</option>)}</select><div className="admin-search">🔎<input value={personQuery} onChange={(e) => setPersonQuery(e.target.value)} placeholder="Person suchen" /></div><button className="btn btn-outline" onClick={resetFilters}>Filter zurücksetzen</button></div></div>}
+      leftHeader={<ListToolbar title="Buchungen" count={filtered.length} filters={<><input type="date" value={from} onChange={(e) => setFrom(e.target.value)} /><input type="date" value={to} onChange={(e) => setTo(e.target.value)} /><select value={floorplanId} onChange={(e) => setFloorplanId(e.target.value)}><option value="">Alle Floorpläne</option>{floorplans.map((plan) => <option key={plan.id} value={plan.id}>{plan.name}</option>)}</select><select value={deskId} onChange={(e) => setDeskId(e.target.value)}><option value="">Alle Tische</option>{desks.filter((desk) => (floorplanId ? desk.floorplanId === floorplanId : true)).map((desk) => <option key={desk.id} value={desk.id}>{desk.name}</option>)}</select><div className="admin-search">🔎<input value={personQuery} onChange={(e) => setPersonQuery(e.target.value)} placeholder="Person suchen" /></div></>} actions={<><button className="btn btn-outline" onClick={resetFilters}>Filter zurücksetzen</button><button className="btn" onClick={() => setCreating(true)}>Neu</button></>} />}
       leftContent={<>{state.error && <ErrorState text={state.error} onRetry={load} />}{selectedBookingIds.length > 0 && <div className="bulk-actions"><strong>{selectedBookingIds.length} ausgewählt</strong><div className="inline-end"><button className="btn btn-danger" disabled={isBulkDeleting} onClick={() => setBulkDeleteOpen(true)}>{isBulkDeleting ? 'Lösche…' : 'Auswahl löschen'}</button><button className="btn btn-outline" disabled={isBulkDeleting} onClick={() => setSelectedBookingIds([])}>Abbrechen</button></div></div>}<div className="table-wrap"><table className="admin-table"><thead><tr><th><input type="checkbox" checked={isAllVisibleSelected} onChange={toggleAllVisibleBookings} aria-label="Alle sichtbaren Buchungen auswählen" /></th><th>Datum</th><th>Person</th><th>Tisch</th><th>Floorplan</th><th>Erstellt</th><th className="align-right">Aktionen</th></tr></thead>{state.loading && !state.ready ? <SkeletonRows columns={7} /> : <tbody>{filtered.map((booking) => { const desk = desks.find((item) => item.id === booking.deskId); const floorplan = floorplans.find((plan) => plan.id === desk?.floorplanId); return <tr key={booking.id} className={focusedBooking?.id === booking.id ? 'row-selected' : ''} onClick={() => setFocusedBookingId(booking.id)}><td><input type="checkbox" checked={selectedBookingIds.includes(booking.id)} onClick={(e) => e.stopPropagation()} onChange={() => toggleBookingSelection(booking.id)} aria-label={`Buchung ${booking.id} auswählen`} /></td><td>{formatDateOnly(booking.date)}</td><td>{booking.userDisplayName || booking.userEmail}</td><td>{desk?.name ?? booking.deskId}</td><td>{floorplan?.name ?? '—'}</td><td>{formatDate(booking.createdAt)}</td><td className="align-right"><RowMenu items={[{ label: 'Bearbeiten', onSelect: () => setEditing(booking) }, { label: 'Löschen', onSelect: () => setDeleteBooking(booking), danger: true }]} /></td></tr>; })}</tbody>}</table></div></>}
       rightHeader={<div className="inline-between"><h3>Floorplan</h3>{focusedDesk && <Badge tone="ok">Tisch: {focusedDesk.name}</Badge>}</div>}
       rightContent={focusedFloor ? <div className="canvas-body"><FloorplanCanvas imageUrl={resolveApiUrl(focusedFloor.imageUrl) ?? focusedFloor.imageUrl} imageAlt={focusedFloor.name} desks={focusedDesks} selectedDeskId={focusedDesk?.id ?? ''} hoveredDeskId="" onHoverDesk={() => undefined} onSelectDesk={() => undefined} /></div> : <EmptyState text="Buchung auswählen, um den Tisch im Floorplan zu sehen." />}
@@ -744,9 +774,14 @@ function EmployeesPage({ path, navigate, onRoleStateChanged, onLogout, currentAd
 
 
   return (
-    <AdminLayout path={path} navigate={navigate} onLogout={onLogout} title="Mitarbeiter" actions={<button className="btn" onClick={() => setCreating(true)}>Neu</button>} currentUser={currentUser ?? null}>
+    <AdminLayout path={path} navigate={navigate} onLogout={onLogout} title="Mitarbeiter" currentUser={currentUser ?? null}>
       <section className="card stack-sm">
-        <div className="crud-toolbar"><div className="inline-between"><h3>Mitarbeiter</h3><Badge>{filtered.length}</Badge></div><div className="admin-search">🔎<input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Name oder E-Mail" /></div></div>
+        <ListToolbar
+          title="Mitarbeiter"
+          count={filtered.length}
+          filters={<div className="admin-search">🔎<input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Name oder E-Mail" /></div>}
+          actions={<button className="btn" onClick={() => setCreating(true)}>Neu</button>}
+        />
         {state.error && <ErrorState text={state.error} onRetry={load} />}
         <div className="table-wrap"><table className="admin-table"><thead><tr><th className="avatar-col">Avatar</th><th>Name</th><th>E-Mail</th><th>Rolle</th><th>Status</th><th className="align-right">Aktionen</th></tr></thead>{state.loading && !state.ready ? <SkeletonRows columns={6} /> : <tbody>{filtered.map((employee) => <tr key={employee.id}><td className="avatar-col"><Avatar displayName={employee.displayName} email={employee.email} photoUrl={employee.photoUrl ?? undefined} size={24} /></td><td>{employee.displayName}</td><td className="truncate-cell" title={employee.email}>{employee.email}</td><td><select value={employee.role} disabled={updatingRoleId === employee.id} onChange={(event) => { const nextRole = event.target.value as 'admin' | 'user'; if (nextRole !== employee.role) void updateRole(employee, nextRole); }}><option value="user">User</option><option value="admin">Admin</option></select>{updatingRoleId === employee.id && <span className="muted"> ⏳</span>}</td><td>{employee.isActive ? <Badge tone="ok">aktiv</Badge> : <Badge tone="warn">deaktiviert</Badge>}</td><td className="align-right"><RowMenu items={[{ label: 'Bearbeiten', onSelect: () => setEditing(employee) }, { label: 'Löschen', onSelect: () => setPendingDeactivate(employee), danger: true }]} /></td></tr>)}</tbody>}</table></div>
         {!state.loading && filtered.length === 0 && <EmptyState text="Keine Mitarbeitenden vorhanden." action={<button className="btn" onClick={() => setCreating(true)}>Neu anlegen</button>} />}
@@ -881,12 +916,14 @@ function DbAdminPage({ path, navigate, onLogout, currentUser }: RouteProps) {
   };
 
   return (
-    <AdminLayout path={path} navigate={navigate} onLogout={onLogout} title="DB Admin" actions={<div className="inline-end"><button className="btn btn-danger-text" onClick={() => setClearTableOpen(true)} disabled={!selectedTable || rows.length === 0}>Tabelle leeren</button><button className="btn" onClick={openCreate} disabled={!selectedTable}>Neu</button></div>} currentUser={currentUser ?? null}>
+    <AdminLayout path={path} navigate={navigate} onLogout={onLogout} title="DB Admin" currentUser={currentUser ?? null}>
       <section className="card stack-sm">
-        <div className="crud-toolbar">
-          <div className="inline-between"><h3>Datenbank Editor</h3><Badge>{selectedTable?.model ?? '—'}</Badge></div>
-          <label className="field"><span>Tabelle</span><select value={tableName} onChange={(event) => setTableName(event.target.value)}>{tables.map((table) => <option key={table.name} value={table.name}>{table.model}</option>)}</select></label>
-        </div>
+        <ListToolbar
+          title="Datenbank Editor"
+          count={selectedTable?.model ?? '—'}
+          filters={<label className="field"><span>Tabelle</span><select value={tableName} onChange={(event) => setTableName(event.target.value)}>{tables.map((table) => <option key={table.name} value={table.name}>{table.model}</option>)}</select></label>}
+          actions={<><button className="btn btn-danger-text" onClick={() => setClearTableOpen(true)} disabled={!selectedTable || rows.length === 0}>Tabelle leeren</button><button className="btn" onClick={openCreate} disabled={!selectedTable}>Neu</button></>}
+        />
         {(loading || rowLoading) && <p className="muted">Lade Daten…</p>}
         {error && <ErrorState text={error} onRetry={() => { if (tableName) void loadRows(tableName); else void loadTables(); }} />}
         {selectedTable && !rowLoading && <div className="table-wrap"><table className="admin-table"><thead><tr>{selectedTable.columns.map((column) => <th key={column.name}>{column.name}</th>)}<th className="align-right">Aktionen</th></tr></thead><tbody>{rows.map((row, index) => <tr key={`${String(row.id ?? 'row')}-${index}`}>{selectedTable.columns.map((column) => <td key={column.name} className="truncate-cell" title={String(row[column.name] ?? '')}>{typeof row[column.name] === 'object' ? JSON.stringify(row[column.name]) : String(row[column.name] ?? '—')}</td>)}<td className="align-right"><div className="admin-row-actions"><button className="btn btn-outline" onClick={() => openEdit(row)}>Bearbeiten</button>{typeof row.id === 'string' && <button className="btn btn-danger-text" onClick={() => void removeRow(row.id as string)}>Löschen</button>}</div></td></tr>)}</tbody></table></div>}
