@@ -42,7 +42,14 @@ type BulkBookingResponse = {
 type DeskPopupState = { deskId: string; anchorRect: DOMRect };
 type OccupancyBooking = NonNullable<OccupancyDesk['booking']>;
 
-const today = new Date().toISOString().slice(0, 10);
+const toLocalDateKey = (value: Date): string => {
+  const year = value.getFullYear();
+  const month = String(value.getMonth() + 1).padStart(2, '0');
+  const day = String(value.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
+
+const today = toLocalDateKey(new Date());
 const weekdays = ['Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa', 'So'];
 
 const toDateKey = (value: Date): string => value.toISOString().slice(0, 10);
@@ -71,12 +78,6 @@ const getApiErrorMessage = (error: unknown, fallback: string): string => {
 };
 
 const formatDate = (dateString: string): string => new Date(`${dateString}T00:00:00.000Z`).toLocaleDateString('de-DE');
-
-const getNextDate = (dateString: string): string => {
-  const date = new Date(`${dateString}T00:00:00.000Z`);
-  date.setUTCDate(date.getUTCDate() + 1);
-  return toDateKey(date);
-};
 
 const mapBookingsForDay = (desks: OccupancyDesk[]): OccupantForDay[] => desks
   .filter((desk) => desk.booking)
@@ -137,7 +138,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
   const [onlyFree, setOnlyFree] = useState(false);
 
   const [occupancy, setOccupancy] = useState<OccupancyResponse | null>(null);
-  const [tomorrowOccupancy, setTomorrowOccupancy] = useState<OccupancyResponse | null>(null);
+  const [todayOccupancy, setTodayOccupancy] = useState<OccupancyResponse | null>(null);
   const [employees, setEmployees] = useState<BookingEmployee[]>([]);
   const [selectedEmployeeEmail, setSelectedEmployeeEmail] = useState('');
 
@@ -170,17 +171,16 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
     currentUserEmail,
     currentUserId: currentUser?.id
   }), [occupancy?.desks, employeesByEmail, employeesById, currentUserEmail, currentUser?.id]);
-  const desksTomorrow = useMemo(() => enrichDeskBookings({
-    desks: tomorrowOccupancy?.desks ?? [],
+  const desksToday = useMemo(() => enrichDeskBookings({
+    desks: todayOccupancy?.desks ?? [],
     employeesById,
     employeesByEmail,
     currentUserEmail,
     currentUserId: currentUser?.id
-  }), [tomorrowOccupancy?.desks, employeesByEmail, employeesById, currentUserEmail, currentUser?.id]);
+  }), [todayOccupancy?.desks, employeesByEmail, employeesById, currentUserEmail, currentUser?.id]);
   const filteredDesks = useMemo(() => (onlyFree ? desks.filter((desk) => desk.status === 'free') : desks).map((desk) => ({ ...desk, isHighlighted: desk.id === highlightedDeskId })), [desks, onlyFree, highlightedDeskId]);
-  const bookingsToday = useMemo<OccupantForDay[]>(() => mapBookingsForDay(desks), [desks]);
-  const bookingsTomorrow = useMemo<OccupantForDay[]>(() => mapBookingsForDay(desksTomorrow), [desksTomorrow]);
-  const tomorrowDate = useMemo(() => getNextDate(selectedDate), [selectedDate]);
+  const bookingsForSelectedDate = useMemo<OccupantForDay[]>(() => mapBookingsForDay(desks), [desks]);
+  const bookingsForToday = useMemo<OccupantForDay[]>(() => mapBookingsForDay(desksToday), [desksToday]);
   const activeDialogDeskRef = bookingDialogState === 'CONFLICT_REVIEW' ? conflictReview : deskPopup;
   const popupDesk = useMemo(() => (activeDialogDeskRef ? desks.find((desk) => desk.id === activeDialogDeskRef.deskId) ?? null : null), [desks, activeDialogDeskRef]);
   const popupDeskState = popupDesk ? (!popupDesk.booking ? 'FREE' : popupDesk.isCurrentUsersDesk ? 'MINE' : 'TAKEN') : null;
@@ -209,13 +209,13 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
     setErrorMessage('');
 
     try {
-      const [nextOccupancy, nextTomorrowOccupancy] = await Promise.all([
+      const [nextOccupancy, nextTodayOccupancy] = await Promise.all([
         get<OccupancyResponse>(`/occupancy?floorplanId=${floorplanId}&date=${date}`),
-        get<OccupancyResponse>(`/occupancy?floorplanId=${floorplanId}&date=${getNextDate(date)}`)
+        get<OccupancyResponse>(`/occupancy?floorplanId=${floorplanId}&date=${today}`)
       ]);
 
       setOccupancy(nextOccupancy);
-      setTomorrowOccupancy(nextTomorrowOccupancy);
+      setTodayOccupancy(nextTodayOccupancy);
       markBackendAvailable(true);
       setBackendDown(false);
       setSelectedDeskId((prev) => (nextOccupancy.desks.some((desk) => desk.id === prev) ? prev : ''));
@@ -224,7 +224,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
         setBackendDown(true);
       }
       setErrorMessage(getApiErrorMessage(error, 'Belegung konnte nicht geladen werden.'));
-      setTomorrowOccupancy(null);
+      setTodayOccupancy(null);
     } finally {
       setIsUpdatingOccupancy(false);
     }
@@ -535,55 +535,68 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
     </div>
   );
 
+  const renderOccupancyList = (items: OccupantForDay[], sectionKey: 'today' | 'selected', title: string, emptyText: string) => {
+    if (items.length === 0) {
+      return (
+        <div className="empty-state compact-empty-state">
+          <p>{emptyText}</p>
+        </div>
+      );
+    }
+
+    return (
+      <div className="occupancy-list" role="list" aria-label={title}>
+        {items.map((occupant) => (
+          <div
+            key={`${sectionKey}-${occupant.userId}-${occupant.deskId}`}
+            ref={sectionKey === 'selected' ? (node) => { occupantRowRefs.current[occupant.deskId] = node; } : undefined}
+            role="listitem"
+            className={`occupant-compact-card ${(hoveredDeskId === occupant.deskId || selectedDeskId === occupant.deskId) ? 'is-active' : ''} ${highlightedDeskId === occupant.deskId ? 'is-highlighted' : ''}`}
+            onMouseEnter={() => {
+              setHoveredDeskId(occupant.deskId);
+              setHighlightedDeskId(occupant.deskId);
+            }}
+            onMouseLeave={() => {
+              setHoveredDeskId('');
+              setHighlightedDeskId('');
+            }}
+          >
+            <div className="occupant-card-main">
+              <Avatar displayName={occupant.name} email={occupant.email} photoUrl={occupant.photoUrl} size={26} />
+              <div className="occupant-card-text">
+                <strong>{occupant.name}</strong>
+                <p className="muted">{occupant.email}</p>
+              </div>
+            </div>
+            <span className="muted occupant-desk">Tisch: {occupant.deskLabel}</span>
+          </div>
+        ))}
+      </div>
+    );
+  };
+
   const detailPanel = (
     <div className="stack">
-      {[
-        { key: 'today', title: 'Heute im Büro', date: selectedDate, items: bookingsToday, emptyText: 'Niemand im Büro an diesem Tag.' },
-        { key: 'tomorrow', title: 'Morgen im Büro', date: tomorrowDate, items: bookingsTomorrow, emptyText: 'Morgen ist aktuell niemand eingeplant.' }
-      ].map((section) => (
-        <section key={section.key} className="card stack-sm details-panel">
-          <div className="summary-row">
-            <div>
-              <h3>{section.title} ({section.items.length})</h3>
-              <p className="muted">Münster · {new Date(`${section.date}T00:00:00.000Z`).toLocaleDateString('de-DE')}</p>
-            </div>
+      <section className="card stack-sm details-panel">
+        <div className="summary-row">
+          <div>
+            <h3>Anwesenheit</h3>
+            <p className="muted">Münster · {formatDate(selectedDate)}</p>
           </div>
+        </div>
 
-          {section.items.length === 0 ? (
-            <div className="empty-state compact-empty-state">
-              <p>{section.emptyText}</p>
-            </div>
-          ) : (
-            <div className="occupancy-list" role="list" aria-label={section.title}>
-              {section.items.map((occupant) => (
-                <div
-                  key={`${section.key}-${occupant.userId}-${occupant.deskId}`}
-                  ref={section.key === 'today' ? (node) => { occupantRowRefs.current[occupant.deskId] = node; } : undefined}
-                  role="listitem"
-                  className={`occupant-compact-card ${(hoveredDeskId === occupant.deskId || selectedDeskId === occupant.deskId) ? 'is-active' : ''} ${highlightedDeskId === occupant.deskId ? 'is-highlighted' : ''}`}
-                  onMouseEnter={() => {
-                    setHoveredDeskId(occupant.deskId);
-                    setHighlightedDeskId(occupant.deskId);
-                  }}
-                  onMouseLeave={() => {
-                    setHoveredDeskId('');
-                    setHighlightedDeskId('');
-                  }}
-                >
-                  <div className="occupant-card-main">
-                    <Avatar displayName={occupant.name} email={occupant.email} photoUrl={occupant.photoUrl} size={26} />
-                    <div className="occupant-card-text">
-                      <strong>{occupant.name}</strong>
-                      <p className="muted">{occupant.email}</p>
-                    </div>
-                  </div>
-                  <span className="muted occupant-desk">Tisch: {occupant.deskLabel}</span>
-                </div>
-              ))}
-            </div>
-          )}
-        </section>
-      ))}
+        <div className="stack-sm">
+          <h4>Heute im Büro ({bookingsForToday.length})</h4>
+          {renderOccupancyList(bookingsForToday, 'today', 'Heute im Büro', 'Heute ist niemand eingeplant.')}
+        </div>
+
+        <hr className="subtle-divider" />
+
+        <div className="stack-sm">
+          <h4>Anwesenheit am {formatDate(selectedDate)} ({bookingsForSelectedDate.length})</h4>
+          {renderOccupancyList(bookingsForSelectedDate, 'selected', 'Anwesenheit am ausgewählten Datum', 'An diesem Tag ist niemand eingeplant.')}
+        </div>
+      </section>
     </div>
   );
 
