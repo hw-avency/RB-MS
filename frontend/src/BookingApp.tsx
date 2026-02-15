@@ -31,6 +31,7 @@ type BookingEmployee = { id: string; email: string; firstName?: string; displayN
 type OccupantForDay = { deskId: string; deskLabel: string; deskKindLabel: string; userId: string; name: string; firstName: string; email: string; employeeId?: string; photoUrl?: string };
 type BookingSubmitPayload = BookingFormSubmitPayload;
 type BookingDialogState = 'IDLE' | 'BOOKING_OPEN' | 'SUBMITTING' | 'CONFLICT_REVIEW';
+type DeskOverlayState = 'NONE' | 'DESK_POPOVER_OPEN' | 'CANCEL_CONFIRM_OPEN';
 type RebookConfirmState = {
   deskId: string;
   deskLabel: string;
@@ -282,7 +283,9 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
   const [dialogErrorMessage, setDialogErrorMessage] = useState('');
   const [rebookConfirm, setRebookConfirm] = useState<RebookConfirmState | null>(null);
   const [isRebooking, setIsRebooking] = useState(false);
-  const [cancelConfirmOpen, setCancelConfirmOpen] = useState(false);
+  const [deskOverlayState, setDeskOverlayState] = useState<DeskOverlayState>('NONE');
+  const [cancelErrorMessage, setCancelErrorMessage] = useState('');
+  const [isCancellingBooking, setIsCancellingBooking] = useState(false);
 
   const [highlightedDeskId, setHighlightedDeskId] = useState('');
   const [deskPopupCoords, setDeskPopupCoords] = useState<PopupCoordinates | null>(null);
@@ -399,7 +402,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
   }, [deskPopup, bookingDialogState, popupDeskState, dialogErrorMessage]);
 
   useEffect(() => {
-    if (!deskPopup) return;
+    if (!deskPopup || deskOverlayState !== 'DESK_POPOVER_OPEN') return;
 
     const closePopup = () => {
       setDeskPopup(null);
@@ -407,7 +410,9 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
       setBookingDialogState('IDLE');
       setDeskPopupCoords(null);
       setDialogErrorMessage('');
-      setCancelConfirmOpen(false);
+      setDeskOverlayState('NONE');
+      setCancelErrorMessage('');
+      setIsCancellingBooking(false);
     };
 
     const closeOnEscape = (event: KeyboardEvent) => {
@@ -439,7 +444,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
       window.removeEventListener('wheel', closeOnViewportChange);
       window.removeEventListener('resize', closeOnViewportChange);
     };
-  }, [deskPopup]);
+  }, [deskPopup, deskOverlayState]);
 
   const triggerDeskHighlight = (deskId: string, hold = 1300) => {
     setHighlightedDeskId(deskId);
@@ -471,7 +476,9 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
     setDeskPopup({ deskId, anchorEl });
     setRebookConfirm(null);
     setIsRebooking(false);
-    setCancelConfirmOpen(false);
+    setDeskOverlayState('DESK_POPOVER_OPEN');
+    setCancelErrorMessage('');
+    setIsCancellingBooking(false);
     setDialogErrorMessage('');
     if (state === 'FREE') {
       setBookingFormValues(createDefaultBookingFormValues(selectedDate));
@@ -497,7 +504,9 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
     setDialogErrorMessage('');
     setIsRebooking(false);
     setDeskPopupCoords(null);
-    setCancelConfirmOpen(false);
+    setDeskOverlayState('NONE');
+    setCancelErrorMessage('');
+    setIsCancellingBooking(false);
   };
 
   const submitPopupBooking = async (deskId: string, payload: BookingSubmitPayload, overwrite = false) => {
@@ -612,6 +621,9 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
       return;
     }
 
+    setCancelErrorMessage('');
+    setIsCancellingBooking(true);
+
     try {
       const bookingId = desks.find((desk) => desk.id === popupDesk.id)?.booking?.id;
       if (!bookingId) {
@@ -619,13 +631,23 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
       }
 
       await del(`/bookings/${bookingId}`);
-      toast.success('Buchung storniert.', { deskId: popupDesk.id });
+      toast.success('Buchung storniert', { deskId: popupDesk.id });
       closeBookingFlow();
       await reloadBookings();
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Stornierung fehlgeschlagen.');
+      setCancelErrorMessage(error instanceof Error ? error.message : 'Stornierung fehlgeschlagen. Bitte erneut versuchen.');
+    } finally {
+      setIsCancellingBooking(false);
     }
   };
+
+  const popupBookingPeriodLabel = popupDesk?.booking?.slot === 'MORNING'
+    ? 'Vormittag'
+    : popupDesk?.booking?.slot === 'AFTERNOON'
+      ? 'Nachmittag'
+      : popupDesk?.booking?.slot === 'CUSTOM'
+        ? `${popupDesk.booking?.startTime ?? '--:--'}–${popupDesk.booking?.endTime ?? '--:--'}`
+        : 'Ganztägig';
 
   const selectDay = (day: Date) => {
     const key = toDateKey(day);
@@ -856,7 +878,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
         <aside className="right-col desktop-right">{isBootstrapping ? <div className="card skeleton h-480" /> : detailPanel}</aside>
       </section>
 
-      {deskPopup && popupDesk && popupDeskState && createPortal(
+      {deskPopup && popupDesk && popupDeskState && deskOverlayState === 'DESK_POPOVER_OPEN' && createPortal(
         <section
           ref={popupRef}
           className="card desk-popup"
@@ -891,33 +913,57 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
                 <h3>{resourceKindLabel(popupDesk.kind)}: {popupDesk.name}</h3>
                 <div className="stack-sm">
                   <p className="muted">Datum: {new Date(`${selectedDate}T00:00:00.000Z`).toLocaleDateString('de-DE')}</p>
-                  <p className="muted">Zeitraum: {popupDesk.booking?.slot === 'MORNING' ? 'Vormittag' : popupDesk.booking?.slot === 'AFTERNOON' ? 'Nachmittag' : popupDesk.booking?.slot === 'CUSTOM' ? `${popupDesk.booking?.startTime ?? '--:--'}–${popupDesk.booking?.endTime ?? '--:--'}` : 'Ganztägig'}</p>
+                  <p className="muted">Zeitraum: {popupBookingPeriodLabel}</p>
                   {popupDesk.booking?.type === 'recurring' && <p className="muted">Typ: Serienbuchung (wöchentlich)</p>}
                   <div className="inline-end">
-                    <button type="button" className="btn btn-outline" onClick={closeBookingFlow}>Abbrechen</button>
+                    <button type="button" className="btn btn-outline" onClick={closeBookingFlow}>Schließen</button>
                     <button
                       type="button"
                       className="btn btn-danger"
-                      onClick={() => setCancelConfirmOpen(true)}
+                      onClick={() => {
+                        setDeskOverlayState('CANCEL_CONFIRM_OPEN');
+                        setCancelErrorMessage('');
+                      }}
                       disabled={popupDesk.booking?.type === 'recurring'}
                     >
                       Buchung stornieren
                     </button>
                   </div>
-                  {cancelConfirmOpen && (
-                    <div className="stack-xs desk-popup-confirm">
-                      <p className="muted">Möchtest du die Buchung für diese(n) {resourceKindLabel(popupDesk.kind)} wirklich stornieren?</p>
-                      <div className="inline-end">
-                        <button type="button" className="btn btn-outline" onClick={() => setCancelConfirmOpen(false)}>Abbrechen</button>
-                        <button type="button" className="btn btn-danger" onClick={() => void submitPopupCancel()}>Stornierung bestätigen</button>
-                      </div>
-                    </div>
-                  )}
                   {popupDesk.booking?.type === 'recurring' && <p className="muted">Serienbuchungen können derzeit nur im Admin-Modus storniert werden.</p>}
                 </div>
               </>
             )}
           </section>,
+        document.body
+      )}
+
+      {deskPopup && popupDesk && popupDeskState === 'MINE' && deskOverlayState === 'CANCEL_CONFIRM_OPEN' && createPortal(
+        <div className="overlay" role="presentation">
+          <section className="card dialog stack-sm cancel-booking-dialog" role="alertdialog" aria-modal="true" aria-labelledby="cancel-booking-title">
+            <h3 id="cancel-booking-title">Buchung stornieren?</h3>
+            <p>Möchtest du die Buchung für {resourceKindLabel(popupDesk.kind)} {popupDesk.name} am {formatDate(selectedDate)} wirklich stornieren?</p>
+            <p className="muted cancel-booking-subline">Zeitraum: {popupBookingPeriodLabel}</p>
+            {cancelErrorMessage && <p className="error-inline">{cancelErrorMessage}</p>}
+            <div className="inline-end rebook-actions">
+              <button
+                type="button"
+                className="btn btn-outline"
+                onClick={() => {
+                  setDeskOverlayState('DESK_POPOVER_OPEN');
+                  setCancelErrorMessage('');
+                }}
+                disabled={isCancellingBooking}
+              >
+                Abbrechen
+              </button>
+              <button type="button" className="btn btn-danger" onClick={() => void submitPopupCancel()} disabled={isCancellingBooking}>
+                {isCancellingBooking
+                  ? <><span className="btn-spinner" aria-hidden="true" /> Storniere…</>
+                  : 'Stornieren'}
+              </button>
+            </div>
+          </section>
+        </div>,
         document.body
       )}
 
