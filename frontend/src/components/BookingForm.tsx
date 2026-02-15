@@ -239,8 +239,8 @@ export function BookingForm({ values, onChange, onSubmit, onCancel, isSubmitting
 
       {(errorMessage || localError) && <div className="error-banner" role="alert">{errorMessage || localError}</div>}
       <div className="desk-booking-form-footer">
-        <button type="button" className="btn btn-outline" onClick={onCancel} disabled={disabled || isSubmitting}>Abbrechen</button>
-        <button className="btn" type="submit" disabled={disabled || isSubmitting || isFormInvalid}>{isSubmitting ? <><span className="btn-spinner" aria-hidden />Buchen…</> : 'Buchen'}</button>
+        <button type="button" className="btn btn-outline" onClick={onCancel} disabled={disabled || isSubmitting} data-state={isSubmitting ? 'loading' : 'idle'}>{isSubmitting ? <><span className="btn-spinner" aria-hidden />Warten…</> : 'Abbrechen'}</button>
+        <button className="btn" type="submit" disabled={disabled || isSubmitting || isFormInvalid} data-state={isSubmitting ? 'loading' : 'idle'}>{isSubmitting ? <><span className="btn-spinner" aria-hidden />Buchen…</> : 'Buchen'}</button>
       </div>
     </form>
   );
