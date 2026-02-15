@@ -682,7 +682,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
                 <p className="muted">{occupant.email}</p>
               </div>
             </div>
-            {occupant.deskLabel && <span className="occupant-desk-label">{occupant.deskLabel}</span>}
+            {occupant.deskLabel && <span className="occupant-desk-label" title={occupant.deskLabel}>{occupant.deskLabel}</span>}
           </div>
         ))}
       </div>
@@ -718,7 +718,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
       <section className="card compact-card stack-sm details-panel">
         <div className="stack-sm">
           <h3>Anwesend am {formatDate(selectedDate)}</h3>
-          {renderOccupancyList(bookingsForSelectedDate, 'selected', 'Anwesenheit am ausgewählten Datum', 'Noch keine Anwesenheiten')}
+          {renderOccupancyList(bookingsForSelectedDate, 'selected', 'Anwesenheit am ausgewählten Datum', 'Niemand anwesend')}
         </div>
       </section>
     </div>

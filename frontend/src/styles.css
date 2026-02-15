@@ -119,14 +119,14 @@ input, select { border: 1px solid hsl(var(--border)); border-radius: 12px; paddi
 .brand-mark{width:28px;height:28px;border-radius:8px;background:hsl(var(--primary));color:white;display:grid;place-items:center;font-weight:700;font-size:14px}
 .field-inline{display:flex;align-items:center;gap:8px;font-size:12px;color:hsl(var(--muted-foreground))}
 .field-inline select{min-width:160px}
-.compact-card{padding:16px}
+.compact-card{padding:20px}
 .today-compact-panel{padding:12px 16px}
 .today-summary-btn{width:100%;border:0;background:transparent;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:0;cursor:pointer;text-align:left}
 .today-avatar-row{display:flex;align-items:center}
 .today-avatar-row .avatar{margin-left:-8px;border:2px solid hsl(var(--card))}
 .today-avatar-row .avatar:first-child{margin-left:0}
 .avatar-overflow{min-width:28px;height:28px;border-radius:999px;background:hsl(var(--muted));display:grid;place-items:center;font-size:12px;font-weight:600;margin-left:-8px;border:2px solid hsl(var(--card))}
-.occupant-desk-label{font-size:11px;padding:2px 7px;border-radius:999px;background:hsl(var(--muted));color:hsl(var(--muted-foreground));font-weight:600}
+.occupant-desk-label{margin-left:auto;max-width:42%;font-size:11px;padding:3px 8px;border-radius:999px;background:hsl(var(--muted));color:hsl(var(--muted-foreground));font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex-shrink:0}
 .inline-alert{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 12px;border-radius:12px;background:#fee2e2;color:#991b1b;border:1px solid #fecaca}
 .canvas-body-focus .floorplan-canvas{transform:scale(var(--floorplan-zoom,1));transform-origin:top center;transition:transform .18s ease}
 
@@ -140,11 +140,11 @@ tr{cursor:pointer}.row-selected{background:hsl(var(--muted))}
 .people-list{list-style:none;padding:0;margin:0;display:grid;gap:6px}.people-list li{display:flex;justify-content:space-between;padding:8px;border-radius:12px;cursor:pointer}
 
 
-.occupancy-list{display:grid;gap:6px;max-height:450px;overflow:auto;padding-right:2px}
-.occupant-compact-card{display:flex;align-items:center;justify-content:space-between;gap:8px;min-height:46px;padding:8px 10px;border-radius:10px;background:hsl(var(--muted)/.45);border:1px solid hsl(var(--border));transition:background .15s ease,border-color .15s ease}
+.occupancy-list{display:grid;gap:6px;max-height:300px;overflow-y:auto;overflow-x:hidden;padding-right:2px}
+.occupant-compact-card{display:flex;align-items:center;justify-content:flex-start;gap:12px;min-height:44px;padding:9px 10px;border-radius:10px;background:hsl(var(--muted)/.45);border:1px solid hsl(var(--border));transition:background .15s ease,border-color .15s ease;overflow-x:hidden}
 .occupant-compact-card:hover,.occupant-compact-card.is-active{background:hsl(var(--muted)/.85)}
 .occupant-compact-card.is-highlighted{background:hsl(var(--primary)/.14);border-color:hsl(var(--primary)/.35)}
-.occupant-card-main{display:flex;align-items:center;gap:8px;min-width:0}
+.occupant-card-main{display:flex;align-items:center;gap:12px;min-width:0;flex:1}
 .occupant-card-text{min-width:0}
 .occupant-card-text strong{display:block;font-size:13px;line-height:1.2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .occupant-card-text p{margin:1px 0 0;font-size:11px;line-height:1.25;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
