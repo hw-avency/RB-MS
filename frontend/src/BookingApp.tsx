@@ -9,9 +9,10 @@ import { FloorplanCanvas } from './FloorplanCanvas';
 import { APP_TITLE, COMPANY_LOGO_URL } from './config';
 import type { AuthUser } from './auth/AuthProvider';
 import { useToast } from './components/toast';
-import { resourceKindLabel } from './resourceKinds';
+import { resourceKindLabel, type ResourceKind } from './resourceKinds';
 
-type Floorplan = { id: string; name: string; imageUrl: string; isDefault?: boolean };
+type Floorplan = { id: string; name: string; imageUrl: string; isDefault?: boolean; defaultResourceKind?: ResourceKind };
+type FloorplanResource = { id: string; floorplanId: string; kind?: ResourceKind };
 type OccupancyDesk = {
   id: string;
   name: string;
@@ -58,7 +59,8 @@ type DeskSlotAvailability = 'FREE' | 'AM_BOOKED' | 'PM_BOOKED' | 'FULL_BOOKED';
 type PopupPlacement = 'top' | 'right' | 'bottom' | 'left';
 type PopupCoordinates = { left: number; top: number; placement: PopupPlacement };
 type TimeInterval = { start: number; end: number };
-type CalendarBooking = { date: string };
+type CalendarBooking = { date: string; deskId: string; daySlot?: 'AM' | 'PM' | 'FULL' };
+type DayAvailabilityTone = 'many-free' | 'few-free' | 'none-free';
 
 const POPUP_OFFSET = 12;
 const POPUP_PADDING = 8;
@@ -145,6 +147,11 @@ const startOfMonth = (dateString: string): Date => {
   return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), 1));
 };
 const monthLabel = (monthStart: Date): string => monthStart.toLocaleDateString('de-DE', { month: 'long', year: 'numeric' });
+const defaultKindAvailabilityLabel = (kind?: ResourceKind): string => {
+  if (kind === 'TISCH') return 'Tische';
+  if (kind === 'PARKPLATZ') return 'Parkplätze';
+  return 'Ressourcen';
+};
 
 const buildCalendarDays = (monthStart: Date): Date[] => {
   const firstWeekday = (monthStart.getUTCDay() + 6) % 7;
@@ -461,6 +468,8 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
   const [cancelConfirmContext, setCancelConfirmContext] = useState<CancelConfirmContext | null>(null);
   const [isCancellingBooking, setIsCancellingBooking] = useState(false);
   const [cancelDialogError, setCancelDialogError] = useState('');
+  const [calendarBookings, setCalendarBookings] = useState<CalendarBooking[]>([]);
+  const [floorplanResources, setFloorplanResources] = useState<FloorplanResource[]>([]);
   const [bookedCalendarDays, setBookedCalendarDays] = useState<string[]>([]);
 
   const [highlightedDeskId, setHighlightedDeskId] = useState('');
@@ -468,6 +477,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
   const occupantRowRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const highlightTimerRef = useRef<number | null>(null);
   const popupRef = useRef<HTMLElement | null>(null);
+  const availabilityCacheRef = useRef<Map<string, Map<string, DayAvailabilityTone>>>(new Map());
 
   const selectedFloorplan = useMemo(() => floorplans.find((f) => f.id === selectedFloorplanId) ?? null, [floorplans, selectedFloorplanId]);
   const employeesByEmail = useMemo(() => new Map(employees.map((employee) => [employee.email.toLowerCase(), employee])), [employees]);
@@ -543,6 +553,52 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
     to: toDateKey(calendarDays[calendarDays.length - 1])
   }), [calendarDays]);
   const bookedCalendarDaysSet = useMemo(() => new Set(bookedCalendarDays), [bookedCalendarDays]);
+  const availabilityLabel = useMemo(() => defaultKindAvailabilityLabel(selectedFloorplan?.defaultResourceKind), [selectedFloorplan?.defaultResourceKind]);
+  const dayAvailabilityByDate = useMemo(() => {
+    const monthKey = `${visibleMonth.getUTCFullYear()}-${visibleMonth.getUTCMonth() + 1}`;
+    const cacheKey = `${selectedFloorplanId}|${monthKey}|${bookingVersion}`;
+    const cached = availabilityCacheRef.current.get(cacheKey);
+    if (cached) {
+      return cached;
+    }
+
+    const nextAvailability = new Map<string, DayAvailabilityTone>();
+
+    const resourcesByFloorplan = floorplanResources.filter((resource) => resource.floorplanId === selectedFloorplanId && resource.kind === selectedFloorplan?.defaultResourceKind);
+    const total = resourcesByFloorplan.length;
+    if (total === 0) {
+      availabilityCacheRef.current.set(cacheKey, nextAvailability);
+      return nextAvailability;
+    }
+
+    const resourceIds = new Set(resourcesByFloorplan.map((resource) => resource.id));
+    const bookedByDay = new Map<string, Set<string>>();
+
+    for (const booking of calendarBookings) {
+      if (!resourceIds.has(booking.deskId)) continue;
+      const dayKey = toBookingDateKey(booking.date);
+      const bookedResources = bookedByDay.get(dayKey) ?? new Set<string>();
+      bookedResources.add(booking.deskId);
+      bookedByDay.set(dayKey, bookedResources);
+    }
+
+    for (const day of calendarDays) {
+      const dayKey = toDateKey(day);
+      const booked = bookedByDay.get(dayKey)?.size ?? 0;
+      const free = total - booked;
+      const freeRatio = free / total;
+      if (free <= 0) {
+        nextAvailability.set(dayKey, 'none-free');
+      } else if (freeRatio <= 0.33) {
+        nextAvailability.set(dayKey, 'few-free');
+      } else {
+        nextAvailability.set(dayKey, 'many-free');
+      }
+    }
+
+    availabilityCacheRef.current.set(cacheKey, nextAvailability);
+    return nextAvailability;
+  }, [bookingVersion, calendarBookings, calendarDays, floorplanResources, selectedFloorplan?.defaultResourceKind, selectedFloorplanId, visibleMonth]);
   const isAppLoading = loadingRequestCount > 0;
 
   const runWithAppLoading = async <T,>(operation: () => Promise<T>): Promise<T> => {
@@ -621,6 +677,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
 
   useEffect(() => {
     if (backendDown) {
+      setCalendarBookings([]);
       setBookedCalendarDays([]);
       return;
     }
@@ -631,9 +688,11 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
       try {
         const calendarBookings = await runWithAppLoading(() => get<CalendarBooking[]>(`/bookings?from=${calendarRange.from}&to=${calendarRange.to}`));
         if (cancelled) return;
+        setCalendarBookings(calendarBookings);
         setBookedCalendarDays(Array.from(new Set(calendarBookings.map((booking) => toBookingDateKey(booking.date)))));
       } catch {
         if (cancelled) return;
+        setCalendarBookings([]);
         setBookedCalendarDays([]);
       }
     };
@@ -644,6 +703,36 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
       cancelled = true;
     };
   }, [backendDown, calendarRange.from, calendarRange.to]);
+
+  useEffect(() => {
+    availabilityCacheRef.current.clear();
+  }, [selectedFloorplanId, visibleMonth, bookingVersion, floorplanResources, selectedFloorplan?.defaultResourceKind]);
+
+  useEffect(() => {
+    if (!selectedFloorplanId || backendDown) {
+      setFloorplanResources([]);
+      return;
+    }
+
+    let cancelled = false;
+
+    const loadFloorplanResources = async () => {
+      try {
+        const resources = await runWithAppLoading(() => get<FloorplanResource[]>(`/floorplans/${selectedFloorplanId}/desks`));
+        if (cancelled) return;
+        setFloorplanResources(resources);
+      } catch {
+        if (cancelled) return;
+        setFloorplanResources([]);
+      }
+    };
+
+    loadFloorplanResources();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [backendDown, selectedFloorplanId]);
 
 
   useEffect(() => {
@@ -1016,8 +1105,9 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
             const isSelected = dayKey === selectedDate;
             const isToday = dayKey === today;
             const hasBookingsForDay = bookedCalendarDaysSet.has(dayKey);
+            const availabilityTone = dayAvailabilityByDate.get(dayKey);
             return (
-              <button key={dayKey} className={`day-btn ${inVisibleMonth ? '' : 'outside'} ${isSelected ? 'selected' : ''} ${isToday ? 'today' : ''} ${!isSelected && hasBookingsForDay ? 'has-bookings' : ''}`} onClick={() => selectDay(day)}>
+              <button key={dayKey} className={`day-btn ${inVisibleMonth ? '' : 'outside'} ${isSelected ? 'selected' : ''} ${isToday ? 'today' : ''} ${!isSelected && hasBookingsForDay ? 'has-bookings' : ''} ${!isSelected && availabilityTone ? `availability-${availabilityTone}` : ''}`} onClick={() => selectDay(day)}>
                 {day.getUTCDate()}
               </button>
             );
@@ -1033,6 +1123,12 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
           <span><i className="dot free" /> Grün = frei</span>
           <span><i className="dot booked" /> Rot = belegt</span>
           <span><i className="dot selected" /> Blau = dein Platz</span>
+        </div>
+        <div className="legend">
+          <strong>Verfügbarkeit (Default-Art)</strong>
+          <span><i className="dot availability-many" /> Grün = viele {availabilityLabel} frei</span>
+          <span><i className="dot availability-few" /> Gelb = wenige {availabilityLabel} frei</span>
+          <span><i className="dot availability-none" /> Rot = keine {availabilityLabel} frei</span>
         </div>
       </section>
   );
