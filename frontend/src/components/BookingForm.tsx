@@ -95,6 +95,8 @@ export function BookingForm({ values, onChange, onSubmit, onCancel, isSubmitting
     return nextErrors;
   }, [values, isRoom]);
 
+  const hasCancelableRoomBooking = Boolean(roomSchedule?.bookings.some((booking) => booking.canCancel));
+
   const isFormInvalid = Object.values(fieldErrors).some(Boolean) || Boolean(roomSchedule?.conflictMessage);
 
   const toggleWeekday = (weekday: number) => {
@@ -155,6 +157,7 @@ export function BookingForm({ values, onChange, onSubmit, onCancel, isSubmitting
             <>
               <section className="room-schedule-block stack-xs">
                 <strong className="room-schedule-title">Heute belegt</strong>
+                {hasCancelableRoomBooking && <p className="room-booking-hint">Tipp: Deine Buchungen kannst du anklicken, um sie zu stornieren.</p>}
                 {roomSchedule && roomSchedule.bookings.length > 0 ? (
                   <div className="room-bookings-list" role="list" aria-label="Raumbelegung heute">
                     {roomSchedule.bookings.map((booking) => (
@@ -165,12 +168,16 @@ export function BookingForm({ values, onChange, onSubmit, onCancel, isSubmitting
                         role="listitem"
                         onClick={() => roomSchedule.onBookingClick?.(booking.id)}
                         disabled={!booking.canCancel || disabled || isSubmitting}
-                        title={booking.canCancel ? 'Eigene Buchung stornieren' : 'Buchungsdetails'}
+                        title={booking.canCancel ? 'Eigene Buchung stornieren' : undefined}
+                        aria-label={booking.canCancel ? `Buchung ${booking.label.replace(' – ', '-')} stornieren` : undefined}
                       >
-                        <span>{booking.label}</span>
-                        <span>
-                          {booking.person}
-                          {booking.isCurrentUser && <em className="room-booking-badge">Du</em>}
+                        <span className="room-booking-time">{booking.label}</span>
+                        <span className="room-booking-meta">
+                          <span className="room-booking-person">
+                            {booking.person}
+                            {booking.isCurrentUser && <em className="room-booking-badge">Du</em>}
+                          </span>
+                          {booking.canCancel && <span className="room-booking-action" aria-hidden>Stornieren</span>}
                         </span>
                       </button>
                     ))}

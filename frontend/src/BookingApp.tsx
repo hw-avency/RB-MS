@@ -1208,7 +1208,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
         <div className="overlay" role="presentation">
           <section className="card dialog stack-sm cancel-booking-dialog" role="alertdialog" aria-modal="true" aria-labelledby="cancel-booking-title">
             <h3 id="cancel-booking-title">Buchung stornieren?</h3>
-            <p>Möchtest du deine Buchung von {cancelConfirmBookingLabel.replace(' – ', ' bis ')} stornieren?</p>
+            <p>Möchtest du deine Raumbuchung {cancelConfirmBookingLabel} stornieren?</p>
             <p className="muted cancel-booking-subline">{resourceKindLabel(cancelConfirmDesk.kind)}: {cancelConfirmDesk.name} · {new Date(`${selectedDate}T00:00:00.000Z`).toLocaleDateString('de-DE')}</p>
             {cancelDialogError && <p className="error-banner">{cancelDialogError}</p>}
             <div className="inline-end">
