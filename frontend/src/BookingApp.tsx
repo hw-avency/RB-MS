@@ -271,7 +271,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
     }
   };
 
-  const refreshData = async () => {
+  const reloadBookings = async () => {
     await loadOccupancy(selectedFloorplanId, selectedDate);
   };
 
@@ -357,7 +357,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
 
       setErrorMessage('');
       setDeskPopup(null);
-      await refreshData();
+      await reloadBookings();
     } catch (error) {
       if (error instanceof ApiError && error.code === 'BACKEND_UNREACHABLE') {
         setBackendDown(true);
@@ -402,7 +402,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
       await cancelOwnBooking(popupDesk.id);
       setErrorMessage('');
       setDeskPopup(null);
-      await refreshData();
+      await reloadBookings();
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : 'Stornierung fehlgeschlagen.');
     }
@@ -555,7 +555,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
         </div>
       </header>
 
-      {errorMessage && <div className="toast toast-error">{errorMessage} <button className="btn btn-ghost" onClick={refreshData}>Retry</button></div>}
+      {errorMessage && <div className="toast toast-error">{errorMessage} <button className="btn btn-ghost" onClick={reloadBookings}>Retry</button></div>}
       {toastMessage && <div className="toast toast-success">{toastMessage}</div>}
 
       <section className="layout-grid">

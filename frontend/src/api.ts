@@ -96,6 +96,7 @@ async function sendRequest(path: string, method: HttpMethod, payload?: unknown, 
     method,
     signal,
     credentials: 'include',
+    cache: 'no-store',
     headers: {
       'Content-Type': 'application/json'
     },
