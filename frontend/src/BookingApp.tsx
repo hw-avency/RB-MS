@@ -25,11 +25,12 @@ type OccupancyResponse = { date: string; floorplanId: string; desks: OccupancyDe
 type BookingEmployee = { id: string; email: string; displayName: string; photoUrl?: string };
 type OccupantForDay = { deskId: string; deskLabel: string; userId: string; name: string; email: string; employeeId?: string; photoUrl?: string };
 type BookingSubmitPayload = BookingFormSubmitPayload;
-type BookingDialogState = 'IDLE' | 'BOOKING_OPEN' | 'CONFLICT_REVIEW' | 'SUBMITTING';
-type ConflictReviewState = {
+type BookingDialogState = 'IDLE' | 'BOOKING_OPEN' | 'SUBMITTING';
+type RebookConfirmState = {
   deskId: string;
   deskLabel: string;
-  conflictDates: string[];
+  existingDeskLabel?: string;
+  date: string;
   retryPayload: BookingSubmitPayload;
   anchorEl: HTMLElement;
 };
@@ -144,6 +145,17 @@ const getApiErrorMessage = (error: unknown, fallback: string): string => {
 
 const formatDate = (dateString: string): string => new Date(`${dateString}T00:00:00.000Z`).toLocaleDateString('de-DE');
 
+const isUserBookingConflictError = (error: unknown): error is ApiError => error instanceof ApiError
+  && error.status === 409
+  && error.message.toLowerCase().includes('user already has a booking for this date');
+
+const getConflictExistingDeskLabel = (error: ApiError): string | undefined => {
+  if (!error.details || typeof error.details !== 'object') return undefined;
+  const details = error.details as { details?: { existingBooking?: { deskName?: unknown } } };
+  const deskName = details.details?.existingBooking?.deskName;
+  return typeof deskName === 'string' && deskName.trim() ? deskName : undefined;
+};
+
 const mapBookingsForDay = (desks: OccupancyDesk[]): OccupantForDay[] => desks
   .filter((desk) => desk.booking)
   .map((desk) => ({
@@ -220,7 +232,9 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
   const [bookingDialogState, setBookingDialogState] = useState<BookingDialogState>('IDLE');
   const [bookingFormValues, setBookingFormValues] = useState<BookingFormValues>(createDefaultBookingFormValues(today));
   const [dialogErrorMessage, setDialogErrorMessage] = useState('');
-  const [conflictReview, setConflictReview] = useState<ConflictReviewState | null>(null);
+  const [rebookConfirm, setRebookConfirm] = useState<RebookConfirmState | null>(null);
+  const [rebookErrorMessage, setRebookErrorMessage] = useState('');
+  const [isRebooking, setIsRebooking] = useState(false);
   const [cancelConfirmOpen, setCancelConfirmOpen] = useState(false);
 
   const [highlightedDeskId, setHighlightedDeskId] = useState('');
@@ -249,7 +263,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
   const filteredDesks = useMemo(() => (onlyFree ? desks.filter((desk) => desk.status === 'free') : desks).map((desk) => ({ ...desk, isHighlighted: desk.id === highlightedDeskId })), [desks, onlyFree, highlightedDeskId]);
   const bookingsForSelectedDate = useMemo<OccupantForDay[]>(() => mapBookingsForDay(desks), [desks]);
   const bookingsForToday = useMemo<OccupantForDay[]>(() => mapBookingsForDay(desksToday), [desksToday]);
-  const activeDialogDeskRef = bookingDialogState === 'CONFLICT_REVIEW' ? conflictReview : deskPopup;
+  const activeDialogDeskRef = deskPopup;
   const popupDesk = useMemo(() => (activeDialogDeskRef ? desks.find((desk) => desk.id === activeDialogDeskRef.deskId) ?? null : null), [desks, activeDialogDeskRef]);
   const popupDeskState = popupDesk ? (!popupDesk.booking ? 'FREE' : popupDesk.isCurrentUsersDesk ? 'MINE' : 'TAKEN') : null;
   const calendarDays = useMemo(() => buildCalendarDays(visibleMonth), [visibleMonth]);
@@ -350,7 +364,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
 
     const closePopup = () => {
       setDeskPopup(null);
-      setConflictReview(null);
+      setRebookConfirm(null);
       setBookingDialogState('IDLE');
       setDeskPopupCoords(null);
       setDialogErrorMessage('');
@@ -408,7 +422,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
       return;
     }
 
-    if (deskPopup?.deskId === deskId && bookingDialogState !== 'CONFLICT_REVIEW') {
+    if (deskPopup?.deskId === deskId) {
       closeBookingFlow();
       return;
     }
@@ -416,7 +430,9 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
     setSelectedDeskId(deskId);
     triggerDeskHighlight(deskId);
     setDeskPopup({ deskId, anchorEl });
-    setConflictReview(null);
+    setRebookConfirm(null);
+    setRebookErrorMessage('');
+    setIsRebooking(false);
     setCancelConfirmOpen(false);
     setDialogErrorMessage('');
     if (state === 'FREE') {
@@ -438,9 +454,11 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
 
   const closeBookingFlow = () => {
     setDeskPopup(null);
-    setConflictReview(null);
+    setRebookConfirm(null);
     setBookingDialogState('IDLE');
     setDialogErrorMessage('');
+    setRebookErrorMessage('');
+    setIsRebooking(false);
     setDeskPopupCoords(null);
     setCancelConfirmOpen(false);
   };
@@ -486,21 +504,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
       : 'Gebucht');
   };
 
-  const checkConflicts = async (deskId: string, payload: BookingSubmitPayload) => {
-    const start = payload.type === 'single' ? payload.date : payload.dateFrom;
-    const end = payload.type === 'single' ? payload.date : payload.dateTo;
-    const weekdaysForType = payload.type === 'recurring' ? payload.weekdays : undefined;
 
-    return post<{ hasConflicts: boolean; conflictDates: string[] }>('/bookings/check-conflicts', {
-      deskId,
-      userEmail: selectedEmployeeEmail,
-      userId: currentUser?.id,
-      start,
-      end,
-      weekdays: weekdaysForType,
-      type: payload.type
-    });
-  };
 
   const handleBookingSubmit = async (payload: BookingSubmitPayload) => {
     if (!deskPopup || !popupDesk || popupDeskState !== 'FREE') return;
@@ -509,19 +513,6 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
     setBookingDialogState('SUBMITTING');
 
     try {
-      const conflictResult = await checkConflicts(popupDesk.id, payload);
-      if (conflictResult.hasConflicts) {
-        setConflictReview({
-          deskId: popupDesk.id,
-          deskLabel: popupDesk.name,
-          conflictDates: conflictResult.conflictDates,
-          retryPayload: payload,
-          anchorEl: deskPopup.anchorEl
-        });
-        setBookingDialogState('CONFLICT_REVIEW');
-        return;
-      }
-
       await submitPopupBooking(popupDesk.id, payload, false);
       closeBookingFlow();
       await reloadBookings();
@@ -531,19 +522,39 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
         return;
       }
 
+      if (isUserBookingConflictError(error)) {
+        setDeskPopup(null);
+        setDeskPopupCoords(null);
+        setBookingDialogState('IDLE');
+        setDialogErrorMessage('');
+        setRebookErrorMessage('');
+        setIsRebooking(false);
+        setRebookConfirm({
+          deskId: popupDesk.id,
+          deskLabel: popupDesk.name,
+          existingDeskLabel: getConflictExistingDeskLabel(error),
+          date: payload.type === 'single' ? payload.date : selectedDate,
+          retryPayload: payload,
+          anchorEl: deskPopup.anchorEl
+        });
+        return;
+      }
+
       setBookingDialogState('BOOKING_OPEN');
       setDialogErrorMessage(error instanceof Error ? error.message : 'Buchung fehlgeschlagen.');
     }
   };
 
-  const confirmConflictOverride = async () => {
-    if (!conflictReview) return;
+  const confirmRebook = async () => {
+    if (!rebookConfirm) return;
 
-    setBookingDialogState('SUBMITTING');
-    setDialogErrorMessage('');
+    setRebookErrorMessage('');
+    setIsRebooking(true);
 
     try {
-      await submitPopupBooking(conflictReview.deskId, conflictReview.retryPayload, true);
+      await submitPopupBooking(rebookConfirm.deskId, rebookConfirm.retryPayload, true);
+      setRebookConfirm(null);
+      setIsRebooking(false);
       closeBookingFlow();
       await reloadBookings();
     } catch (error) {
@@ -552,9 +563,19 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
         return;
       }
 
-      setBookingDialogState('CONFLICT_REVIEW');
-      setDialogErrorMessage(getApiErrorMessage(error, 'Buchung überschreiben fehlgeschlagen.'));
+      setIsRebooking(false);
+      setRebookErrorMessage('Umbuchen fehlgeschlagen. Bitte erneut versuchen.');
     }
+  };
+
+  const cancelRebook = () => {
+    if (!rebookConfirm) return;
+
+    setRebookErrorMessage('');
+    setIsRebooking(false);
+    setDeskPopup({ deskId: rebookConfirm.deskId, anchorEl: rebookConfirm.anchorEl });
+    setBookingDialogState('BOOKING_OPEN');
+    setRebookConfirm(null);
   };
 
   const submitPopupCancel = async () => {
@@ -772,7 +793,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
           role="menu"
           data-placement={deskPopupCoords?.placement ?? 'right'}
         >
-            {(popupDeskState === 'FREE' && (!conflictReview || bookingDialogState === 'BOOKING_OPEN' || (bookingDialogState === 'SUBMITTING' && !conflictReview))) ? (
+            {popupDeskState === 'FREE' ? (
               <>
                 <div className="desk-popup-header">
                   <div className="stack-xxs">
@@ -791,42 +812,6 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
                   disabled={bookingDialogState === 'SUBMITTING'}
                   errorMessage={dialogErrorMessage}
                 />
-              </>
-            ) : popupDeskState === 'FREE' && conflictReview ? (
-              <>
-                <h3>Konflikt: bestehende Buchungen</h3>
-                <p>
-                  Für {conflictReview.conflictDates.length} Tage existieren bereits Buchungen. Möchtest du diese auf Tisch {conflictReview.deskLabel} umbuchen?
-                </p>
-                {dialogErrorMessage && <div className="error-banner" role="alert">{dialogErrorMessage}</div>}
-                <div className="stack-xs" style={{ maxHeight: 200, overflowY: 'auto' }}>
-                  <div className="weekday-toggle-group" style={{ justifyContent: 'flex-start', flexWrap: 'wrap', gap: 8 }}>
-                    {conflictReview.conflictDates.slice(0, 10).map((date) => (
-                      <span key={date} className="weekday-toggle active" style={{ cursor: 'default' }}>{formatDate(date)}</span>
-                    ))}
-                  </div>
-                  {conflictReview.conflictDates.length > 10 && <p className="muted">+{conflictReview.conflictDates.length - 10} weitere</p>}
-                  <hr className="separator" />
-                  <div className="stack-xs">
-                    {conflictReview.conflictDates.map((date) => <p key={`line-${date}`} className="muted">{formatDate(date)}</p>)}
-                  </div>
-                </div>
-                <div className="inline-end">
-                  <button
-                    type="button"
-                    className="btn btn-outline"
-                    onClick={() => {
-                      setBookingDialogState('BOOKING_OPEN');
-                      setDialogErrorMessage('');
-                    }}
-                    disabled={bookingDialogState === 'SUBMITTING'}
-                  >
-                    Abbrechen
-                  </button>
-                  <button type="button" className="btn btn-danger" onClick={() => void confirmConflictOverride()} disabled={bookingDialogState === 'SUBMITTING'}>
-                    {bookingDialogState === 'SUBMITTING' ? 'Umbuchen…' : 'Umbuchen & buchen'}
-                  </button>
-                </div>
               </>
             ) : (
               <>
@@ -860,6 +845,25 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
               </>
             )}
           </section>,
+        document.body
+      )}
+
+
+      {rebookConfirm && createPortal(
+        <div className="overlay" role="presentation">
+          <section className="card dialog stack-sm" role="dialog" aria-modal="true" aria-labelledby="rebook-title">
+            <h3 id="rebook-title">Bestehende Buchung gefunden</h3>
+            <p className="muted">Du hast am {formatDate(rebookConfirm.date)} bereits eine Buchung. Soll diese auf Tisch {rebookConfirm.deskLabel} umgebucht werden?</p>
+            {rebookConfirm.existingDeskLabel && <p className="muted">Aktueller Tisch: {rebookConfirm.existingDeskLabel}</p>}
+            {rebookErrorMessage && <div className="error-banner" role="alert">{rebookErrorMessage}</div>}
+            <div className="inline-end">
+              <button type="button" className="btn btn-outline" onClick={cancelRebook} disabled={isRebooking}>Abbrechen</button>
+              <button type="button" className="btn btn-danger" onClick={() => void confirmRebook()} disabled={isRebooking}>
+                {isRebooking ? 'Umbuchen…' : 'Umbuchen'}
+              </button>
+            </div>
+          </section>
+        </div>,
         document.body
       )}
 
