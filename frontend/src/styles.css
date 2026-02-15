@@ -47,8 +47,8 @@ html, body, #root { margin: 0; min-height: 100%; background: hsl(var(--backgroun
 .user-menu-item:hover{background:hsl(var(--muted))}
 .user-menu-item-danger{color:hsl(var(--destructive))}
 
-.layout-grid { display: grid; grid-template-columns: 280px minmax(0, 1fr) 320px; grid-template-areas:"left center right" "legend center right"; gap: 12px; align-items: start; }
-.left-col{grid-area:left}.center-col{grid-area:center}.right-col{grid-area:right}.legend-col{grid-area:legend}
+.layout-grid { display: grid; grid-template-columns: 280px minmax(0, 1fr) 320px; grid-template-areas:"left center right"; gap: 12px; align-items: start; }
+.left-col{grid-area:left}.center-col{grid-area:center}.right-col{grid-area:right}
 .card { background: hsl(var(--card)); border-radius: 14px; padding: 20px; box-shadow: 0 1px 2px rgba(15,23,42,.05); border:1px solid hsl(var(--border)); }
 .stack { display: grid; gap: 12px; }
 .stack-sm { display: grid; gap: 12px; }
@@ -305,8 +305,8 @@ tr{cursor:pointer}.row-selected{background:hsl(var(--muted))}
 @media (prefers-reduced-motion: reduce){
   .resource-pulse-ring{animation:none}
 }
-@media (max-width: 1100px){.layout-grid{grid-template-columns:minmax(0,1fr) minmax(0,1fr);grid-template-areas:"left right" "center center" "legend legend"}}
-@media (max-width: 768px){.app-shell{padding:12px}.layout-grid{grid-template-columns:1fr;grid-template-areas:"left" "right" "center" "legend"}.inline-grid-two{grid-template-columns:1fr}.compact-topbar{position:static}.field-inline span{display:none}}
+@media (max-width: 1100px){.layout-grid{grid-template-columns:minmax(0,1fr) minmax(0,1fr);grid-template-areas:"left right" "center center"}}
+@media (max-width: 768px){.app-shell{padding:12px}.layout-grid{grid-template-columns:1fr;grid-template-areas:"left" "right" "center"}.inline-grid-two{grid-template-columns:1fr}.compact-topbar{position:static}.field-inline span{display:none}}
 @media (max-width: 900px){.user-chip-name{display:none}.user-menu-content{min-width:260px;max-width:min(320px,calc(100vw - 32px))}}
 
 .admin-shell{display:grid;grid-template-columns:260px minmax(0,1fr);gap:16px}

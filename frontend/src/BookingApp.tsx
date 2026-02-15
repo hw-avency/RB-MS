@@ -147,12 +147,6 @@ const startOfMonth = (dateString: string): Date => {
   return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), 1));
 };
 const monthLabel = (monthStart: Date): string => monthStart.toLocaleDateString('de-DE', { month: 'long', year: 'numeric' });
-const defaultKindAvailabilityLabel = (kind?: ResourceKind): string => {
-  if (kind === 'TISCH') return 'Tische';
-  if (kind === 'PARKPLATZ') return 'Parkplätze';
-  return 'Ressourcen';
-};
-
 const buildCalendarDays = (monthStart: Date): Date[] => {
   const firstWeekday = (monthStart.getUTCDay() + 6) % 7;
   const gridStart = new Date(monthStart);
@@ -584,7 +578,6 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
     to: toDateKey(calendarDays[calendarDays.length - 1])
   }), [calendarDays]);
   const bookedCalendarDaysSet = useMemo(() => new Set(bookedCalendarDays), [bookedCalendarDays]);
-  const availabilityLabel = useMemo(() => defaultKindAvailabilityLabel(selectedFloorplan?.defaultResourceKind), [selectedFloorplan?.defaultResourceKind]);
   const dayAvailabilityByDate = useMemo(() => {
     const monthKey = `${visibleMonth.getUTCFullYear()}-${visibleMonth.getUTCMonth() + 1}`;
     const cacheKey = `${selectedFloorplanId}|${monthKey}|${bookingVersion}`;
@@ -1168,12 +1161,6 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
           <span><i className="dot booked" /> Rot = belegt</span>
           <span><i className="dot selected" /> Blau = dein Platz</span>
         </div>
-        <div className="legend">
-          <strong>Verfügbarkeit (Default-Art)</strong>
-          <span><i className="dot availability-many" /> Grün = viele {availabilityLabel} frei</span>
-          <span><i className="dot availability-few" /> Gelb = wenige {availabilityLabel} frei</span>
-          <span><i className="dot availability-none" /> Rot = keine {availabilityLabel} frei</span>
-        </div>
       </section>
   );
 
@@ -1309,8 +1296,10 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
       {isBootstrapping ? <div className="card skeleton h-120" /> : todayPanel}
 
       <section className="layout-grid">
-        <aside className="left-col">{isBootstrapping ? <div className="card skeleton h-480" /> : calendarPanel}</aside>
-        <aside className="legend-col">{isBootstrapping ? <div className="card skeleton h-120" /> : legendPanel}</aside>
+        <aside className="left-col stack-sm">
+          {isBootstrapping ? <div className="card skeleton h-480" /> : calendarPanel}
+          {isBootstrapping ? <div className="card skeleton h-120" /> : legendPanel}
+        </aside>
         <section className="center-col">
           <article className="card canvas-card">
             <div className="card-header-row">
