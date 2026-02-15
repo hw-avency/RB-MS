@@ -869,11 +869,6 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
 
       {rebookConfirm && createPortal(
         <div className="overlay" role="presentation">
-          <section className="card dialog stack-sm" role="dialog" aria-modal="true" aria-labelledby="rebook-title">
-            <h3 id="rebook-title">Bestehende Buchung gefunden</h3>
-            <p className="muted">Du hast am {formatDate(rebookConfirm.date)} bereits eine Buchung. Soll diese auf Tisch {rebookConfirm.deskLabel} umgebucht werden?</p>
-            {rebookConfirm.existingDeskLabel && <p className="muted">Aktueller Tisch: {rebookConfirm.existingDeskLabel}</p>}
-            <div className="inline-end">
           <section className="card dialog stack-sm rebook-dialog" role="dialog" aria-modal="true" aria-labelledby="rebook-title">
             <h3 id="rebook-title">Umbuchen?</h3>
             <p>
