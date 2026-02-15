@@ -4,7 +4,7 @@
 - `backend/`: Node.js + Express + Prisma (Postgres)
 - `frontend/`: Vite + React (Render Static Site)
 
-## Deployment auf Render
+## Deployment 
 
 ### Backend (Web Service)
 - Root: `backend`
