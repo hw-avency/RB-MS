@@ -87,6 +87,8 @@ const getResourceMarkerIcon = (kind?: string): string => {
   return '⌨';
 };
 
+const getBookingPersonLabel = (booking?: FloorplanBooking): string => booking?.userDisplayName ?? booking?.userEmail ?? 'Unbekannt';
+
 const normalizeBookings = (desk: FloorplanDesk): FloorplanBooking[] => {
   if (desk.bookings && desk.bookings.length > 0) return desk.bookings;
   return desk.booking ? [desk.booking] : [];
@@ -200,9 +202,9 @@ const DeskOverlay = memo(function DeskOverlay({ desks, selectedDeskId, hoveredDe
           const imgOk = hasPhoto && (imageStates[desk.id] ?? true);
 
           const slotColor = (booking?: FloorplanBooking): string => {
-            if (!booking) return '#d5dce7';
-            if (booking.isCurrentUser) return '#0ea5e9';
-            return 'hsl(var(--primary))';
+            if (!booking) return 'var(--resource-free)';
+            if (booking.isCurrentUser) return 'var(--resource-own)';
+            return 'var(--resource-booked)';
           };
 
           const roomIntervals = mergeIntervals(bookings.flatMap((booking) => {
@@ -285,7 +287,6 @@ const DeskOverlay = memo(function DeskOverlay({ desks, selectedDeskId, hoveredDe
                   <span className="desk-pin-kind-icon" aria-hidden="true">{getResourceMarkerIcon(desk.kind)}</span>
                 )}
               </span>
-              {bookings.some((booking) => booking.isCurrentUser) && <span className="desk-pin-status-dot" aria-label="Deine Buchung" />}
             </button>
           );
         })}
@@ -305,9 +306,14 @@ const DeskOverlay = memo(function DeskOverlay({ desks, selectedDeskId, hoveredDe
               const pm = full ?? bookings.find((booking) => slotFromBooking(booking) === 'PM');
               return (
                 <>
-                  <span>AM: {am?.userDisplayName ?? am?.userEmail ?? 'frei'}</span>
-                  <span>PM: {pm?.userDisplayName ?? pm?.userEmail ?? 'frei'}</span>
-                  {full && <span>Ganztag: {full.userDisplayName ?? full.userEmail}</span>}
+                  {full ? (
+                    <span>Ganztägig: {getBookingPersonLabel(full)}</span>
+                  ) : (
+                    <>
+                      {am && <span>Vormittag: {getBookingPersonLabel(am)}</span>}
+                      {pm && <span>Nachmittag: {getBookingPersonLabel(pm)}</span>}
+                    </>
+                  )}
                 </>
               );
             })()

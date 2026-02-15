@@ -389,7 +389,6 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
   const [selectedFloorplanId, setSelectedFloorplanId] = useState('');
   const [selectedDate, setSelectedDate] = useState(today);
   const [visibleMonth, setVisibleMonth] = useState(startOfMonth(today));
-  const [onlyFree, setOnlyFree] = useState(false);
 
   const [occupancy, setOccupancy] = useState<OccupancyResponse | null>(null);
   const [todayOccupancy, setTodayOccupancy] = useState<OccupancyResponse | null>(null);
@@ -441,7 +440,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
     currentUserEmail,
     currentUserId: currentUser?.id
   }), [todayOccupancy?.desks, employeesByEmail, employeesById, currentUserEmail, currentUser?.id]);
-  const filteredDesks = useMemo(() => (onlyFree ? desks.filter((desk) => canBookDesk(desk)) : desks).map((desk) => ({ ...desk, isHighlighted: desk.id === highlightedDeskId })), [desks, onlyFree, highlightedDeskId]);
+  const filteredDesks = useMemo(() => desks.map((desk) => ({ ...desk, isHighlighted: desk.id === highlightedDeskId })), [desks, highlightedDeskId]);
   const bookingsForSelectedDate = useMemo<OccupantForDay[]>(() => mapBookingsForDay(desks), [desks]);
   const bookingsForToday = useMemo<OccupantForDay[]>(() => mapBookingsForDay(desksToday), [desksToday]);
   const popupDesk = useMemo(() => (deskPopup ? desks.find((desk) => desk.id === deskPopup.deskId) ?? null : null), [desks, deskPopup]);
@@ -940,21 +939,17 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
 
   const legendPanel = (
     <section className="card compact-card stack-sm">
-        <h3 className="section-title">Filter &amp; Legende</h3>
-        <label className="toggle">
-          <input type="checkbox" checked={onlyFree} onChange={(event) => setOnlyFree(event.target.checked)} />
-          <span>Nur freie Plätze</span>
-        </label>
+        <h3 className="section-title">Legende</h3>
         <div className="legend">
-          <span><i className="dot free" /> Frei (Tische/Parkplätze)</span>
-          <span><i className="dot booked" /> Belegt (Tische/Parkplätze)</span>
-          <span><i className="dot selected" /> Dein Platz</span>
+          <span><i className="dot free" /> Grün = frei</span>
+          <span><i className="dot booked" /> Rot = belegt</span>
+          <span><i className="dot selected" /> Blau = dein Platz</span>
         </div>
         <div className="legend room-legend">
           <strong>Räume</strong>
           <span><i className="dot room-free" /> Grün = frei (07–18 Uhr)</span>
           <span><i className="dot room-booked" /> Dunkles Segment = belegt</span>
-          <p className="muted">Räume: Ring zeigt Zeitbelegung.</p>
+          <p className="muted">Ring zeigt Zeitbelegung.</p>
         </div>
       </section>
   );
