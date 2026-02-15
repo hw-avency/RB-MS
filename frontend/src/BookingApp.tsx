@@ -877,13 +877,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
               Möchtest du diese auf Tisch {rebookConfirm.deskLabel} umbuchen?
             </p>
             {rebookConfirm.existingDeskLabel && <p className="muted rebook-subline">Aktueller Tisch: {rebookConfirm.existingDeskLabel}</p>}
-            {rebookErrorMessage && <div className="error-banner" role="alert">{rebookErrorMessage}</div>}
             <div className="inline-end rebook-actions">
-          <section className="card dialog stack-sm" role="dialog" aria-modal="true" aria-labelledby="rebook-title">
-            <h3 id="rebook-title">Bestehende Buchung gefunden</h3>
-            <p className="muted">Du hast am {formatDate(rebookConfirm.date)} bereits eine Buchung. Soll diese auf Tisch {rebookConfirm.deskLabel} umgebucht werden?</p>
-            {rebookConfirm.existingDeskLabel && <p className="muted">Aktueller Tisch: {rebookConfirm.existingDeskLabel}</p>}
-            <div className="inline-end">
               <button type="button" className="btn btn-outline" onClick={cancelRebook} disabled={isRebooking}>Abbrechen</button>
               <button type="button" className="btn btn-danger" onClick={() => void confirmRebook()} disabled={isRebooking}>
                 {isRebooking ? 'Umbuchen…' : 'Umbuchen'}
