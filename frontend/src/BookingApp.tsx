@@ -670,32 +670,25 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
                 <p className="muted">{occupant.email}</p>
               </div>
             </div>
-            <span className="muted occupant-desk">Tisch: {occupant.deskLabel}</span>
           </div>
         ))}
       </div>
     );
   };
 
+  const todayPanel = (
+    <section className="card stack-sm full-width-occupancy-panel">
+      <h3>Heute im Büro ({bookingsForToday.length})</h3>
+      {renderOccupancyList(bookingsForToday, 'today', 'Heute im Büro', 'Heute ist niemand eingeplant.')}
+    </section>
+  );
+
   const detailPanel = (
     <div className="stack">
       <section className="card stack-sm details-panel">
-        <div className="summary-row">
-          <div>
-            <h3>Anwesenheit</h3>
-            <p className="muted">Münster · {formatDate(selectedDate)}</p>
-          </div>
-        </div>
-
         <div className="stack-sm">
-          <h4>Heute im Büro ({bookingsForToday.length})</h4>
-          {renderOccupancyList(bookingsForToday, 'today', 'Heute im Büro', 'Heute ist niemand eingeplant.')}
-        </div>
-
-        <hr className="subtle-divider" />
-
-        <div className="stack-sm">
-          <h4>Anwesenheit am {formatDate(selectedDate)} ({bookingsForSelectedDate.length})</h4>
+          <h3>Anwesenheiten</h3>
+          <p className="muted">{formatDate(selectedDate)}</p>
           {renderOccupancyList(bookingsForSelectedDate, 'selected', 'Anwesenheit am ausgewählten Datum', 'An diesem Tag ist niemand eingeplant.')}
         </div>
       </section>
@@ -733,6 +726,8 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
 
       {errorMessage && <div className="toast toast-error">{errorMessage} <button className="btn btn-ghost" onClick={reloadBookings}>Retry</button></div>}
       {toastMessage && <div className="toast toast-success">{toastMessage}</div>}
+
+      {isBootstrapping ? <div className="card skeleton h-120" /> : todayPanel}
 
       <section className="layout-grid">
         <aside className="left-col desktop-only">{isBootstrapping ? <div className="card skeleton h-480" /> : sidebar}</aside>

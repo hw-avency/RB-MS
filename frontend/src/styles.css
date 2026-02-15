@@ -123,12 +123,12 @@ tr{cursor:pointer}.row-selected{background:hsl(var(--muted))}
 .occupant-card-text{min-width:0}
 .occupant-card-text strong{display:block;font-size:13px;line-height:1.2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .occupant-card-text p{margin:1px 0 0;font-size:11px;line-height:1.25;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.occupant-desk{font-size:12px;white-space:nowrap}
 .compact-empty-state{padding:10px}
+.full-width-occupancy-panel h3{margin:0}
 
 .empty-state{border:1px dashed hsl(var(--border));border-radius:12px;padding:16px;text-align:center;color:hsl(var(--muted-foreground))}
 .skeleton{border-radius:16px;background:linear-gradient(90deg,#f1f5f9,#e2e8f0,#f1f5f9);background-size:200% 100%;animation:pulse 1.4s infinite}
-.h-420{height:420px}.h-480{height:480px}
+.h-120{height:120px}.h-420{height:420px}.h-480{height:480px}
 
 .overlay{position:fixed;inset:0;background:rgba(15,23,42,.3);display:grid;place-items:center;padding:16px;z-index:50}
 .dialog{width:min(560px,100%)}.inline-end{display:flex;justify-content:flex-end;gap:8px}
