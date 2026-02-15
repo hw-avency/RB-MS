@@ -1,4 +1,4 @@
-# AVENCY Booking (RB-MS)
+# AVENCY Booking
 
 ## Architektur
 - `backend/`: Node.js + Express + Prisma (Postgres)
