@@ -4,7 +4,7 @@ import { OccupancyRing } from './OccupancyRing';
 
 type BookingType = 'single' | 'recurring';
 type BookingSlot = 'FULL_DAY' | 'MORNING' | 'AFTERNOON';
-type RoomScheduleItem = { id: string; label: string; person: string; isCurrentUser?: boolean; canCancel?: boolean };
+type RoomScheduleItem = { id: string; label: string; person: string; isCurrentUser?: boolean; canCancel?: boolean; debugMeta?: string };
 type RoomFreeSlot = { label: string; startTime: string; endTime: string };
 
 export type BookingFormValues = {
@@ -214,7 +214,10 @@ export function BookingForm({ values, onChange, onSubmit, onCancel, isSubmitting
                             {booking.person}
                             {booking.isCurrentUser && <em className="room-booking-badge">Du</em>}
                           </span>
-                          {booking.canCancel && <span className="room-booking-action" aria-hidden>Stornieren</span>}
+                          <span>
+                            {booking.canCancel && <span className="room-booking-action" aria-hidden>Stornieren</span>}
+                            {booking.debugMeta && <small className="muted" style={{ display: 'block' }}>{booking.debugMeta}</small>}
+                          </span>
                         </span>
                       </button>
                     ))}

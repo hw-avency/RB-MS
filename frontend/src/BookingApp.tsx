@@ -110,7 +110,20 @@ type RoomAvailabilityResponse = {
   }>;
   freeWindows: Array<{ startTime: string | null; endTime: string | null; label: string }>;
 };
-type RoomBookingListEntry = { id: string; start: number; end: number; label: string; person: string; bookingId?: string; isCurrentUser: boolean; isRecurring: boolean };
+type RoomBookingListEntry = {
+  id: string;
+  start: number;
+  end: number;
+  label: string;
+  person: string;
+  bookingId?: string;
+  isCurrentUser: boolean;
+  isRecurring: boolean;
+  bookedFor?: 'SELF' | 'GUEST';
+  userId?: string | null;
+  createdByUserId?: string;
+  canCancel: boolean;
+};
 type DeskSlotAvailability = 'FREE' | 'AM_BOOKED' | 'PM_BOOKED' | 'FULL_BOOKED';
 type PopupPlacement = 'top' | 'right' | 'bottom' | 'left';
 type PopupCoordinates = { left: number; top: number; placement: PopupPlacement };
@@ -1105,6 +1118,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
   const popupRoomFreeIntervals = useMemo(() => invertIntervals(ROOM_WINDOW_START_MINUTES, ROOM_WINDOW_END_MINUTES, popupRoomOccupiedIntervals), [popupRoomOccupiedIntervals]);
   const popupRoomOccupiedSegments = useMemo(() => intervalsToSegments(ROOM_WINDOW_START_MINUTES, ROOM_WINDOW_END_MINUTES, popupRoomOccupiedIntervals), [popupRoomOccupiedIntervals]);
   const popupRoomBookingsList = useMemo<RoomBookingListEntry[]>(() => {
+    const isAdmin = currentUser?.role === 'admin';
     const rendered = popupRoomBookingsForSelectedDay
       .flatMap((booking) => {
         const start = bookingTimeToMinutes(booking.startTime);
@@ -1115,6 +1129,11 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
         const bookingEmail = booking.user?.email?.toLowerCase();
         const mine = isMine(booking, currentUser);
         const isCurrentUser = mine || Boolean(currentUserEmail && bookingEmail && bookingEmail === currentUserEmail.toLowerCase());
+        const canCancel = Boolean(
+          isAdmin
+          || (booking.bookedFor === 'SELF' && currentUser?.id && booking.userId === currentUser.id)
+          || (booking.bookedFor === 'GUEST' && currentUser?.id && booking.createdByUserId === currentUser.id)
+        );
         return [{
           id: booking.id,
           start: clamped.startMin,
@@ -1123,7 +1142,11 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
           person: getBookingDisplayName(booking),
           bookingId: booking.id,
           isCurrentUser,
-          isRecurring: false
+          isRecurring: false,
+          bookedFor: booking.bookedFor,
+          userId: booking.userId,
+          createdByUserId: booking.createdByUserId,
+          canCancel
         }];
       })
       .sort((a, b) => a.start - b.start);
@@ -1900,7 +1923,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
     event.stopPropagation();
     if (!deskPopup || !popupDesk || !isRoomResource(popupDesk)) return;
     const selectedBooking = popupRoomBookingsList.find((booking) => booking.id === bookingId);
-    if (!selectedBooking || !selectedBooking.isCurrentUser || !selectedBooking.bookingId) return;
+    if (!selectedBooking || !selectedBooking.canCancel || !selectedBooking.bookingId) return;
 
     setCancelConfirmContext({
       ...deskPopup,
@@ -2450,7 +2473,10 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
                       label: booking.label,
                       person: booking.person,
                       isCurrentUser: booking.isCurrentUser,
-                      canCancel: booking.isCurrentUser && Boolean(booking.bookingId)
+                      canCancel: booking.canCancel && Boolean(booking.bookingId),
+                      debugMeta: showRoomDebugInfo
+                        ? `bookedFor=${booking.bookedFor ?? '-'} · userId=${booking.userId ?? '-'} · createdByUserId=${booking.createdByUserId ?? '-'} · canCancel=${booking.canCancel ? 'true' : 'false'}`
+                        : undefined
                     })),
                     freeSlots: popupRoomFreeSlotChips,
                     occupiedSegments: popupRoomOccupiedSegments,

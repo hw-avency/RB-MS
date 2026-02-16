@@ -2143,10 +2143,30 @@ app.delete('/bookings/:id', async (req, res) => {
       return;
     }
 
-    const authEmail = req.authUser?.email;
-    if (req.authUser?.role !== 'admin' && existing.userEmail !== authEmail && existing.createdByUserId !== req.authUser?.id) {
-      console.warn('BOOKING_CANCEL', { requestId, userId, bookingId: id, resourceType: existing.desk?.kind ?? null, status: 403, error: 'Cannot cancel booking of another user' });
-      res.status(403).json({ error: 'forbidden', message: 'Cannot cancel booking of another user' });
+    if (!req.authUser) {
+      console.warn('BOOKING_CANCEL', { requestId, userId, bookingId: id, resourceType: existing.desk?.kind ?? null, status: 401, error: 'Authentication required' });
+      res.status(401).json({ error: 'unauthorized', message: 'Authentication required' });
+      return;
+    }
+
+    const authEmail = req.authUser.email;
+    const isAdmin = req.authUser.role === 'admin';
+    const isSelfBookingOwner = existing.bookedFor === 'SELF' && existing.userEmail === authEmail;
+    const isCreator = existing.createdByUserId === req.authUser.id;
+    const allowed = isAdmin || isSelfBookingOwner || isCreator;
+
+    console.info('CANCEL_AUTHZ', {
+      requestId,
+      bookingId: id,
+      bookedFor: existing.bookedFor,
+      createdByUserId: existing.createdByUserId,
+      userId: req.authUser.id,
+      allowed
+    });
+
+    if (!allowed) {
+      console.warn('BOOKING_CANCEL', { requestId, userId, bookingId: id, resourceType: existing.desk?.kind ?? null, status: 403, error: 'Not allowed to cancel this booking' });
+      res.status(403).json({ code: 'FORBIDDEN', message: 'Not allowed to cancel this booking' });
       return;
     }
 
@@ -2675,6 +2695,14 @@ app.get('/resources/:resourceId/availability', async (req, res) => {
   });
 
   const employeesByEmail = await getActiveEmployeesByEmail(bookings.map((booking) => booking.userEmail).filter((email): email is string => Boolean(email)));
+  const usersByEmail = new Map((await prisma.user.findMany({
+    where: {
+      email: {
+        in: Array.from(new Set(bookings.map((booking) => booking.userEmail).filter((email): email is string => Boolean(email)).map((email) => normalizeEmail(email))))
+      }
+    },
+    select: { id: true, email: true }
+  })).map((user) => [normalizeEmail(user.email), user.id]));
   const mappedBookings = bookings.map((booking) => ({
     id: booking.id,
     resourceId,
@@ -2685,6 +2713,8 @@ app.get('/resources/:resourceId/availability', async (req, res) => {
     endTime: minuteToHHMM(booking.endMinute ?? (booking.endTime ? booking.endTime.getUTCHours() * 60 + booking.endTime.getUTCMinutes() : null)),
     bookedFor: booking.bookedFor,
     guestName: booking.guestName,
+    userId: booking.userEmail ? (usersByEmail.get(normalizeEmail(booking.userEmail)) ?? null) : null,
+    createdByUserId: booking.createdByUserId,
     createdBy: booking.createdBy,
     user: {
       email: booking.userEmail,
