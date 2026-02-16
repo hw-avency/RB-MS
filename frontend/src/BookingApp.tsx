@@ -91,6 +91,11 @@ type PopupCoordinates = { left: number; top: number; placement: PopupPlacement }
 type FloorplanTransform = { scale: number; translateX: number; translateY: number };
 type FloorplanImageSize = { width: number; height: number };
 type FloorplanImageLoadState = 'loading' | 'loaded' | 'error';
+type FloorplanDebugCounters = {
+  srcChangeCount: number;
+  transformRecalcCount: number;
+  resizeObserverCount: number;
+};
 type CalendarBooking = { date: string; deskId: string; daySlot?: 'AM' | 'PM' | 'FULL' };
 type DayAvailabilityTone = 'many-free' | 'few-free' | 'none-free';
 type OverviewView = 'presence' | 'rooms' | 'myBookings';
@@ -538,6 +543,21 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
   const [floorplanViewportSize, setFloorplanViewportSize] = useState<{ width: number; height: number }>({ width: 1, height: 1 });
   const [floorplanSafeModeActive, setFloorplanSafeModeActive] = useState(false);
   const [floorplanDisableTransformsDebug, setFloorplanDisableTransformsDebug] = useState(false);
+  const [floorplanDebugCounters, setFloorplanDebugCounters] = useState<FloorplanDebugCounters>({
+    srcChangeCount: 0,
+    transformRecalcCount: 0,
+    resizeObserverCount: 0,
+  });
+  const [floorplanVisibilityDebug, setFloorplanVisibilityDebug] = useState({
+    isMounted: false,
+    isHidden: false,
+    opacity: '1',
+    display: 'block',
+    zIndex: 'auto',
+    layerOpacity: '1',
+    layerDisplay: 'block',
+    layerZIndex: 'auto',
+  });
   const [bookingVersion, setBookingVersion] = useState(0);
   const [isFloorplanDragging, setIsFloorplanDragging] = useState(false);
 
@@ -587,7 +607,12 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
   const popupRef = useRef<HTMLElement | null>(null);
   const cancelDialogRef = useRef<HTMLElement | null>(null);
   const floorplanViewportRef = useRef<HTMLDivElement | null>(null);
+  const floorplanTransformLayerRef = useRef<HTMLDivElement | null>(null);
   const hasFloorplanManualTransformRef = useRef(false);
+  const floorplanFitTransformRef = useRef<FloorplanTransform | null>(null);
+  const floorplanFitTupleRef = useRef('');
+  const previousFloorplanSrcRef = useRef('');
+  const floorplanRenderCountRef = useRef(0);
   const floorplanDragRef = useRef<{ pointerId: number; startX: number; startY: number; startTranslateX: number; startTranslateY: number; moved: boolean } | null>(null);
   const floorplanSuppressClickRef = useRef(false);
   const availabilityCacheRef = useRef<Map<string, Map<string, DayAvailabilityTone>>>(new Map());
@@ -631,41 +656,85 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
     return resolveApiUrl(selectedFloorplan.imageUrl) ?? selectedFloorplan.imageUrl;
   }, [selectedFloorplan?.imageUrl]);
 
-  useEffect(() => {
+  floorplanRenderCountRef.current += 1;
+
+  const logFloorplanDebug = useCallback((event: string, payload: Record<string, unknown> = {}) => {
     if (!showRoomDebugInfo) return;
-    console.log('FLOORPLAN_SRC', { floorplanId: selectedFloorplan?.id ?? '', floorplanName: selectedFloorplan?.name ?? '', src: floorplanImageSrc });
-  }, [floorplanImageSrc, selectedFloorplan?.id, selectedFloorplan?.name, showRoomDebugInfo]);
+    console.log(`[${new Date().toISOString()}] ${event}`, payload);
+  }, [showRoomDebugInfo]);
+
+  const bumpFloorplanCounter = useCallback((counter: keyof FloorplanDebugCounters) => {
+    if (!showRoomDebugInfo) return;
+    setFloorplanDebugCounters((current) => ({ ...current, [counter]: current[counter] + 1 }));
+  }, [showRoomDebugInfo]);
+
+  const isFiniteTransform = useCallback((transform: FloorplanTransform | null | undefined): transform is FloorplanTransform => (
+    Boolean(transform)
+    && Number.isFinite(transform?.scale)
+    && (transform?.scale ?? 0) > 0
+    && Number.isFinite(transform?.translateX)
+    && Number.isFinite(transform?.translateY)
+  ), []);
+
+  const applyFloorplanTransform = useCallback((candidate: FloorplanTransform, reason: string) => {
+    if (!isFiniteTransform(candidate)) {
+      logFloorplanDebug('INVALID_TRANSFORM_BLOCKED', { reason, candidate });
+      return;
+    }
+    logFloorplanDebug('APPLY_TRANSFORM', { reason, scale: candidate.scale, tx: candidate.translateX, ty: candidate.translateY });
+    setFloorplanTransform((current) => {
+      if (current.scale === candidate.scale && current.translateX === candidate.translateX && current.translateY === candidate.translateY) return current;
+      return candidate;
+    });
+  }, [isFiniteTransform, logFloorplanDebug]);
 
   useEffect(() => {
+    const previousSrc = previousFloorplanSrcRef.current;
+    previousFloorplanSrcRef.current = floorplanImageSrc;
+    if (previousSrc !== floorplanImageSrc) bumpFloorplanCounter('srcChangeCount');
+    logFloorplanDebug('FLOORPLAN_SET_SRC', {
+      previousSrc,
+      nextSrc: floorplanImageSrc,
+      floorplanId: selectedFloorplan?.id ?? '',
+      floorplanName: selectedFloorplan?.name ?? '',
+    });
+
     hasFloorplanManualTransformRef.current = false;
+    floorplanFitTransformRef.current = null;
+    floorplanFitTupleRef.current = '';
     setFloorplanDisableTransformsDebug(false);
     setFloorplanImageError('');
     setFloorplanLoadedSrc('');
     setFloorplanRenderedImageSize({ width: 0, height: 0 });
+
     if (!floorplanImageSrc) {
       setFloorplanImageSize(null);
       setFloorplanImageLoadState('error');
       setFloorplanImageError('Floorplan image src is empty.');
       setFloorplanSafeModeActive(true);
-      return;
+      return () => logFloorplanDebug('CLEANUP_SRC_EFFECT', { src: floorplanImageSrc, hasSrc: false });
     }
 
     setFloorplanImageSize(null);
     setFloorplanImageLoadState('loading');
     setFloorplanSafeModeActive(false);
     setFloorplanInitialTransform({ scale: 1, translateX: 0, translateY: 0 });
-    setFloorplanTransform({ scale: 1, translateX: 0, translateY: 0 });
-  }, [floorplanImageSrc, selectedFloorplan?.id]);
+    applyFloorplanTransform({ scale: 1, translateX: 0, translateY: 0 }, 'SRC_RESET');
+
+    return () => logFloorplanDebug('CLEANUP_SRC_EFFECT', { src: floorplanImageSrc, hasSrc: true });
+  }, [applyFloorplanTransform, bumpFloorplanCounter, floorplanImageSrc, logFloorplanDebug, selectedFloorplan?.id, selectedFloorplan?.name]);
 
   useLayoutEffect(() => {
-    if (!floorplanViewportRef.current) return;
+    if (!floorplanViewportRef.current) return undefined;
     const viewport = floorplanViewportRef.current;
     let rafId: number | null = null;
     let retryCount = 0;
     const syncSize = () => {
       const width = viewport.clientWidth;
       const height = viewport.clientHeight;
-      setFloorplanViewportSize({ width: Math.max(1, width), height: Math.max(1, height) });
+      setFloorplanViewportSize({ width, height });
+      bumpFloorplanCounter('resizeObserverCount');
+      logFloorplanDebug('WRAPPER_SIZE', { width, height });
 
       if ((width <= 0 || height <= 0) && retryCount < 8) {
         retryCount += 1;
@@ -682,60 +751,63 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
       if (rafId) window.cancelAnimationFrame(rafId);
       observer.disconnect();
       window.removeEventListener('resize', syncSize);
+      logFloorplanDebug('CLEANUP_VIEWPORT_OBSERVER', {});
     };
-  }, []);
+  }, [bumpFloorplanCounter, logFloorplanDebug]);
 
   useEffect(() => {
-    const viewportValid = floorplanViewportSize.width > 0 && floorplanViewportSize.height > 0
-      && Number.isFinite(floorplanViewportSize.width) && Number.isFinite(floorplanViewportSize.height);
-    const imageValid = Boolean(floorplanImageSize)
-      && Number.isFinite(floorplanImageSize?.width) && Number.isFinite(floorplanImageSize?.height)
-      && (floorplanImageSize?.width ?? 0) > 0 && (floorplanImageSize?.height ?? 0) > 0;
-
-    if (!viewportValid || !imageValid) {
+    if (floorplanImageLoadState !== 'loaded') return;
+    const imgW = floorplanImageSize?.width ?? 0;
+    const imgH = floorplanImageSize?.height ?? 0;
+    const vw = floorplanViewportSize.width;
+    const vh = floorplanViewportSize.height;
+    if (!floorplanImageSrc || imgW <= 0 || imgH <= 0 || vw <= 0 || vh <= 0) {
       setFloorplanSafeModeActive(true);
+      logFloorplanDebug('APPLY_TRANSFORM_SKIPPED', { reason: 'MISSING_DIMENSIONS', floorplanImageSrc, imgW, imgH, vw, vh });
       return;
     }
 
-    const availableWidth = Math.max(1, floorplanViewportSize.width - FLOORPLAN_FIT_PADDING * 2);
-    const availableHeight = Math.max(1, floorplanViewportSize.height - FLOORPLAN_FIT_PADDING * 2);
-    const fitScale = Math.min(
-      Math.min(availableWidth / (floorplanImageSize?.width ?? 1), availableHeight / (floorplanImageSize?.height ?? 1)),
-      FLOORPLAN_MAX_SCALE
-    );
+    const availableWidth = vw - FLOORPLAN_FIT_PADDING * 2;
+    const availableHeight = vh - FLOORPLAN_FIT_PADDING * 2;
+    if (availableWidth <= 0 || availableHeight <= 0) {
+      setFloorplanSafeModeActive(true);
+      logFloorplanDebug('APPLY_TRANSFORM_SKIPPED', { reason: 'NO_AVAILABLE_SPACE', availableWidth, availableHeight });
+      return;
+    }
+
+    const fitScale = Math.min(availableWidth / imgW, availableHeight / imgH, FLOORPLAN_MAX_SCALE);
     if (!Number.isFinite(fitScale) || fitScale <= 0) {
       setFloorplanSafeModeActive(true);
+      logFloorplanDebug('APPLY_TRANSFORM_SKIPPED', { reason: 'INVALID_SCALE', fitScale, imgW, imgH, vw, vh });
       return;
     }
 
-    const fitTransform = {
+    const fitTransform: FloorplanTransform = {
       scale: fitScale,
-      translateX: (floorplanViewportSize.width - (floorplanImageSize?.width ?? 0) * fitScale) / 2,
-      translateY: (floorplanViewportSize.height - (floorplanImageSize?.height ?? 0) * fitScale) / 2,
+      translateX: (vw - imgW * fitScale) / 2,
+      translateY: (vh - imgH * fitScale) / 2,
     };
 
-    const safeTransform = {
-      scale: Number.isFinite(fitTransform.scale) && fitTransform.scale > 0 ? fitTransform.scale : 1,
-      translateX: Number.isFinite(fitTransform.translateX) ? fitTransform.translateX : 0,
-      translateY: Number.isFinite(fitTransform.translateY) ? fitTransform.translateY : 0,
-    };
+    if (!isFiniteTransform(fitTransform)) {
+      setFloorplanSafeModeActive(true);
+      logFloorplanDebug('INVALID_TRANSFORM_BLOCKED', { reason: 'FIT_COMPUTE', fitTransform });
+      return;
+    }
 
+    const nextTuple = `${floorplanImageSrc}|${imgW}x${imgH}|${vw}x${vh}`;
+    const previousTuple = floorplanFitTupleRef.current;
+    floorplanFitTupleRef.current = nextTuple;
+    floorplanFitTransformRef.current = fitTransform;
+    setFloorplanInitialTransform(fitTransform);
     setFloorplanSafeModeActive(false);
-    setFloorplanInitialTransform(safeTransform);
-    if (!hasFloorplanManualTransformRef.current) setFloorplanTransform(safeTransform);
-  }, [floorplanImageSize, floorplanViewportSize.height, floorplanViewportSize.width]);
+    bumpFloorplanCounter('transformRecalcCount');
 
-  useEffect(() => {
-    setFloorplanTransform((current) => {
-      const sanitized = {
-        scale: Number.isFinite(current.scale) && current.scale > 0 ? current.scale : 1,
-        translateX: Number.isFinite(current.translateX) ? current.translateX : 0,
-        translateY: Number.isFinite(current.translateY) ? current.translateY : 0,
-      };
-      if (sanitized.scale === current.scale && sanitized.translateX === current.translateX && sanitized.translateY === current.translateY) return current;
-      return sanitized;
-    });
-  }, [floorplanImageLoadState]);
+    if (!hasFloorplanManualTransformRef.current || previousTuple !== nextTuple) {
+      applyFloorplanTransform(fitTransform, previousTuple === nextTuple ? 'FIT_RECALC_VIEWPORT' : 'FIT_RECALC_SRC_OR_VIEWPORT');
+    }
+
+    return () => logFloorplanDebug('CLEANUP_FIT_EFFECT', { tuple: nextTuple });
+  }, [applyFloorplanTransform, bumpFloorplanCounter, floorplanImageLoadState, floorplanImageSize?.height, floorplanImageSize?.width, floorplanImageSrc, floorplanViewportSize.height, floorplanViewportSize.width, isFiniteTransform, logFloorplanDebug]);
 
   useEffect(() => {
     if (!showRoomDebugInfo) return;
@@ -751,6 +823,40 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
     });
   }, [floorplanTransform.scale, floorplanTransform.translateX, floorplanTransform.translateY, showRoomDebugInfo]);
 
+  useEffect(() => {
+    if (!showRoomDebugInfo) return;
+    const viewport = floorplanViewportRef.current;
+    const layer = floorplanTransformLayerRef.current;
+    const viewportStyle = viewport ? window.getComputedStyle(viewport) : null;
+    const layerStyle = layer ? window.getComputedStyle(layer) : null;
+    setFloorplanVisibilityDebug({
+      isMounted: Boolean(viewport),
+      isHidden: viewportStyle ? (viewportStyle.visibility === 'hidden' || viewportStyle.display === 'none' || Number(viewportStyle.opacity) <= 0) : false,
+      opacity: viewportStyle?.opacity ?? '-',
+      display: viewportStyle?.display ?? '-',
+      zIndex: viewportStyle?.zIndex ?? '-',
+      layerOpacity: layerStyle?.opacity ?? '-',
+      layerDisplay: layerStyle?.display ?? '-',
+      layerZIndex: layerStyle?.zIndex ?? '-',
+    });
+  }, [floorplanImageLoadState, floorplanTransform.scale, floorplanTransform.translateX, floorplanTransform.translateY, floorplanViewportSize.height, floorplanViewportSize.width, showRoomDebugInfo]);
+
+  const handleFloorplanImageLoad = useCallback(({ width, height, src }: { width: number; height: number; src: string }) => {
+    setFloorplanImageSize({ width, height });
+    setFloorplanImageLoadState('loaded');
+    setFloorplanImageError('');
+    setFloorplanLoadedSrc(src);
+    logFloorplanDebug('IMG_ONLOAD', { src, naturalWidth: width, naturalHeight: height });
+  }, [logFloorplanDebug]);
+
+  const handleFloorplanImageError = useCallback(({ src, message }: { src: string; message: string }) => {
+    setFloorplanImageLoadState('error');
+    setFloorplanImageError(message);
+    setFloorplanLoadedSrc(src);
+    setFloorplanImageSize(null);
+    logFloorplanDebug('IMG_ONERROR', { src, message });
+  }, [logFloorplanDebug]);
+
   const floorplanMinScale = getFloorplanMinScale(floorplanInitialTransform.scale);
 
 
@@ -764,14 +870,20 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
       const safeScale = Number.isFinite(current.scale) && current.scale > 0 ? current.scale : 1;
       const worldX = (centerX - current.translateX) / safeScale;
       const worldY = (centerY - current.translateY) / safeScale;
-      hasFloorplanManualTransformRef.current = true;
-      return {
+      const nextTransform: FloorplanTransform = {
         scale: nextScale,
         translateX: centerX - worldX * nextScale,
         translateY: centerY - worldY * nextScale,
       };
+      if (!isFiniteTransform(nextTransform)) {
+        logFloorplanDebug('INVALID_TRANSFORM_BLOCKED', { reason: 'ZOOM_BUTTON', nextTransform });
+        return current;
+      }
+      hasFloorplanManualTransformRef.current = true;
+      logFloorplanDebug('APPLY_TRANSFORM', { reason: 'ZOOM_BUTTON', ...nextTransform });
+      return nextTransform;
     });
-  }, [floorplanMinScale, floorplanViewportSize.height, floorplanViewportSize.width]);
+  }, [floorplanMinScale, floorplanViewportSize.height, floorplanViewportSize.width, isFiniteTransform, logFloorplanDebug]);
 
   const applyFloorplanZoomAtPoint = useCallback((factor: number, focalX: number, focalY: number) => {
     setFloorplanTransform((current) => {
@@ -780,14 +892,20 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
       const safeScale = Number.isFinite(current.scale) && current.scale > 0 ? current.scale : 1;
       const worldX = (focalX - current.translateX) / safeScale;
       const worldY = (focalY - current.translateY) / safeScale;
-      hasFloorplanManualTransformRef.current = true;
-      return {
+      const nextTransform: FloorplanTransform = {
         scale: nextScale,
         translateX: focalX - worldX * nextScale,
         translateY: focalY - worldY * nextScale,
       };
+      if (!isFiniteTransform(nextTransform)) {
+        logFloorplanDebug('INVALID_TRANSFORM_BLOCKED', { reason: 'ZOOM_WHEEL', nextTransform });
+        return current;
+      }
+      hasFloorplanManualTransformRef.current = true;
+      logFloorplanDebug('APPLY_TRANSFORM', { reason: 'ZOOM_WHEEL', ...nextTransform });
+      return nextTransform;
     });
-  }, [floorplanMinScale]);
+  }, [floorplanMinScale, isFiniteTransform, logFloorplanDebug]);
 
   const canPanFloorplan = floorplanTransform.scale > floorplanInitialTransform.scale + FLOORPLAN_DRAG_EPSILON;
 
@@ -824,12 +942,19 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
       floorplanSuppressClickRef.current = true;
     }
     hasFloorplanManualTransformRef.current = true;
-    setFloorplanTransform((current) => ({
-      ...current,
-      translateX: drag.startTranslateX + deltaX,
-      translateY: drag.startTranslateY + deltaY,
-    }));
-  }, []);
+    setFloorplanTransform((current) => {
+      const nextTransform: FloorplanTransform = {
+        ...current,
+        translateX: drag.startTranslateX + deltaX,
+        translateY: drag.startTranslateY + deltaY,
+      };
+      if (!isFiniteTransform(nextTransform)) {
+        logFloorplanDebug('INVALID_TRANSFORM_BLOCKED', { reason: 'PAN_DRAG', nextTransform });
+        return current;
+      }
+      return nextTransform;
+    });
+  }, [isFiniteTransform, logFloorplanDebug]);
 
   const handleFloorplanPointerUp = useCallback((event: PointerEvent<HTMLDivElement>) => {
     stopFloorplanDragging(event.pointerId);
@@ -860,8 +985,8 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
   const resetFloorplanView = useCallback(() => {
     stopFloorplanDragging();
     hasFloorplanManualTransformRef.current = false;
-    setFloorplanTransform(floorplanInitialTransform);
-  }, [floorplanInitialTransform, stopFloorplanDragging]);
+    applyFloorplanTransform(floorplanInitialTransform, 'RESET_BUTTON');
+  }, [applyFloorplanTransform, floorplanInitialTransform, stopFloorplanDragging]);
   const employeesByEmail = useMemo(() => new Map(employees.map((employee) => [employee.email.toLowerCase(), employee])), [employees]);
   const employeesById = useMemo(() => new Map(employees.map((employee) => [employee.id, employee])), [employees]);
   const desks = useMemo(() => enrichDeskBookings({
@@ -2136,6 +2261,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
                     <div className="floorplan-status-banner is-error" role="alert">Floorplan-Bildquelle fehlt.</div>
                   ) : floorplanTransformEnabled ? (
                     <div
+                      ref={floorplanTransformLayerRef}
                       className="floorplan-transform-layer"
                       style={{
                         width: floorplanImageSize?.width ?? 1,
@@ -2154,19 +2280,8 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
                         onSelectDesk={selectDeskFromCanvas}
                         onCanvasClick={() => { setSelectedDeskId(''); setHighlightedDeskId(''); closeBookingFlow(); }}
                         onDeskAnchorChange={registerDeskAnchor}
-                        onImageLoad={({ width, height, src }) => {
-                          setFloorplanImageSize({ width, height });
-                          setFloorplanImageLoadState('loaded');
-                          setFloorplanImageError('');
-                          setFloorplanLoadedSrc(src);
-                          if (showRoomDebugInfo) console.log('FLOORPLAN_IMG_LOADED', { src, naturalWidth: width, naturalHeight: height });
-                        }}
-                        onImageError={({ src, message }) => {
-                          setFloorplanImageLoadState('error');
-                          setFloorplanImageError(message);
-                          setFloorplanLoadedSrc(src);
-                          setFloorplanImageSize(null);
-                        }}
+                        onImageLoad={handleFloorplanImageLoad}
+                        onImageError={handleFloorplanImageError}
                         onImageRenderSizeChange={setFloorplanRenderedImageSize}
                         bookingVersion={bookingVersion}
                         style={{ width: '100%', height: '100%' }}
@@ -2184,19 +2299,8 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
                       onSelectDesk={() => undefined}
                       onDeskAnchorChange={registerDeskAnchor}
                       containImageOnly
-                      onImageLoad={({ width, height, src }) => {
-                        setFloorplanImageSize({ width, height });
-                        setFloorplanImageLoadState('loaded');
-                        setFloorplanImageError('');
-                        setFloorplanLoadedSrc(src);
-                        if (showRoomDebugInfo) console.log('FLOORPLAN_IMG_LOADED', { src, naturalWidth: width, naturalHeight: height });
-                      }}
-                      onImageError={({ src, message }) => {
-                        setFloorplanImageLoadState('error');
-                        setFloorplanImageError(message);
-                        setFloorplanLoadedSrc(src);
-                        setFloorplanImageSize(null);
-                      }}
+                      onImageLoad={handleFloorplanImageLoad}
+                      onImageError={handleFloorplanImageError}
                       onImageRenderSizeChange={setFloorplanRenderedImageSize}
                       bookingVersion={bookingVersion}
                       style={{ width: '100%', height: '100%' }}
@@ -2223,35 +2327,43 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
                     </ZoomIconButton>
                   </div>
 
-                  {showRoomDebugInfo && (
-                    <div className="floorplan-debug" aria-live="polite">
-                      <div>floorplanId={selectedFloorplan?.id ?? '-'}</div>
-                      <div>floorplan={selectedFloorplan?.name ?? '-'}</div>
-                      <div>src={floorplanImageSrc || '-'}</div>
-                      <div>state={floorplanImageLoadState}</div>
-                      <div>error={floorplanImageError || '-'}</div>
-                      <div>loadedSrc={floorplanLoadedSrc || '-'}</div>
-                      <div>natural={Math.round(floorplanImageSize?.width ?? 0)}×{Math.round(floorplanImageSize?.height ?? 0)}</div>
-                      <div>imgRect={Math.round(floorplanRenderedImageSize.width)}×{Math.round(floorplanRenderedImageSize.height)}</div>
-                      <div>viewport={Math.round(floorplanViewportSize.width)}×{Math.round(floorplanViewportSize.height)}</div>
-                      <div>transform=scale:{floorplanTransform.scale.toFixed(3)} tx:{Math.round(floorplanTransform.translateX)} ty:{Math.round(floorplanTransform.translateY)}</div>
-                      <div>transformFinite={Number.isFinite(floorplanTransform.scale) && Number.isFinite(floorplanTransform.translateX) && Number.isFinite(floorplanTransform.translateY) ? 'yes' : 'no'}</div>
-                      <div>wrapper={Math.round(floorplanImageSize?.width ?? 0)}×{Math.round(floorplanImageSize?.height ?? 0)}</div>
-                      <div>fit={floorplanFitScaleForDebug?.toFixed(3) ?? '-'}</div>
-                      <div>markers={floorplanMarkersCount}</div>
-                      <label className="floorplan-debug-toggle">
-                        <input
-                          type="checkbox"
-                          checked={floorplanDisableTransformsDebug}
-                          onChange={(event) => setFloorplanDisableTransformsDebug(event.target.checked)}
-                        />
-                        Disable transforms
-                      </label>
-                    </div>
-                  )}
                 </div>
               ) : (
                 <div className="empty-state"><p>Kein Floorplan ausgewählt.</p></div>
+              )}
+
+              {showRoomDebugInfo && (
+                <div className="floorplan-debug" aria-live="polite">
+                  <div>selectedStandortId={selectedFloorplanId || '-'}</div>
+                  <div>selectedFloorplanId={selectedFloorplan?.id ?? '-'}</div>
+                  <div>floorplan={selectedFloorplan?.name ?? '-'}</div>
+                  <div>imageSrc={floorplanImageSrc || '-'}</div>
+                  <div>imageStatus={floorplanImageLoadState}</div>
+                  <div>error={floorplanImageError || '-'}</div>
+                  <div>loadedSrc={floorplanLoadedSrc || '-'}</div>
+                  <div>natural={Math.round(floorplanImageSize?.width ?? 0)}×{Math.round(floorplanImageSize?.height ?? 0)}</div>
+                  <div>imgRect={Math.round(floorplanRenderedImageSize.width)}×{Math.round(floorplanRenderedImageSize.height)}</div>
+                  <div>viewport vw/vh={Math.round(floorplanViewportSize.width)}×{Math.round(floorplanViewportSize.height)}</div>
+                  <div>wrapper style={Math.round(floorplanTransformLayerRef.current?.clientWidth ?? 0)}×{Math.round(floorplanTransformLayerRef.current?.clientHeight ?? 0)}</div>
+                  <div>transform scale/tx/ty={floorplanTransform.scale.toFixed(3)} / {Math.round(floorplanTransform.translateX)} / {Math.round(floorplanTransform.translateY)}</div>
+                  <div>transformFinite={Number.isFinite(floorplanTransform.scale) && Number.isFinite(floorplanTransform.translateX) && Number.isFinite(floorplanTransform.translateY) ? 'yes' : 'no'}</div>
+                  <div>fit={floorplanFitScaleForDebug?.toFixed(3) ?? '-'}</div>
+                  <div>markers={floorplanMarkersCount}</div>
+                  <div>visibility viewport mounted={floorplanVisibilityDebug.isMounted ? 'yes' : 'no'} hidden={floorplanVisibilityDebug.isHidden ? 'yes' : 'no'} opacity={floorplanVisibilityDebug.opacity} display={floorplanVisibilityDebug.display} zIndex={floorplanVisibilityDebug.zIndex}</div>
+                  <div>visibility layer opacity={floorplanVisibilityDebug.layerOpacity} display={floorplanVisibilityDebug.layerDisplay} zIndex={floorplanVisibilityDebug.layerZIndex}</div>
+                  <div>renderCount={floorplanRenderCountRef.current}</div>
+                  <div>srcChangeCount={floorplanDebugCounters.srcChangeCount}</div>
+                  <div>transformRecalcCount={floorplanDebugCounters.transformRecalcCount}</div>
+                  <div>resizeObserverCount={floorplanDebugCounters.resizeObserverCount}</div>
+                  <label className="floorplan-debug-toggle">
+                    <input
+                      type="checkbox"
+                      checked={floorplanDisableTransformsDebug}
+                      onChange={(event) => setFloorplanDisableTransformsDebug(event.target.checked)}
+                    />
+                    Disable transforms
+                  </label>
+                </div>
               )}
             </div>
           </article>
