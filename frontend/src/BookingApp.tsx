@@ -1,4 +1,5 @@
-import { MouseEvent, PointerEvent, WheelEvent, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import type { MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent, WheelEvent as ReactWheelEvent } from 'react';
 import { createPortal } from 'react-dom';
 import { API_BASE, ApiError, checkBackendHealth, get, markBackendAvailable, post, put, resolveApiUrl } from './api';
 import { cancelBooking, cancelRecurringBookingInstances, createRoomBooking } from './api/bookings';
@@ -244,6 +245,13 @@ const calculatePopupCoordinates = (anchorRect: DOMRect, popupRect: DOMRect): Pop
     maxHeight: Math.max(220, viewportHeight - clampedTop - POPUP_PADDING),
   };
 };
+
+const isPointInRect = (x: number, y: number, rect: DOMRect): boolean => (
+  x >= rect.left
+  && x <= rect.right
+  && y >= rect.top
+  && y <= rect.bottom
+);
 
 const toLocalDateKey = (value: Date): string => {
   const year = value.getFullYear();
@@ -976,7 +984,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
     setIsFloorplanDragging(false);
   }, []);
 
-  const handleFloorplanPointerDown = useCallback((event: PointerEvent<HTMLDivElement>) => {
+  const handleFloorplanPointerDown = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
     if (!canPanFloorplan || event.button !== 0 || !floorplanViewportRef.current) return;
     if (event.target !== event.currentTarget) return;
     floorplanSuppressClickRef.current = false;
@@ -993,7 +1001,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
     setLastZoomAction('pan-start');
   }, [canPanFloorplan, floorplanTransform.translateX, floorplanTransform.translateY]);
 
-  const handleFloorplanPointerMove = useCallback((event: PointerEvent<HTMLDivElement>) => {
+  const handleFloorplanPointerMove = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
     if (!floorplanDragRef.current || floorplanDragRef.current.pointerId !== event.pointerId) return;
     const drag = floorplanDragRef.current;
     const deltaX = event.clientX - drag.startX;
@@ -1018,23 +1026,23 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
     });
   }, [isFiniteTransform, logFloorplanDebug]);
 
-  const handleFloorplanPointerUp = useCallback((event: PointerEvent<HTMLDivElement>) => {
+  const handleFloorplanPointerUp = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
     stopFloorplanDragging(event.pointerId);
   }, [stopFloorplanDragging]);
 
-  const handleFloorplanPointerCancel = useCallback((event: PointerEvent<HTMLDivElement>) => {
+  const handleFloorplanPointerCancel = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
     stopFloorplanDragging(event.pointerId);
   }, [stopFloorplanDragging]);
 
 
-  const handleFloorplanClickCapture = useCallback((event: MouseEvent<HTMLDivElement>) => {
+  const handleFloorplanClickCapture = useCallback((event: ReactMouseEvent<HTMLDivElement>) => {
     if (!floorplanSuppressClickRef.current) return;
     floorplanSuppressClickRef.current = false;
     event.preventDefault();
     event.stopPropagation();
   }, []);
 
-  const handleFloorplanWheel = useCallback((event: WheelEvent<HTMLDivElement>) => {
+  const handleFloorplanWheel = useCallback((event: ReactWheelEvent<HTMLDivElement>) => {
     if (!floorplanViewportRef.current) return;
     event.preventDefault();
     const viewportRect = floorplanViewportRef.current.getBoundingClientRect();
@@ -1556,9 +1564,18 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
       return event.clientX >= root.clientWidth || event.clientY >= root.clientHeight;
     };
 
+    const isPopupPointerInteraction = (event: globalThis.MouseEvent | globalThis.WheelEvent) => {
+      const popupElement = popupRef.current;
+      if (!popupElement) return false;
+      const target = event.target;
+      if (target instanceof Node && popupElement.contains(target)) return true;
+      return isPointInRect(event.clientX, event.clientY, popupElement.getBoundingClientRect());
+    };
+
     const closeOnOutsideClick = (event: globalThis.MouseEvent) => {
       if (cancelFlowState === 'CANCEL_CONFIRM_OPEN') return;
       if (isViewportScrollbarInteraction(event)) return;
+      if (isPopupPointerInteraction(event)) return;
       const target = event.target;
       if (!(target instanceof Node)) return;
       if (popupRef.current?.contains(target)) return;
@@ -1570,8 +1587,10 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
       closePopup();
     };
 
-    const closeOnViewportChange = () => {
+    const closeOnViewportChange = (event?: Event) => {
       if (cancelFlowState === 'CANCEL_CONFIRM_OPEN') return;
+      if (event instanceof globalThis.WheelEvent && isPopupPointerInteraction(event)) return;
+      if (event instanceof globalThis.MouseEvent && isPopupPointerInteraction(event)) return;
       closePopup();
     };
 
@@ -2172,7 +2191,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
     setRebookConfirm(null);
   };
 
-  const handleRoomBookingCancel = (event: MouseEvent<HTMLButtonElement>, bookingId: string) => {
+  const handleRoomBookingCancel = (event: ReactMouseEvent<HTMLButtonElement>, bookingId: string) => {
     event.preventDefault();
     event.stopPropagation();
     if (!deskPopup || !popupDesk || !isRoomResource(popupDesk)) return;
@@ -2270,7 +2289,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
     }
   };
 
-  const submitPopupCancel = async (event: MouseEvent<HTMLButtonElement>, cancelMode: 'SINGLE' | 'SERIES_ALL' = 'SINGLE') => {
+  const submitPopupCancel = async (event: ReactMouseEvent<HTMLButtonElement>, cancelMode: 'SINGLE' | 'SERIES_ALL' = 'SINGLE') => {
     event.preventDefault();
     event.stopPropagation();
     if (!cancelConfirmDesk || !cancelConfirmContext) return;
