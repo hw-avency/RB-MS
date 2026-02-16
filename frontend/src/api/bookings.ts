@@ -137,3 +137,45 @@ export async function cancelBooking(bookingId: string, meta?: BookingMutationMet
     throw new Error(extractMessage(body) || `HTTP ${response.status}`);
   }
 }
+
+export async function cancelRecurringBookingInstances(recurringBookingId: string, mode: 'ALL' | 'FUTURE' = 'ALL', anchorDate?: string, meta?: BookingMutationMeta): Promise<{ deletedCount: number }> {
+  if (!recurringBookingId) {
+    throw new Error('Missing recurringBookingId');
+  }
+
+  const method = 'DELETE';
+  const query = new URLSearchParams({ mode });
+  if (anchorDate) {
+    query.set('anchorDate', anchorDate);
+  }
+  const path = `/recurring-bookings/${recurringBookingId}/instances?${query.toString()}`;
+  const url = `${API_BASE}${path}`;
+
+  if (meta) {
+    logMutation('SERIES_CANCEL_REQUEST', { requestId: meta.requestId, method, url, body: null });
+  }
+
+  const response = await fetch(url, {
+    method,
+    credentials: 'include',
+    cache: 'no-store',
+    headers: buildHeaders()
+  });
+
+  const body = await readBodySafe(response);
+
+  if (meta) {
+    logMutation('SERIES_CANCEL_RESPONSE', { requestId: meta.requestId, status: response.status, ok: response.ok });
+    logMutation('SERIES_CANCEL_BODY', { requestId: meta.requestId, bodySnippet: toBodySnippet(body) });
+  }
+
+  if (!response.ok) {
+    throw new Error(extractMessage(body) || `HTTP ${response.status}`);
+  }
+
+  if (typeof body === 'object' && body !== null && 'deletedCount' in body && typeof (body as { deletedCount?: unknown }).deletedCount === 'number') {
+    return { deletedCount: (body as { deletedCount: number }).deletedCount };
+  }
+
+  return { deletedCount: 0 };
+}
