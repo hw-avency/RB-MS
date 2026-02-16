@@ -1,4 +1,5 @@
 import { BOOKABLE_END, BOOKABLE_START, clampInterval, intervalsToSegments, mergeIntervals, toMinutes, type MinuteInterval, type RingSegment } from './bookingWindows';
+import { BUSINESS_END_MINUTES, BUSINESS_START_MINUTES } from './roomBusinessDayRing';
 
 type RoomOccupancyBooking = {
   date?: string | null;
@@ -52,8 +53,9 @@ export const computeRoomOccupancy = (
   start = BOOKABLE_START,
   end = BOOKABLE_END
 ): RoomOccupancyMetrics => {
-  const winStart = toMinutes(start);
-  const winEnd = toMinutes(end);
+  const useDefaultWindow = start === BOOKABLE_START && end === BOOKABLE_END;
+  const winStart = useDefaultWindow ? BUSINESS_START_MINUTES : toMinutes(start);
+  const winEnd = useDefaultWindow ? BUSINESS_END_MINUTES : toMinutes(end);
   const windowMinutes = Math.max(0, winEnd - winStart);
   if (!Number.isFinite(winStart) || !Number.isFinite(winEnd) || windowMinutes <= 0) {
     return { intervals: [], segments: [], occupiedMinutes: 0, windowMinutes: 0, occupiedRatio: 0 };

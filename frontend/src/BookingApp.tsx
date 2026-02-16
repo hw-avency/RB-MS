@@ -1174,6 +1174,19 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
       `segments: ${popupRoomOccupiedSegments.length > 0 ? popupRoomOccupiedSegments.map((segment) => `[${segment.p0.toFixed(3)}..${segment.p1.toFixed(3)}]`).join(', ') : '—'}`
     ];
   }, [popupDesk, popupRoomFreeIntervals, popupRoomOccupiedIntervals, popupRoomOccupiedSegments, showRoomDebugInfo]);
+  const popupRoomRingDebugTitle = useMemo(() => {
+    if (!showRoomDebugInfo || !popupDesk || !isRoomResource(popupDesk)) return undefined;
+
+    const segmentList = popupRoomOccupiedIntervals.length > 0
+      ? popupRoomOccupiedIntervals.map((interval) => `${formatMinutes(interval.startMin)}–${formatMinutes(interval.endMin)}`).join(', ')
+      : '—';
+
+    return [
+      `business minutes booked: ${popupRoomOccupancy.occupiedMinutes}`,
+      `segments: ${segmentList}`,
+      `percent booked: ${(popupRoomOccupancy.occupiedRatio * 100).toFixed(1)}%`
+    ].join('\n');
+  }, [popupDesk, popupRoomOccupancy.occupiedMinutes, popupRoomOccupancy.occupiedRatio, popupRoomOccupiedIntervals, showRoomDebugInfo]);
 
   const floorplanFitScaleForDebug = useMemo(() => {
     if (!floorplanImageSize?.width || !floorplanImageSize?.height) return null;
@@ -2512,6 +2525,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
                     isFullyBooked: popupRoomFreeSlotChips.length === 0,
                     conflictMessage: roomBookingConflict,
                     debugInfo: roomDebugInfo,
+                    ringDebugTitle: popupRoomRingDebugTitle,
                     onSelectFreeSlot: (startTime, endTime) => {
                       setBookingFormValues((current) => ({ ...current, startTime, endTime }));
                     },
