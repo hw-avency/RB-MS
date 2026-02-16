@@ -173,7 +173,7 @@ input, select { border: 1px solid hsl(var(--border)); border-radius: 12px; paddi
 
 .summary-row{display:flex;justify-content:space-between;align-items:flex-start}
 .filter-row{display:flex;justify-content:space-between;align-items:center;gap:8px}
-.tabs{display:flex;gap:6px;flex-wrap:wrap}.tab-btn{border:0;border-radius:12px;padding:8px 10px;background:hsl(var(--muted));cursor:pointer;font-weight:500}.tab-btn.active{background:hsl(var(--primary));color:white}
+.tabs{display:flex;flex-wrap:nowrap;gap:8px;overflow-x:auto;padding:2px 0 4px}.tab-btn{border:0;border-radius:10px;padding:6px 10px;min-height:34px;white-space:nowrap;flex:0 0 auto;background:hsl(var(--muted));cursor:pointer;font-weight:600}.tab-btn.active{background:hsl(var(--primary));color:white}.details-panel{padding-right:16px}
 .table-wrap{max-height:380px;overflow:auto} table{width:100%;border-collapse:collapse} th,td{padding:8px 4px;border-bottom:1px solid hsl(var(--border));text-align:left;font-size:14px;vertical-align:top}
 .table-wrap tr{cursor:pointer;transition:background .15s ease}.table-wrap tr.row-active{background:hsl(var(--muted)/.7)}.table-wrap tr.row-highlighted{background:hsl(var(--primary)/.14)}.table-wrap tr:focus-visible{outline:2px solid hsl(var(--primary));outline-offset:-2px}
 td p{margin:2px 0 0}.occupant-card{border:1px solid hsl(var(--border));border-radius:12px;padding:14px;background:hsl(var(--muted)/.5)}

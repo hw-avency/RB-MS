@@ -2,6 +2,7 @@ import { MouseEvent, RefObject, memo, useEffect, useLayoutEffect, useRef, useSta
 import { createPortal } from 'react-dom';
 import { normalizeDaySlotBookings } from './daySlotBookings';
 import { resourceKindLabel } from './resourceKinds';
+import { mergeIntervals as mergeRoomIntervals, normalizeRoomIntervals, roomMinuteToAngle, ROOM_WINDOW_TOTAL_MINUTES } from './roomRing';
 
 type FloorplanBooking = {
   id?: string;
@@ -35,7 +36,6 @@ type FloorplanDesk = {
 type OverlayRect = { left: number; top: number; width: number; height: number };
 type PixelPoint = { x: number; y: number };
 type SlotKey = 'AM' | 'PM';
-type TimeInterval = { start: number; end: number };
 
 const PIN_HITBOX_SIZE = 44;
 const PIN_VISUAL_SIZE = 36;
@@ -44,9 +44,6 @@ const RING_WIDTH = 5;
 const CENTER_SIZE = 28;
 const START_ANGLE = -90;
 const MAX_ROOM_MARKER_LABEL_LENGTH = 4;
-const WORK_START = 7 * 60;
-const WORK_END = 18 * 60;
-const WORK_SPAN = WORK_END - WORK_START;
 
 const clamp01 = (value: number): number => Math.min(1, Math.max(0, value));
 const toNormalized = (raw: number, size: number): number => {
@@ -128,30 +125,6 @@ const arcPath = (startDeg: number, endDeg: number, radius: number): string => {
   return `M ${start.x} ${start.y} A ${radius} ${radius} 0 ${largeArc} 1 ${end.x} ${end.y}`;
 };
 
-const minuteToAngle = (minutes: number): number => {
-  const clampedMinutes = Math.min(WORK_END, Math.max(WORK_START, minutes));
-  const normalized = (clampedMinutes - WORK_START) / WORK_SPAN;
-  return START_ANGLE + normalized * 360;
-};
-
-const clampToWorkWindow = (minutes: number): number => Math.min(WORK_END, Math.max(WORK_START, minutes));
-
-const mergeIntervals = (intervals: TimeInterval[]): TimeInterval[] => {
-  if (intervals.length <= 1) return intervals;
-  const sorted = [...intervals].sort((a, b) => a.start - b.start);
-  const merged: TimeInterval[] = [sorted[0]];
-  for (let i = 1; i < sorted.length; i += 1) {
-    const current = merged[merged.length - 1];
-    const next = sorted[i];
-    if (next.start <= current.end) {
-      current.end = Math.max(current.end, next.end);
-      continue;
-    }
-    merged.push(next);
-  }
-  return merged;
-};
-
 type FloorplanCanvasProps = {
   imageUrl: string;
   imageAlt: string;
@@ -214,17 +187,14 @@ const DeskOverlay = memo(function DeskOverlay({ desks, selectedDeskId, hoveredDe
             return 'var(--resource-busy)';
           };
 
-          const roomIntervals = mergeIntervals(bookings.flatMap((booking) => {
+          const roomIntervals = normalizeRoomIntervals(mergeRoomIntervals(bookings.flatMap((booking) => {
             const startMinutes = hhmmToMinutes(booking.startTime);
             const endMinutes = hhmmToMinutes(booking.endTime);
             if (startMinutes === null || endMinutes === null || endMinutes <= startMinutes) return [];
-            const startInWindow = clampToWorkWindow(startMinutes);
-            const endInWindow = clampToWorkWindow(endMinutes);
-            if (endInWindow <= startInWindow) return [];
-            return [{ start: startInWindow, end: endInWindow }];
-          }));
+            return [{ start: startMinutes, end: endMinutes }];
+          })));
           const roomCoverage = roomIntervals.reduce((total, interval) => total + (interval.end - interval.start), 0);
-          const isRoomFullyBooked = roomCoverage >= WORK_SPAN - 1;
+          const isRoomFullyBooked = roomCoverage >= ROOM_WINDOW_TOTAL_MINUTES - 1;
           const amColor = slotColor(amBooking);
           const pmColor = slotColor(pmBooking);
           const hasUniformHalfDayColor = amColor === pmColor;
@@ -267,7 +237,7 @@ const DeskOverlay = memo(function DeskOverlay({ desks, selectedDeskId, hoveredDe
                     <circle cx={PIN_VISUAL_SIZE / 2} cy={PIN_VISUAL_SIZE / 2} r={RING_RADIUS} className="pin-ring-track" />
                     {isRoomFullyBooked
                       ? <circle cx={PIN_VISUAL_SIZE / 2} cy={PIN_VISUAL_SIZE / 2} r={RING_RADIUS} className="pin-ring-arc" style={{ stroke: 'var(--resource-busy)', strokeWidth: RING_WIDTH, strokeLinecap: 'butt' }} />
-                      : roomIntervals.map((interval, index) => <path key={`${desk.id}-${interval.start}-${interval.end}-${index}`} d={arcPath(minuteToAngle(interval.start), minuteToAngle(interval.end), RING_RADIUS)} className="pin-ring-arc" style={{ stroke: 'var(--resource-busy)', strokeWidth: RING_WIDTH, strokeLinecap: 'round' }} />)}
+                      : roomIntervals.map((interval, index) => <path key={`${desk.id}-${interval.start}-${interval.end}-${index}`} d={arcPath(roomMinuteToAngle(interval.start), roomMinuteToAngle(interval.end), RING_RADIUS)} className="pin-ring-arc" style={{ stroke: 'var(--resource-busy)', strokeWidth: RING_WIDTH, strokeLinecap: 'round' }} />)}
                   </>
                 ) : hasUniformHalfDayColor ? (
                   <circle cx={PIN_VISUAL_SIZE / 2} cy={PIN_VISUAL_SIZE / 2} r={RING_RADIUS} className="pin-ring-arc" style={{ stroke: amColor, strokeWidth: RING_WIDTH, strokeLinecap: shouldUseButtCap ? 'butt' : 'round' }} />

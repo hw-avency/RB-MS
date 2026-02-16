@@ -1,6 +1,6 @@
 import { MouseEvent, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { API_BASE, ApiError, checkBackendHealth, get, markBackendAvailable, post, resolveApiUrl } from './api';
+import { API_BASE, ApiError, checkBackendHealth, get, markBackendAvailable, post, put, resolveApiUrl } from './api';
 import { cancelBooking, createRoomBooking } from './api/bookings';
 import { createMutationRequestId, logMutation, toBodySnippet } from './api/mutationLogger';
 import { Avatar } from './components/Avatar';
@@ -13,6 +13,7 @@ import type { AuthUser } from './auth/AuthProvider';
 import { useToast } from './components/toast';
 import { normalizeDaySlotBookings } from './daySlotBookings';
 import { RESOURCE_KIND_OPTIONS, resourceKindLabel, type ResourceKind } from './resourceKinds';
+import { normalizeRoomIntervals, ROOM_RING_ROTATION_OFFSET_DEG, ROOM_WINDOW_END_MINUTES, ROOM_WINDOW_START_MINUTES, ROOM_WINDOW_TOTAL_MINUTES } from './roomRing';
 
 type Floorplan = { id: string; name: string; imageUrl: string; isDefault?: boolean; defaultResourceKind?: ResourceKind };
 type FloorplanResource = { id: string; floorplanId: string; kind?: ResourceKind };
@@ -94,8 +95,6 @@ type OverviewTab = 'PRESENCE' | 'ROOMS' | 'MY_BOOKINGS';
 
 const POPUP_OFFSET = 12;
 const POPUP_PADDING = 8;
-const WORK_START = 7 * 60;
-const WORK_END = 18 * 60;
 
 const clamp = (value: number, min: number, max: number): number => Math.min(max, Math.max(min, value));
 
@@ -252,7 +251,7 @@ const mergeIntervals = (intervals: TimeInterval[]): TimeInterval[] => {
   return merged;
 };
 
-const toFreeIntervals = (occupied: TimeInterval[], dayStart = WORK_START, dayEnd = WORK_END): TimeInterval[] => {
+const toFreeIntervals = (occupied: TimeInterval[], dayStart = ROOM_WINDOW_START_MINUTES, dayEnd = ROOM_WINDOW_END_MINUTES): TimeInterval[] => {
   const free: TimeInterval[] = [];
   let cursor = dayStart;
   for (const interval of occupied) {
@@ -515,12 +514,11 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
 
   const [occupancy, setOccupancy] = useState<OccupancyResponse | null>(null);
   const [roomAvailability, setRoomAvailability] = useState<RoomAvailabilityResponse | null>(null);
-  const [todayOccupancy, setTodayOccupancy] = useState<OccupancyResponse | null>(null);
   const [employees, setEmployees] = useState<BookingEmployee[]>([]);
   const [selectedEmployeeEmail, setSelectedEmployeeEmail] = useState('');
   const [selectedResourceKindFilter, setSelectedResourceKindFilter] = useState<'ALL' | ResourceKind>('ALL');
   const [overviewTab, setOverviewTab] = useState<OverviewTab>('PRESENCE');
-  const [isTodayPanelExpanded, setIsTodayPanelExpanded] = useState(false);
+  const [isManageEditOpen, setIsManageEditOpen] = useState(false);
 
   const [selectedDeskId, setSelectedDeskId] = useState('');
   const [hoveredDeskId, setHoveredDeskId] = useState('');
@@ -537,6 +535,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
   const [deskPopup, setDeskPopup] = useState<DeskPopupState | null>(null);
   const [bookingDialogState, setBookingDialogState] = useState<BookingDialogState>('IDLE');
   const [bookingFormValues, setBookingFormValues] = useState<BookingFormValues>(createDefaultBookingFormValues(today));
+  const [manageTargetSlot, setManageTargetSlot] = useState<BookingFormValues['slot']>('MORNING');
   const [dialogErrorMessage, setDialogErrorMessage] = useState('');
   const [rebookConfirm, setRebookConfirm] = useState<RebookConfirmState | null>(null);
   const [isRebooking, setIsRebooking] = useState(false);
@@ -603,13 +602,6 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
     currentUserEmail,
     currentUserId: currentUser?.id
   }), [occupancy?.desks, employeesByEmail, employeesById, currentUserEmail, currentUser?.id]);
-  const desksToday = useMemo(() => enrichDeskBookings({
-    desks: todayOccupancy?.desks ?? [],
-    employeesById,
-    employeesByEmail,
-    currentUserEmail,
-    currentUserId: currentUser?.id
-  }), [todayOccupancy?.desks, employeesByEmail, employeesById, currentUserEmail, currentUser?.id]);
   const selectableResourceKinds = useMemo(() => {
     const availableKinds = new Set<ResourceKind>();
     for (const desk of desks) {
@@ -623,7 +615,6 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
   }, [desks, selectedResourceKindFilter]);
   const filteredDesks = useMemo(() => desksBySelectedResourceKind.map((desk) => ({ ...desk, isHighlighted: desk.id === highlightedDeskId })), [desksBySelectedResourceKind, highlightedDeskId]);
   const bookingsForSelectedDate = useMemo<OccupantForDay[]>(() => mapBookingsForDay(desksBySelectedResourceKind), [desksBySelectedResourceKind]);
-  const bookingsForToday = useMemo<OccupantForDay[]>(() => mapBookingsForDay(desksToday), [desksToday]);
   const roomsForSelectedDate = useMemo(() => desksBySelectedResourceKind
     .filter((desk) => isRoomResource(desk))
     .map((room) => ({ room, bookings: normalizeDeskBookings(room) })), [desksBySelectedResourceKind]);
@@ -655,12 +646,12 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
       }))
       .sort((left, right) => (toMinutes(left.startTime ?? undefined) ?? 0) - (toMinutes(right.startTime ?? undefined) ?? 0));
   }, [popupDesk, popupDeskBookings, roomAvailability, selectedDate]);
-  const popupRoomOccupiedIntervals = useMemo(() => mergeIntervals(popupRoomBookingsForSelectedDay.flatMap((booking) => {
+  const popupRoomOccupiedIntervals = useMemo(() => normalizeRoomIntervals(mergeIntervals(popupRoomBookingsForSelectedDay.flatMap((booking) => {
     const start = toMinutes(booking.startTime ?? undefined);
     const end = toMinutes(booking.endTime ?? undefined);
     if (start === null || end === null || end <= start) return [];
     return [{ start, end }];
-  })), [popupRoomBookingsForSelectedDay]);
+  }))), [popupRoomBookingsForSelectedDay]);
   const popupRoomFreeIntervals = useMemo(() => {
     if (roomAvailability && roomAvailability.resource.id === popupDesk?.id && roomAvailability.date === selectedDate) {
       const normalizedWindows = roomAvailability.freeWindows.flatMap((window) => {
@@ -669,7 +660,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
         if (start === null || end === null || end <= start) return [];
         return [{ start, end }];
       });
-      return mergeIntervals(normalizedWindows);
+      return normalizeRoomIntervals(mergeIntervals(normalizedWindows));
     }
 
     return toFreeIntervals(popupRoomOccupiedIntervals);
@@ -705,6 +696,18 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
       endTime: formatMinutesAsTime(interval.end),
       label: `${formatMinutesAsTime(interval.start)} – ${formatMinutesAsTime(interval.end)}`
     })), [popupRoomFreeIntervals]);
+  const showRoomDebugInfo = useMemo(() => {
+    if (typeof window === 'undefined') return false;
+    return new URLSearchParams(window.location.search).get('debug') === '1';
+  }, []);
+
+  const roomDebugInfo = useMemo(() => {
+    if (!showRoomDebugInfo || !popupDesk || !isRoomResource(popupDesk)) return undefined;
+    const occupiedMinutes = popupRoomOccupiedIntervals.reduce((total, interval) => total + (interval.end - interval.start), 0);
+    const percent = ROOM_WINDOW_TOTAL_MINUTES > 0 ? (occupiedMinutes / ROOM_WINDOW_TOTAL_MINUTES) * 100 : 0;
+    const firstSegment = popupRoomOccupiedIntervals[0];
+    return `window: ${formatMinutesAsTime(ROOM_WINDOW_START_MINUTES)}-${formatMinutesAsTime(ROOM_WINDOW_END_MINUTES)} · occupied: ${occupiedMinutes}/${ROOM_WINDOW_TOTAL_MINUTES} (${percent.toFixed(3)}%) · rotationOffsetDeg: ${ROOM_RING_ROTATION_OFFSET_DEG} · firstSegment: ${firstSegment ? `${firstSegment.start}-${firstSegment.end}` : '—'}`;
+  }, [popupDesk, popupRoomOccupiedIntervals, showRoomDebugInfo]);
   const roomBookingConflict = useMemo(() => {
     if (!popupDesk || !isRoomResource(popupDesk)) return '';
     const start = toMinutes(bookingFormValues.startTime);
@@ -714,8 +717,46 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
     if (!conflict) return '';
     return `Kollidiert mit ${formatMinutesAsTime(conflict.start)} – ${formatMinutesAsTime(conflict.end)}`;
   }, [popupDesk, bookingFormValues.startTime, bookingFormValues.endTime, popupRoomOccupiedIntervals]);
-  const popupDeskState = popupDesk ? (!canBookDesk(popupDesk) ? (popupDesk.isCurrentUsersDesk ? 'MINE' : 'TAKEN') : 'FREE') : null;
+  const popupMyBookings = useMemo(() => popupDeskBookings.filter((booking) => booking.isCurrentUser), [popupDeskBookings]);
+  const popupMySelectedBooking = useMemo(() => {
+    if (!popupDesk || isRoomResource(popupDesk) || popupMyBookings.length === 0) return null;
+
+    const selectedSlot = bookingFormValues.slot;
+    const toRange = (slot?: string): TimeInterval => {
+      if (slot === 'AM' || slot === 'MORNING') return { start: 0, end: 1 };
+      if (slot === 'PM' || slot === 'AFTERNOON') return { start: 1, end: 2 };
+      return { start: 0, end: 2 };
+    };
+
+    const target = toRange(selectedSlot);
+    const overlapping = popupMyBookings.filter((booking) => {
+      const source = toRange(booking.daySlot ?? booking.slot);
+      return source.start < target.end && source.end > target.start;
+    });
+
+    if (overlapping.length > 0) return overlapping[0];
+    return popupMyBookings[0];
+  }, [bookingFormValues.slot, popupDesk, popupMyBookings]);
+  const hasUnexpectedMultipleMyBookings = popupMyBookings.length > 1;
+  const popupMode: 'create' | 'manage' = popupMySelectedBooking && popupDesk && !isRoomResource(popupDesk) ? 'manage' : 'create';
+  const popupDeskState = popupDesk ? (popupMode === 'manage' ? 'MINE' : !canBookDesk(popupDesk) ? (popupDesk.isCurrentUsersDesk ? 'MINE' : 'TAKEN') : 'FREE') : null;
   const popupOwnBookingIsRecurring = useMemo(() => popupDeskBookings.some((booking) => booking.isCurrentUser && booking.type === 'recurring'), [popupDeskBookings]);
+  const manageSlotConflict = useMemo(() => {
+    if (!popupDesk || !popupMySelectedBooking || isRoomResource(popupDesk)) return '';
+    const conflict = popupDeskBookings.find((booking) => {
+      if (!booking.id || booking.id === popupMySelectedBooking.id) return false;
+      const isFullDay = booking.daySlot === 'FULL' || booking.slot === 'FULL_DAY';
+      const isMorning = booking.daySlot === 'AM' || booking.slot === 'MORNING';
+      const isAfternoon = booking.daySlot === 'PM' || booking.slot === 'AFTERNOON';
+      if (manageTargetSlot === 'FULL_DAY') return true;
+      if (manageTargetSlot === 'MORNING') {
+        return isFullDay || isMorning;
+      }
+      return isFullDay || isAfternoon;
+    });
+    if (!conflict) return '';
+    return `Der Zeitraum ${manageTargetSlot === 'MORNING' ? 'Vormittag' : manageTargetSlot === 'AFTERNOON' ? 'Nachmittag' : 'Ganztag'} ist bereits belegt.`;
+  }, [manageTargetSlot, popupDesk, popupDeskBookings, popupMySelectedBooking]);
   const cancelConfirmDesk = useMemo(() => (cancelConfirmContext ? desks.find((desk) => desk.id === cancelConfirmContext.deskId) ?? null : null), [desks, cancelConfirmContext]);
   const cancelConfirmBookingLabel = cancelConfirmContext?.bookingLabel ?? bookingSlotLabel(cancelConfirmDesk?.booking);
   const calendarDays = useMemo(() => buildCalendarDays(visibleMonth), [visibleMonth]);
@@ -786,13 +827,9 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
     setIsUpdatingOccupancy(true);
 
     try {
-      const [nextOccupancy, nextTodayOccupancy] = await runWithAppLoading(() => Promise.all([
-        get<OccupancyResponse>(`/occupancy?floorplanId=${floorplanId}&date=${date}`),
-        get<OccupancyResponse>(`/occupancy?floorplanId=${floorplanId}&date=${today}`)
-      ]));
+      const nextOccupancy = await runWithAppLoading(() => get<OccupancyResponse>(`/occupancy?floorplanId=${floorplanId}&date=${date}`));
 
       setOccupancy(nextOccupancy);
-      setTodayOccupancy(nextTodayOccupancy);
       markBackendAvailable(true);
       setBackendDown(false);
       setSelectedDeskId((prev) => (nextOccupancy.desks.some((desk) => desk.id === prev) ? prev : ''));
@@ -802,7 +839,6 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
         setBackendDown(true);
       }
       toast.error(getApiErrorMessage(error, 'Belegung konnte nicht geladen werden.'));
-      setTodayOccupancy(null);
       return null;
     } finally {
       setIsUpdatingOccupancy(false);
@@ -984,10 +1020,18 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
   }, [cancelFlowState, deskPopup]);
 
 
-  const showRoomDebugInfo = useMemo(() => {
-    if (typeof window === 'undefined') return false;
-    return new URLSearchParams(window.location.search).get('debug') === '1';
-  }, []);
+  useEffect(() => {
+    if (!popupMySelectedBooking) return;
+    if (popupMySelectedBooking.daySlot === 'FULL' || popupMySelectedBooking.slot === 'FULL_DAY') {
+      setManageTargetSlot('FULL_DAY');
+      return;
+    }
+    if (popupMySelectedBooking.daySlot === 'PM' || popupMySelectedBooking.slot === 'AFTERNOON') {
+      setManageTargetSlot('AFTERNOON');
+      return;
+    }
+    setManageTargetSlot('MORNING');
+  }, [popupMySelectedBooking?.id]);
 
   useEffect(() => {
     if (!popupDesk || !isRoomResource(popupDesk)) {
@@ -1043,6 +1087,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
     setIsCancellingBooking(false);
     setCancelDialogError('');
     setDialogErrorMessage('');
+    setIsManageEditOpen(false);
 
     if (canBookDesk(desk)) {
       const defaults = createDefaultBookingFormValues(selectedDate);
@@ -1070,6 +1115,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
         }
       }
       setBookingFormValues(defaults);
+      setManageTargetSlot(defaults.slot);
       setBookingDialogState('BOOKING_OPEN');
     } else {
       setBookingDialogState('IDLE');
@@ -1105,6 +1151,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
     setIsCancellingBooking(false);
     setCancellingBookingId(null);
     setCancelDialogError('');
+    setIsManageEditOpen(false);
   };
 
   const updateCancelDebug = useCallback((next: Partial<CancelDebugState> & { lastAction: CancelDebugAction }) => {
@@ -1173,6 +1220,34 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
     toast.success(overwrite
       ? `${response.createdCount ?? 0} Tage gebucht, ${response.updatedCount ?? 0} Tage umgebucht.`
       : 'Gebucht', { deskId });
+  };
+
+  const updateExistingDeskBooking = async () => {
+    if (!popupDesk || !popupMySelectedBooking || isRoomResource(popupDesk)) return;
+    if (!popupMySelectedBooking.id) {
+      setDialogErrorMessage('Die bestehende Buchung konnte nicht eindeutig gefunden werden.');
+      return;
+    }
+
+    setDialogErrorMessage('');
+    setBookingDialogState('SUBMITTING');
+    try {
+      await runWithAppLoading(() => put(`/bookings/${encodeURIComponent(popupMySelectedBooking.id ?? '')}`, {
+        deskId: popupDesk.id,
+        date: selectedDate,
+        daySlot: manageTargetSlot === 'FULL_DAY' ? 'FULL' : manageTargetSlot === 'MORNING' ? 'AM' : 'PM',
+        slot: manageTargetSlot
+      }));
+      await submitPopupBooking(popupDesk.id, { type: 'single', date: selectedDate, slot: manageTargetSlot }, true);
+      await reloadBookings();
+      setBookingVersion((value) => value + 1);
+      setIsManageEditOpen(false);
+    } catch (error) {
+      setDialogErrorMessage(error instanceof Error ? error.message : 'Buchung konnte nicht aktualisiert werden.');
+      setBookingDialogState('BOOKING_OPEN');
+    } finally {
+      setBookingDialogState((prev) => (prev === 'SUBMITTING' ? 'BOOKING_OPEN' : prev));
+    }
   };
 
 
@@ -1334,7 +1409,6 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
     updateCancelDebug({ lastAction: 'CANCEL_SUCCESS', bookingId, endpoint, httpStatus: 200, errorMessage: '' });
 
     setOccupancy((current) => removeBookingFromOccupancy(current, bookingId));
-    setTodayOccupancy((current) => removeBookingFromOccupancy(current, bookingId));
     setBookingVersion((value) => value + 1);
     toast.success('Buchung storniert', { deskId });
 
@@ -1487,7 +1561,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
     </section>
   );
 
-  const renderOccupancyList = (items: OccupantForDay[], sectionKey: 'today' | 'selected', title: string, emptyText: string) => {
+  const renderOccupancyList = (items: OccupantForDay[], title: string, emptyText: string) => {
     if (items.length === 0) {
       return (
         <div className="empty-state compact-empty-state">
@@ -1500,8 +1574,8 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
       <div className="occupancy-list" role="list" aria-label={title}>
         {items.map((occupant) => (
           <div
-            key={`${sectionKey}-${occupant.userId}-${occupant.deskId}`}
-            ref={sectionKey === 'selected' ? (node) => { occupantRowRefs.current[occupant.deskId] = node; } : undefined}
+            key={`selected-${occupant.userId}-${occupant.deskId}`}
+            ref={(node) => { occupantRowRefs.current[occupant.deskId] = node; }}
             role="listitem"
             className={`occupant-compact-card ${(hoveredDeskId === occupant.deskId || selectedDeskId === occupant.deskId) ? 'is-active' : ''} ${highlightedDeskId === occupant.deskId ? 'is-highlighted' : ''}`}
             onMouseEnter={() => {
@@ -1527,48 +1601,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
     );
   };
 
-  const todayPanel = (
-    <section className="card compact-card today-compact-panel">
-      <div className="today-summary-header">
-        <strong>Heute im Büro ({bookingsForToday.length})</strong>
-        <button type="button" className="btn btn-ghost btn-sm" onClick={() => setIsTodayPanelExpanded((value) => !value)}>{isTodayPanelExpanded ? 'Einklappen' : 'Ausklappen'}</button>
-      </div>
-      {bookingsForToday.length === 0 ? (
-        <div className="empty-state compact-empty-state today-people-empty-state">
-          <p>Heute noch niemand eingetragen.</p>
-        </div>
-      ) : (
-        <div className="today-avatar-strip" role="list" aria-label="Anwesende heute">
-          {bookingsForToday.map((person) => (
-            <button
-              key={`today-${person.userId}-${person.deskId}`}
-              type="button"
-              role="listitem"
-              className={`today-avatar-item ${(hoveredDeskId === person.deskId || selectedDeskId === person.deskId) ? 'is-active' : ''} ${highlightedDeskId === person.deskId ? 'is-highlighted' : ''}`}
-              onMouseEnter={() => {
-                setHoveredDeskId(person.deskId);
-                setHighlightedDeskId(person.deskId);
-              }}
-              onMouseLeave={() => {
-                setHoveredDeskId('');
-                setHighlightedDeskId('');
-              }}
-              onFocus={() => setHighlightedDeskId(person.deskId)}
-              onBlur={() => setHighlightedDeskId('')}
-              onClick={() => {
-                setSelectedDate(today);
-                setVisibleMonth(startOfMonth(today));
-              }}
-              title={person.name}
-            >
-              <Avatar displayName={person.name} email={person.email} photoUrl={person.photoUrl} size={36} />
-            </button>
-          ))}
-        </div>
-      )}
-      {isTodayPanelExpanded && bookingsForToday.length > 0 && renderOccupancyList(bookingsForToday, 'today', 'Heute im Büro', 'Niemand anwesend')}
-    </section>
-  );
+
 
   const dayOverviewPanel = (
     <section className="card compact-card stack-sm details-panel">
@@ -1579,7 +1612,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
         <button type="button" className={`tab-btn ${overviewTab === 'MY_BOOKINGS' ? 'active' : ''}`} onClick={() => setOverviewTab('MY_BOOKINGS')}>Meine Buchungen</button>
       </div>
 
-      {overviewTab === 'PRESENCE' && renderOccupancyList(bookingsForSelectedDate, 'selected', 'Anwesenheit am ausgewählten Datum', 'Niemand anwesend')}
+      {overviewTab === 'PRESENCE' && renderOccupancyList(bookingsForSelectedDate, 'Anwesenheit am ausgewählten Datum', 'Niemand anwesend')}
 
       {overviewTab === 'ROOMS' && (
         <div className="occupancy-list" role="list" aria-label="Raumübersicht">
@@ -1781,9 +1814,6 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
         </div>
       </header>
 
-
-      {isBootstrapping ? <div className="card skeleton h-120" /> : todayPanel}
-
       <section className="layout-grid">
         <aside className="left-col stack-sm">
           {isBootstrapping ? <div className="card skeleton h-480" /> : dateAndViewPanel}
@@ -1836,7 +1866,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
           role="menu"
           data-placement={deskPopupCoords?.placement ?? 'right'}
         >
-          {popupDeskState === 'FREE' ? (
+          {popupMode === 'create' ? (
             <>
               <div className="desk-popup-header">
                 <div className="stack-xxs">
@@ -1845,6 +1875,14 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
                 </div>
                 <button type="button" className="btn btn-ghost desk-popup-close" aria-label="Popover schließen" onClick={closeBookingFlow} disabled={isCancellingBooking}>✕</button>
               </div>
+              {showRoomDebugInfo && (
+                <div className="muted" style={{ fontSize: 12, border: '1px solid hsl(var(--border))', borderRadius: 8, padding: 8, marginBottom: 8 }}>
+                  <div>mode: {popupMode}</div>
+                  <div>myBookingId: {popupMySelectedBooking?.id ?? '—'}</div>
+                  <div>myBookingPeriod: {popupMySelectedBooking ? bookingSlotLabel(popupMySelectedBooking) : '—'}</div>
+                  {hasUnexpectedMultipleMyBookings && <div>warning: multiple own bookings on resource/date</div>}
+                </div>
+              )}
               <BookingForm
                 values={bookingFormValues}
                 onChange={setBookingFormValues}
@@ -1867,7 +1905,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
                     freeSlots: popupRoomFreeSlotChips,
                     isFullyBooked: popupRoomFreeSlotChips.length === 0,
                     conflictMessage: roomBookingConflict,
-                    debugInfo: showRoomDebugInfo ? `bookings loaded: ${popupRoomBookingsList.length} · date: ${selectedDate} · room: ${popupDesk.name}` : undefined,
+                    debugInfo: roomDebugInfo,
                     onSelectFreeSlot: (startTime, endTime) => {
                       setBookingFormValues((current) => ({ ...current, startTime, endTime }));
                     },
@@ -1881,12 +1919,46 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
               <h3>{resourceKindLabel(popupDesk.kind)}: {popupDesk.name}</h3>
               <div className="stack-sm">
                 <p className="muted">Datum: {new Date(`${selectedDate}T00:00:00.000Z`).toLocaleDateString('de-DE')}</p>
-                {!isRoomResource(popupDesk) && <p className="muted">Status: {deskAvailabilityLabel(popupDeskAvailability)}</p>}
+                {popupMode === 'manage' && popupMySelectedBooking
+                  ? <p className="muted">Deine Buchung: {bookingSlotLabel(popupMySelectedBooking)}</p>
+                  : !isRoomResource(popupDesk) && <p className="muted">Status: {deskAvailabilityLabel(popupDeskAvailability)}</p>}
                 {popupDeskBookings.map((booking) => (
                   <p key={booking.id ?? `${booking.userEmail}-${bookingSlotLabel(booking)}`} className="muted">
                     {bookingSlotLabel(booking)}: {booking.userDisplayName ?? booking.userEmail}
                   </p>
                 ))}
+                {showRoomDebugInfo && (
+                  <div className="muted" style={{ fontSize: 12, border: '1px solid hsl(var(--border))', borderRadius: 8, padding: 8 }}>
+                    <div>mode: {popupMode}</div>
+                    <div>myBookingId: {popupMySelectedBooking?.id ?? '—'}</div>
+                    <div>myBookingPeriod: {popupMySelectedBooking ? bookingSlotLabel(popupMySelectedBooking) : '—'}</div>
+                    {hasUnexpectedMultipleMyBookings && <div>warning: multiple own bookings on resource/date</div>}
+                  </div>
+                )}
+                {popupMode === 'manage' && popupMySelectedBooking && !popupOwnBookingIsRecurring && (
+                  <div className="stack-xs">
+                    {!isManageEditOpen ? (
+                      <button type="button" className="btn" onClick={() => setIsManageEditOpen(true)} disabled={bookingDialogState === 'SUBMITTING'}>Ändern</button>
+                    ) : (
+                      <>
+                        <label className="stack-xs">
+                          <span className="field-label">Zeitraum ändern</span>
+                          <select value={manageTargetSlot} onChange={(event) => setManageTargetSlot(event.target.value as BookingFormValues['slot'])} disabled={bookingDialogState === 'SUBMITTING'}>
+                            <option value="MORNING">Vormittag</option>
+                            <option value="AFTERNOON">Nachmittag</option>
+                            <option value="FULL_DAY">Ganztag</option>
+                          </select>
+                        </label>
+                        {manageSlotConflict && <p className="field-error" role="alert">{manageSlotConflict}</p>}
+                        {dialogErrorMessage && <p className="error-banner" role="alert">{dialogErrorMessage}</p>}
+                        <div className="inline-end">
+                          <button type="button" className="btn btn-outline" onClick={() => { setIsManageEditOpen(false); setDialogErrorMessage(''); }} disabled={bookingDialogState === 'SUBMITTING'}>Abbrechen</button>
+                          <button type="button" className="btn" onClick={() => void updateExistingDeskBooking()} disabled={bookingDialogState === 'SUBMITTING' || Boolean(manageSlotConflict)}>{bookingDialogState === 'SUBMITTING' ? 'Speichern…' : 'Speichern'}</button>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                )}
                 <div className="inline-end">
                   <button type="button" className="btn btn-outline" onClick={closeBookingFlow} disabled={isCancellingBooking}>Schließen</button>
                   {popupDeskState === 'MINE' && (
@@ -1894,9 +1966,9 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
                       type="button"
                       className="btn btn-danger"
                       onClick={openCancelConfirm}
-                      disabled={popupOwnBookingIsRecurring}
+                      disabled={popupOwnBookingIsRecurring || bookingDialogState === 'SUBMITTING'}
                     >
-                      Buchung stornieren
+                      Stornieren
                     </button>
                   )}
                 </div>
