@@ -103,10 +103,16 @@ const slotFromBooking = (booking: FloorplanBooking): 'AM' | 'PM' | 'FULL' | null
 };
 
 const hhmmToMinutes = (value?: string): number | null => {
-  if (!value || !/^\d{2}:\d{2}$/.test(value)) return null;
-  const [h, m] = value.split(':').map(Number);
-  if (!Number.isFinite(h) || !Number.isFinite(m)) return null;
-  return h * 60 + m;
+  if (!value) return null;
+  if (/^\d{2}:\d{2}$/.test(value)) {
+    const [h, m] = value.split(':').map(Number);
+    if (!Number.isFinite(h) || !Number.isFinite(m)) return null;
+    return h * 60 + m;
+  }
+
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return null;
+  return parsed.getHours() * 60 + parsed.getMinutes();
 };
 
 const angleToPoint = (deg: number, radius: number): { x: number; y: number } => {

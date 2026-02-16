@@ -187,10 +187,27 @@ const formatMinutesAsTime = (minutes: number): string => {
 };
 
 const toMinutes = (value?: string): number | null => {
-  if (!value || !/^\d{2}:\d{2}$/.test(value)) return null;
-  const [hour, minute] = value.split(':').map(Number);
+  if (!value) return null;
+
+  if (/^\d{2}:\d{2}$/.test(value)) {
+    const [hour, minute] = value.split(':').map(Number);
+    if (!Number.isFinite(hour) || !Number.isFinite(minute)) return null;
+    return hour * 60 + minute;
+  }
+
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return null;
+  const hour = parsed.getHours();
+  const minute = parsed.getMinutes();
   if (!Number.isFinite(hour) || !Number.isFinite(minute)) return null;
   return hour * 60 + minute;
+};
+
+const bookingBelongsToDay = (booking: { startTime?: string }, selectedDateValue: string): boolean => {
+  if (!booking.startTime) return true;
+  const parsed = new Date(booking.startTime);
+  if (Number.isNaN(parsed.getTime())) return true;
+  return toLocalDateKey(parsed) === selectedDateValue;
 };
 
 const mergeIntervals = (intervals: TimeInterval[]): TimeInterval[] => {
@@ -396,6 +413,35 @@ const enrichDeskBookings = ({
   };
 });
 
+const removeBookingFromDesk = (desk: OccupancyDesk, bookingId: string): OccupancyDesk => {
+  const sourceBookings = desk.bookings && desk.bookings.length > 0
+    ? desk.bookings
+    : desk.booking
+      ? [desk.booking]
+      : [];
+
+  if (sourceBookings.length === 0) return desk;
+
+  const nextBookings = sourceBookings.filter((booking) => booking.id !== bookingId);
+  if (nextBookings.length === sourceBookings.length) return desk;
+
+  return {
+    ...desk,
+    bookings: nextBookings,
+    booking: nextBookings[0] ?? null,
+    status: nextBookings.length > 0 ? 'booked' : 'free',
+    isCurrentUsersDesk: nextBookings.some((booking) => booking.isCurrentUser)
+  };
+};
+
+const removeBookingFromOccupancy = (state: OccupancyResponse | null, bookingId: string): OccupancyResponse | null => {
+  if (!state) return state;
+  return {
+    ...state,
+    desks: state.desks.map((desk) => removeBookingFromDesk(desk, bookingId))
+  };
+};
+
 function TopLoadingBar({ loading }: { loading: boolean }) {
   const [shouldRender, setShouldRender] = useState(false);
   const [isVisible, setIsVisible] = useState(false);
@@ -531,32 +577,38 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
   const popupDesk = useMemo(() => (deskPopup ? desks.find((desk) => desk.id === deskPopup.deskId) ?? null : null), [desks, deskPopup]);
   const popupDeskAvailability = useMemo(() => getDeskSlotAvailability(popupDesk), [popupDesk]);
   const popupDeskBookings = useMemo(() => (popupDesk ? normalizeDeskBookings(popupDesk) : []), [popupDesk]);
-  const popupRoomOccupiedIntervals = useMemo(() => mergeIntervals(popupDeskBookings.flatMap((booking) => {
+  const popupRoomBookingsForSelectedDay = useMemo(() => popupDeskBookings.filter((booking) => bookingBelongsToDay(booking, selectedDate)), [popupDeskBookings, selectedDate]);
+  const popupRoomOccupiedIntervals = useMemo(() => mergeIntervals(popupRoomBookingsForSelectedDay.flatMap((booking) => {
     const start = toMinutes(booking.startTime);
     const end = toMinutes(booking.endTime);
     if (start === null || end === null || end <= start) return [];
     return [{ start, end }];
-  })), [popupDeskBookings]);
+  })), [popupRoomBookingsForSelectedDay]);
   const popupRoomFreeIntervals = useMemo(() => toFreeIntervals(popupRoomOccupiedIntervals), [popupRoomOccupiedIntervals]);
-  const popupRoomBookingsList = useMemo<RoomBookingListEntry[]>(() => popupDeskBookings
-    .flatMap((booking) => {
-      const start = toMinutes(booking.startTime);
-      const end = toMinutes(booking.endTime);
-      if (start === null || end === null || end <= start) return [];
-      const bookingEmail = booking.userEmail.toLowerCase();
-      const isCurrentUser = Boolean(booking.isCurrentUser || (currentUser?.id && booking.employeeId === currentUser.id) || (currentUserEmail && bookingEmail === currentUserEmail.toLowerCase()));
-      return [{
-        id: booking.id ?? `${booking.userEmail}-${booking.startTime}-${booking.endTime}`,
-        start,
-        end,
-        label: `${formatMinutesAsTime(start)} – ${formatMinutesAsTime(end)}`,
-        person: booking.userDisplayName ?? booking.userEmail,
-        bookingId: booking.id,
-        isCurrentUser,
-        isRecurring: booking.type === 'recurring'
-      }];
-    })
-    .sort((a, b) => a.start - b.start), [popupDeskBookings, currentUser?.id, currentUserEmail]);
+  const popupRoomBookingsList = useMemo<RoomBookingListEntry[]>(() => {
+    const rendered = popupRoomBookingsForSelectedDay
+      .flatMap((booking) => {
+        const start = toMinutes(booking.startTime);
+        const end = toMinutes(booking.endTime);
+        if (start === null || end === null || end <= start) return [];
+        const bookingEmail = booking.userEmail.toLowerCase();
+        const isCurrentUser = Boolean(booking.isCurrentUser || (currentUser?.id && booking.employeeId === currentUser.id) || (currentUserEmail && bookingEmail === currentUserEmail.toLowerCase()));
+        return [{
+          id: booking.id ?? `${booking.userEmail}-${booking.startTime}-${booking.endTime}`,
+          start,
+          end,
+          label: `${formatMinutesAsTime(start)} – ${formatMinutesAsTime(end)}`,
+          person: booking.userDisplayName ?? booking.userEmail,
+          bookingId: booking.id,
+          isCurrentUser,
+          isRecurring: booking.type === 'recurring'
+        }];
+      })
+      .sort((a, b) => a.start - b.start);
+
+    console.log('[ROOM] renderedBookings ids', rendered.map((booking) => booking.bookingId ?? booking.id));
+    return rendered;
+  }, [popupRoomBookingsForSelectedDay, currentUser?.id, currentUserEmail]);
   const popupRoomFreeSlotChips = useMemo(() => popupRoomFreeIntervals
     .filter((interval) => interval.end - interval.start >= 30)
     .map((interval) => ({
@@ -910,7 +962,9 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
     const refreshed = await loadOccupancy(selectedFloorplanId, options?.date ?? selectedDate);
     if (options?.requestId && options.roomId && refreshed) {
       const roomDesk = refreshed.desks.find((desk) => desk.id === options.roomId);
-      const roomBookingsCount = roomDesk ? normalizeDeskBookings(roomDesk).length : 0;
+      const roomDeskBookings = roomDesk ? normalizeDeskBookings(roomDesk).filter((booking) => bookingBelongsToDay(booking, options.date ?? selectedDate)) : [];
+      const roomBookingsCount = roomDeskBookings.length;
+      console.log('[ROOM] freshBookings ids', roomDeskBookings.map((booking) => booking.id));
       logMutation('ROOM_REFETCH_DONE', { requestId: options.requestId, roomId: options.roomId, count: roomBookingsCount });
     }
   };
@@ -1134,6 +1188,38 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
     setCancelFlowState('CANCEL_CONFIRM_OPEN');
   };
 
+  const cancelBookingWithRefresh = async ({ bookingId, requestId, deskId, date, keepPopoverOpen, popupDeskId, isRoomCancel }: { bookingId: string; requestId: string; deskId: string; date: string; keepPopoverOpen: boolean; popupDeskId: string; isRoomCancel: boolean }) => {
+    await runWithAppLoading(async () => {
+      await cancelBooking(bookingId, isRoomCancel ? { requestId } : undefined);
+    });
+
+    setOccupancy((current) => removeBookingFromOccupancy(current, bookingId));
+    setTodayOccupancy((current) => removeBookingFromOccupancy(current, bookingId));
+    setBookingVersion((value) => value + 1);
+    toast.success('Buchung storniert', { deskId });
+
+    setCancelDialogError('');
+    if (keepPopoverOpen) {
+      setCancelFlowState('DESK_POPOVER_OPEN');
+      window.requestAnimationFrame(() => {
+        refreshDeskPopupAnchorRect(popupDeskId);
+      });
+    } else {
+      setCancelFlowState('NONE');
+      setDeskPopup(null);
+    }
+    setCancelConfirmContext(null);
+
+    reloadBookings(isRoomCancel ? { requestId, roomId: deskId, date } : undefined).catch((error) => {
+      if (isRoomCancel) {
+        logMutation('ROOM_REFETCH_ERROR', {
+          requestId,
+          err: error instanceof Error ? error.message : toBodySnippet(error)
+        });
+      }
+    });
+  };
+
   const submitPopupCancel = async () => {
     if (!cancelConfirmDesk || !cancelConfirmContext) return;
     if (cancelConfirmContext.isRecurring) {
@@ -1168,25 +1254,15 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
     logMutation('UI_SET_LOADING', { requestId, value: true });
 
     try {
-      await runWithAppLoading(async () => {
-        await cancelBooking(bookingId, isRoomCancel ? { requestId } : undefined);
+      await cancelBookingWithRefresh({
+        bookingId,
+        requestId,
+        deskId: cancelConfirmDesk.id,
+        date: selectedDate,
+        keepPopoverOpen: cancelConfirmContext.keepPopoverOpen,
+        popupDeskId: cancelConfirmContext.deskId,
+        isRoomCancel
       });
-      toast.success('Buchung storniert', { deskId: cancelConfirmDesk.id });
-      await reloadBookings(isRoomCancel ? { requestId, roomId: cancelConfirmDesk.id, date: selectedDate } : undefined);
-      setBookingVersion((value) => value + 1);
-
-      setCancelDialogError('');
-      setIsCancellingBooking(false);
-      if (cancelConfirmContext.keepPopoverOpen) {
-        setCancelFlowState('DESK_POPOVER_OPEN');
-        window.requestAnimationFrame(() => {
-          refreshDeskPopupAnchorRect(cancelConfirmContext.deskId);
-        });
-      } else {
-        setCancelFlowState('NONE');
-        setDeskPopup(null);
-      }
-      setCancelConfirmContext(null);
     } catch (error) {
       if (isRoomCancel) {
         logMutation('ROOM_CANCEL_ERROR', {
