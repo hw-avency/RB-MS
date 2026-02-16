@@ -62,6 +62,7 @@ model Employee {
   lastLoginAt DateTime?
   createdAt   DateTime  @default(now())
   sessions    Session[]
+  bookingsCreated Booking[] @relation("BookingCreatedByEmployee")
 }
 
 model Floorplan {
@@ -104,6 +105,9 @@ model Booking {
   userEmail String?
   bookedFor BookedFor @default(SELF)
   guestName String?
+  creatorUnknown Boolean @default(false)
+  createdByEmployeeId String
+  createdByEmployee Employee @relation("BookingCreatedByEmployee", fields: [createdByEmployeeId], references: [id], onDelete: Restrict)
   createdByUserId String?
   createdByEmail String?
   date      DateTime @db.Date
@@ -122,6 +126,7 @@ model Booking {
   @@index([deskId])
   @@index([createdByUserId])
   @@index([createdByEmail])
+  @@index([createdByEmployeeId])
 }
 
 enum BookedFor {

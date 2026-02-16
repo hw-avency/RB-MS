@@ -843,13 +843,11 @@ const hashPassword = async (value: string): Promise<string> => bcrypt.hash(value
 type BookingTx = Prisma.TransactionClient;
 type BookingIdentity = { normalizedEmail: string; userKey: string; entraOid: string | null; emailAliases: string[] };
 type BookingWithDeskContext = Prisma.BookingGetPayload<{ include: { desk: { select: { name: true; kind: true } } } }>;
-type BookingWithCreator = Prisma.BookingGetPayload<{ include: { createdBy: { select: { id: true; displayName: true; email: true } } } }>;
+type BookingWithCreator = Prisma.BookingGetPayload<{ include: { createdByEmployee: { select: { id: true; displayName: true; email: true } } } }>;
 type CreatorSummary = { id: string; displayName: string; email: string };
 
 const resolveCreatedBySummary = (params: {
   createdBy: { id: string; displayName: string | null; email: string } | null;
-  createdByUserId?: string | null;
-  createdByEmail?: string | null;
   fallbackUser?: CreatorSummary | null;
 }): CreatorSummary => {
   if (params.createdBy) {
@@ -865,9 +863,9 @@ const resolveCreatedBySummary = (params: {
   }
 
   return {
-    id: params.createdByUserId?.trim() || 'legacy-missing-created-by',
+    id: 'legacy-missing-created-by',
     displayName: 'Unbekannt',
-    email: params.createdByEmail ?? ''
+    email: ''
   };
 };
 
@@ -891,6 +889,51 @@ const findBookingIdentity = async (userEmail: string): Promise<BookingIdentity> 
     userKey: entraOid ?? normalizedEmail,
     entraOid,
     emailAliases
+  };
+};
+
+
+const requireActorEmployee = async (req: express.Request): Promise<{ id: string; displayName: string; email: string; role: EmployeeRole }> => {
+  if (!req.authUser) {
+    const error = new Error('Authentication required');
+    (error as Error & { status?: number }).status = 401;
+    throw error;
+  }
+
+  if (AUTH_BYPASS_ENABLED && req.authUser.source === 'local' && !req.authSession?.employeeId) {
+    return {
+      id: req.authUser.id,
+      displayName: req.authUser.displayName,
+      email: req.authUser.email,
+      role: req.authUser.role
+    };
+  }
+
+  const normalizedEmail = normalizeEmail(req.authUser.email);
+  const employee = req.authSession?.employeeId
+    ? await prisma.employee.findUnique({ where: { id: req.authSession.employeeId }, select: { id: true, displayName: true, email: true, role: true, isActive: true } })
+    : await prisma.employee.findUnique({ where: { email: normalizedEmail }, select: { id: true, displayName: true, email: true, role: true, isActive: true } });
+
+  if (!employee || !employee.isActive) {
+    if (AUTH_BYPASS_ENABLED && req.authUser.source === 'local') {
+      return {
+        id: req.authUser.id,
+        displayName: req.authUser.displayName,
+        email: req.authUser.email,
+        role: req.authUser.role
+      };
+    }
+
+    const error = new Error('No active employee mapped to current session');
+    (error as Error & { status?: number }).status = 403;
+    throw error;
+  }
+
+  return {
+    id: employee.id,
+    displayName: employee.displayName,
+    email: employee.email,
+    role: employee.role === 'admin' ? 'admin' : 'user'
   };
 };
 
@@ -932,9 +975,9 @@ const mapBookingResponse = (booking: BookingWithCreator) => ({
   userEmail: booking.userEmail,
   bookedFor: booking.bookedFor,
   guestName: booking.guestName,
-  createdBy: booking.createdBy,
-  createdByUserId: booking.createdByUserId,
-  createdByEmail: booking.createdByEmail,
+  createdByEmployee: booking.createdByEmployee,
+  createdBy: booking.createdByEmployee,
+  createdByUserId: booking.createdByEmployeeId,
   date: booking.date,
   daySlot: booking.daySlot,
   slot: booking.slot,
@@ -1933,6 +1976,15 @@ app.post('/bookings', async (req, res) => {
     return;
   }
 
+  let actorEmployee;
+  try {
+    actorEmployee = await requireActorEmployee(req);
+  } catch (error) {
+    const status = (error as Error & { status?: number }).status ?? 403;
+    res.status(status).json({ error: status === 401 ? 'unauthorized' : 'forbidden', message: (error as Error).message });
+    return;
+  }
+
   const bookingMode = parseBookedFor(bookedFor);
   const normalizedGuestName = normalizeGuestName(guestName);
   if (bookingMode === 'GUEST') {
@@ -2034,6 +2086,7 @@ app.post('/bookings', async (req, res) => {
         userEmail: identity?.normalizedEmail ?? null,
         bookedFor: bookingMode,
         guestName: bookingMode === 'GUEST' ? normalizedGuestName : null,
+        createdByEmployeeId: actorEmployee.id,
         createdByUserId: currentUser.source === 'local' ? currentUser.id : null,
         createdByEmail: currentUser.email,
         date: parsedDate,
@@ -2044,8 +2097,18 @@ app.post('/bookings', async (req, res) => {
         startMinute: bookingWindow.mode === 'time' ? bookingWindow.startMinute : null,
         endMinute: bookingWindow.mode === 'time' ? bookingWindow.endMinute : null
       },
-      include: { createdBy: { select: { id: true, displayName: true, email: true } } }
+      include: { createdByEmployee: { select: { id: true, displayName: true, email: true } } }
     });
+
+    if (process.env.DEBUG === '1') {
+      console.info('BOOKING_CREATE', {
+        actorEmployeeId: actorEmployee.id,
+        bookedFor: bookingMode,
+        employeeId: identity?.normalizedEmail ?? null,
+        guestName: bookingMode === 'GUEST' ? normalizedGuestName : null,
+        createdByEmployeeId: created.createdByEmployeeId
+      });
+    }
 
     return { kind: 'ok' as const, status: 201, booking: created };
   });
@@ -2081,8 +2144,17 @@ app.put('/bookings/:id', async (req, res) => {
     return;
   }
 
+  let actorEmployee;
+  try {
+    actorEmployee = await requireActorEmployee(req);
+  } catch (error) {
+    const status = (error as Error & { status?: number }).status ?? 403;
+    res.status(status).json({ error: status === 401 ? 'unauthorized' : 'forbidden', message: (error as Error).message });
+    return;
+  }
+
   const authEmail = req.authUser?.email;
-  if (req.authUser?.role !== 'admin' && existing.userEmail !== authEmail && normalizeEmail(existing.createdByEmail ?? '') !== normalizeEmail(req.authUser?.email ?? '')) {
+  if (req.authUser?.role !== 'admin' && existing.userEmail !== authEmail && existing.createdByEmployeeId !== actorEmployee.id) {
     res.status(403).json({ error: 'forbidden', message: 'Cannot update booking of another user' });
     return;
   }
@@ -2135,7 +2207,7 @@ app.put('/bookings/:id', async (req, res) => {
       endTime: nextWindow.mode === 'time' ? new Date(Date.UTC(bookingDate.getUTCFullYear(), bookingDate.getUTCMonth(), bookingDate.getUTCDate(), Math.floor(nextWindow.endMinute / 60), nextWindow.endMinute % 60, 0, 0)) : null,
       slot: nextWindow.mode === 'day' ? (nextWindow.daySlot === 'FULL' ? 'FULL_DAY' : nextWindow.daySlot === 'AM' ? 'MORNING' : 'AFTERNOON') : 'CUSTOM'
     },
-    include: { createdBy: { select: { id: true, displayName: true, email: true } } }
+    include: { createdByEmployee: { select: { id: true, displayName: true, email: true } } }
   });
   res.status(200).json(mapBookingResponse(updated));
 });
@@ -2168,15 +2240,24 @@ app.delete('/bookings/:id', async (req, res) => {
       return;
     }
 
+    let actorEmployee;
+    try {
+      actorEmployee = await requireActorEmployee(req);
+    } catch (error) {
+      const status = (error as Error & { status?: number }).status ?? 403;
+      console.warn('BOOKING_CANCEL', { requestId, userId, bookingId: id, resourceType: existing.desk?.kind ?? null, status, error: (error as Error).message });
+      res.status(status).json({ error: status === 401 ? 'unauthorized' : 'forbidden', message: (error as Error).message });
+      return;
+    }
+
     const allowed = canCancelBooking({
       booking: {
         bookedFor: existing.bookedFor,
         userEmail: existing.userEmail,
-        createdByEmail: existing.createdByEmail ?? null,
-        createdByUserId: existing.createdByUserId ?? null
+        createdByEmployeeId: existing.createdByEmployeeId
       },
       actor: {
-        userId: req.authUser.id,
+        employeeId: actorEmployee.id,
         email: req.authUser.email,
         isAdmin: req.authUser.role === 'admin'
       }
@@ -2187,8 +2268,8 @@ app.delete('/bookings/:id', async (req, res) => {
       bookingId: id,
       bookedFor: existing.bookedFor,
       bookingUserEmail: existing.userEmail,
-      createdByEmail: existing.createdByEmail,
-      createdByUserId: existing.createdByUserId,
+      createdByEmployeeId: existing.createdByEmployeeId,
+      actorEmployeeId: actorEmployee.id,
       actorUserId: req.authUser.id,
       actorEmail: req.authUser.email,
       actorIsAdmin: req.authUser.role === 'admin',
@@ -2350,6 +2431,15 @@ app.post('/bookings/range', async (req, res) => {
 
   const identity = await findBookingIdentity(userEmail);
 
+  let actorEmployee;
+  try {
+    actorEmployee = await requireActorEmployee(req);
+  } catch (error) {
+    const status = (error as Error & { status?: number }).status ?? 403;
+    res.status(status).json({ error: status === 401 ? 'unauthorized' : 'forbidden', message: (error as Error).message });
+    return;
+  }
+
   const result = await prisma.$transaction(async (tx) => {
     const lockKeys = Array.from(new Set(targetDates.flatMap((targetDate) => [
       bookingUserKeyForDate(identity.userKey, targetDate),
@@ -2438,7 +2528,7 @@ app.post('/bookings/range', async (req, res) => {
         continue;
       }
 
-      await tx.booking.create({ data: { deskId, userEmail: identity.normalizedEmail, createdByUserId: req.authUser?.source === 'local' ? req.authUser.id : null, createdByEmail: req.authUser?.email ?? null, bookedFor: 'SELF', guestName: null, date: targetDate } });
+      await tx.booking.create({ data: { deskId, userEmail: identity.normalizedEmail, createdByEmployeeId: actorEmployee.id, createdByUserId: req.authUser?.source === 'local' ? req.authUser.id : null, createdByEmail: req.authUser?.email ?? null, bookedFor: 'SELF', guestName: null, date: targetDate } });
       createdCount += 1;
     }
 
@@ -2507,7 +2597,14 @@ app.get('/bookings', async (req, res) => {
   }
 
   if (req.authUser?.role !== 'admin' && req.authUser?.id) {
-    where.createdByEmail = req.authUser.email;
+    try {
+      const actorEmployee = await requireActorEmployee(req);
+      where.createdByEmployeeId = actorEmployee.id;
+    } catch (error) {
+      const status = (error as Error & { status?: number }).status ?? 403;
+      res.status(status).json({ error: status === 401 ? 'unauthorized' : 'forbidden', message: (error as Error).message });
+      return;
+    }
   }
 
   const bookings = await prisma.booking.findMany({
@@ -2518,8 +2615,8 @@ app.get('/bookings', async (req, res) => {
       userEmail: true,
       bookedFor: true,
       guestName: true,
-      createdByUserId: true,
-      createdByEmail: true,
+      createdByEmployeeId: true,
+      creatorUnknown: true,
       date: true,
       daySlot: true,
       startTime: true,
@@ -2528,7 +2625,7 @@ app.get('/bookings', async (req, res) => {
       startMinute: true,
       endMinute: true,
       createdAt: true,
-      createdBy: { select: { id: true, displayName: true, email: true } },
+      createdByEmployee: { select: { id: true, displayName: true, email: true } },
       desk: { select: { kind: true } }
     },
     orderBy: [{ date: 'asc' }, { createdAt: 'asc' }]
@@ -2557,20 +2654,20 @@ app.get('/bookings', async (req, res) => {
       const appUser = normalizedUserEmail ? usersByEmail.get(normalizedUserEmail) : undefined;
       const fallbackUser = booking.userEmail
         ? {
-          id: appUser?.id ?? booking.createdByUserId ?? `legacy-${normalizedUserEmail}`,
+          id: appUser?.id ?? booking.createdByEmployeeId ?? `legacy-${normalizedUserEmail}`,
           displayName: employee?.displayName ?? appUser?.displayName ?? booking.userEmail,
           email: booking.userEmail
         }
         : null;
       const createdBy = resolveCreatedBySummary({
-        createdBy: booking.createdBy,
-        createdByUserId: booking.createdByUserId,
+        createdBy: booking.createdByEmployee,
         fallbackUser
       });
 
       return {
         createdBy,
         createdByUserId: createdBy.id,
+    createdByEmployeeId: booking.createdByEmployeeId,
         user: booking.bookedFor === 'SELF' && fallbackUser ? fallbackUser : null,
         userDisplayName: employee?.displayName,
         employeeId: employee?.id,
@@ -2621,7 +2718,7 @@ app.get('/occupancy', async (req, res) => {
       deskId: { in: deskIds }
     },
     include: {
-      createdBy: { select: { id: true, displayName: true, email: true } }
+      createdByEmployee: { select: { id: true, displayName: true, email: true } }
     },
     orderBy: [{ createdAt: 'asc' }]
   });
@@ -2639,8 +2736,10 @@ app.get('/occupancy', async (req, res) => {
       userEmail: booking.userEmail,
       bookedFor: booking.bookedFor,
       guestName: booking.guestName,
-      createdBy: booking.createdBy,
-      createdByUserId: booking.createdByUserId,
+      createdBy: booking.createdByEmployee,
+      createdByUserId: booking.createdByEmployeeId,
+      createdByEmployeeId: booking.createdByEmployeeId,
+      creatorUnknown: booking.creatorUnknown,
       employeeId: booking.userEmail ? employeesByEmail.get(normalizeEmail(booking.userEmail))?.id : undefined,
       userDisplayName: booking.userEmail ? employeesByEmail.get(normalizeEmail(booking.userEmail))?.displayName : undefined,
       userPhotoUrl: booking.userEmail ? (employeesByEmail.get(normalizeEmail(booking.userEmail))?.photoUrl ?? undefined) : undefined,
@@ -2742,7 +2841,7 @@ app.get('/resources/:resourceId/availability', async (req, res) => {
       startTime: { lt: dayEndUtc },
       endTime: { gt: dayStartUtc }
     },
-    include: { createdBy: { select: { id: true, displayName: true, email: true } } },
+    include: { createdByEmployee: { select: { id: true, displayName: true, email: true } } },
     orderBy: [{ startTime: 'asc' }, { createdAt: 'asc' }]
   });
 
@@ -2775,8 +2874,10 @@ app.get('/resources/:resourceId/availability', async (req, res) => {
     bookedFor: booking.bookedFor,
     guestName: booking.guestName,
     userId: booking.userEmail ? (usersByEmail.get(normalizeEmail(booking.userEmail)) ?? null) : null,
-    createdByUserId: booking.createdByUserId,
-    createdBy: booking.createdBy,
+    createdBy: booking.createdByEmployee,
+    createdByUserId: booking.createdByEmployeeId,
+    createdByEmployeeId: booking.createdByEmployeeId,
+    creatorUnknown: booking.creatorUnknown,
     user: {
       email: booking.userEmail,
       name: booking.bookedFor === 'GUEST'
@@ -2861,6 +2962,15 @@ app.post('/recurring-bookings', async (req, res) => {
   const targetDates = datesInRange(parsedValidFrom, effectiveValidTo).filter((dateValue) => dateValue.getUTCDay() === weekday);
   const identity = await findBookingIdentity(userEmail);
 
+  let actorEmployee;
+  try {
+    actorEmployee = await requireActorEmployee(req);
+  } catch (error) {
+    const status = (error as Error & { status?: number }).status ?? 403;
+    res.status(status).json({ error: status === 401 ? 'unauthorized' : 'forbidden', message: (error as Error).message });
+    return;
+  }
+
   const result = await prisma.$transaction(async (tx) => {
     const lockKeys = Array.from(new Set(targetDates.flatMap((targetDate) => [
       bookingUserKeyForDate(identity.userKey, targetDate),
@@ -2904,7 +3014,7 @@ app.post('/recurring-bookings', async (req, res) => {
         continue;
       }
 
-      await tx.booking.create({ data: { deskId, userEmail: identity.normalizedEmail, createdByUserId: req.authUser?.source === 'local' ? req.authUser.id : null, createdByEmail: req.authUser?.email ?? null, bookedFor: 'SELF', guestName: null, date: targetDate } });
+      await tx.booking.create({ data: { deskId, userEmail: identity.normalizedEmail, createdByEmployeeId: actorEmployee.id, createdByUserId: req.authUser?.source === 'local' ? req.authUser.id : null, createdByEmail: req.authUser?.email ?? null, bookedFor: 'SELF', guestName: null, date: targetDate } });
       createdCount += 1;
     }
 
@@ -2977,6 +3087,15 @@ app.post('/recurring-bookings/bulk', async (req, res) => {
   const shouldOverrideExisting = overrideExisting ?? replaceExisting ?? false;
   const targetDates = datesInRange(parsedValidFrom, parsedValidTo).filter((date) => uniqueWeekdays.includes(date.getUTCDay()));
   const identity = await findBookingIdentity(userEmail);
+
+  let actorEmployee;
+  try {
+    actorEmployee = await requireActorEmployee(req);
+  } catch (error) {
+    const status = (error as Error & { status?: number }).status ?? 403;
+    res.status(status).json({ error: status === 401 ? 'unauthorized' : 'forbidden', message: (error as Error).message });
+    return;
+  }
 
   const result = await prisma.$transaction(async (tx) => {
     const lockKeys = Array.from(new Set(targetDates.flatMap((targetDate) => [
@@ -3063,7 +3182,7 @@ app.post('/recurring-bookings/bulk', async (req, res) => {
         continue;
       }
 
-      await tx.booking.create({ data: { deskId, userEmail: identity.normalizedEmail, createdByUserId: req.authUser?.source === 'local' ? req.authUser.id : null, createdByEmail: req.authUser?.email ?? null, bookedFor: 'SELF', guestName: null, date: targetDate } });
+      await tx.booking.create({ data: { deskId, userEmail: identity.normalizedEmail, createdByEmployeeId: actorEmployee.id, createdByUserId: req.authUser?.source === 'local' ? req.authUser.id : null, createdByEmail: req.authUser?.email ?? null, bookedFor: 'SELF', guestName: null, date: targetDate } });
       createdCount += 1;
     }
 
@@ -3502,7 +3621,7 @@ app.get('/admin/bookings', requireAdmin, async (req, res) => {
     where,
     include: {
       desk: { select: { kind: true } },
-      createdBy: { select: { id: true, displayName: true, email: true } }
+      createdByEmployee: { select: { id: true, displayName: true, email: true } }
     },
     orderBy: [{ date: 'asc' }, { createdAt: 'asc' }]
   });
@@ -3531,21 +3650,20 @@ app.get('/admin/bookings', requireAdmin, async (req, res) => {
       const appUser = normalizedUserEmail ? usersByEmail.get(normalizedUserEmail) : undefined;
       const fallbackUser = booking.userEmail
         ? {
-          id: appUser?.id ?? booking.createdByUserId ?? `legacy-${normalizedUserEmail ?? 'unknown'}`,
+          id: appUser?.id ?? booking.createdByEmployeeId ?? `legacy-${normalizedUserEmail ?? 'unknown'}`,
           displayName: employee?.displayName ?? appUser?.displayName ?? booking.userEmail,
           email: booking.userEmail
         }
         : null;
       const createdBy = resolveCreatedBySummary({
-        createdBy: booking.createdBy,
-        createdByUserId: booking.createdByUserId,
-        createdByEmail: booking.createdByEmail,
+        createdBy: booking.createdByEmployee,
         fallbackUser
       });
 
       return {
         createdBy,
         createdByUserId: createdBy.id,
+    createdByEmployeeId: booking.createdByEmployeeId,
         user: booking.bookedFor === 'SELF' && fallbackUser ? fallbackUser : null,
         userDisplayName: employee?.displayName,
         employeeId: employee?.id
@@ -3733,22 +3851,20 @@ app.patch('/admin/bookings/:id', requireAdmin, async (req, res) => {
       startMinute: nextWindow.mode === 'time' ? nextWindow.startMinute : null,
       endMinute: nextWindow.mode === 'time' ? nextWindow.endMinute : null
     },
-    include: { createdBy: { select: { id: true, displayName: true, email: true } } }
+    include: { createdByEmployee: { select: { id: true, displayName: true, email: true } } }
   });
 
   const employee = updated.userEmail ? (await getActiveEmployeesByEmail([updated.userEmail])).get(normalizeEmail(updated.userEmail)) : undefined;
   const appUser = updated.userEmail ? await prisma.user.findUnique({ where: { email: normalizeEmail(updated.userEmail) }, select: { id: true, displayName: true, email: true } }) : null;
   const fallbackUser = updated.userEmail
     ? {
-      id: appUser?.id ?? updated.createdByUserId ?? `legacy-${normalizeEmail(updated.userEmail)}`,
+      id: appUser?.id ?? updated.createdByEmployeeId ?? `legacy-${normalizeEmail(updated.userEmail)}`,
       displayName: employee?.displayName ?? appUser?.displayName ?? updated.userEmail,
       email: updated.userEmail
     }
     : null;
   const createdBy = resolveCreatedBySummary({
-    createdBy: updated.createdBy,
-    createdByUserId: updated.createdByUserId,
-    createdByEmail: updated.createdByEmail,
+    createdBy: updated.createdByEmployee,
     fallbackUser
   });
 
@@ -3756,6 +3872,7 @@ app.patch('/admin/bookings/:id', requireAdmin, async (req, res) => {
     ...updated,
     createdBy,
     createdByUserId: createdBy.id,
+    createdByEmployeeId: updated.createdByEmployeeId,
     user: updated.bookedFor === 'SELF' && fallbackUser ? fallbackUser : null
   });
 });
