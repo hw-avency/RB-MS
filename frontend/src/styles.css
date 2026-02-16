@@ -125,6 +125,14 @@ input, select { border: 1px solid hsl(var(--border)); border-radius: 12px; paddi
 .desk-booking-form-footer .btn{justify-content:center;min-height:38px}
 .room-schedule-block{padding:10px;border-radius:10px;background:hsl(var(--muted)/.45);border:1px solid hsl(var(--border));gap:10px}
 .room-schedule-title{font-size:13px}
+.room-schedule-header{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.occupancy-ring{position:relative;display:inline-flex;width:28px;height:28px;transform:rotate(-90deg);flex-shrink:0}
+.occupancy-ring-track,.occupancy-ring-fill,.occupancy-ring-hole{position:absolute;inset:0;border-radius:999px}
+.occupancy-ring-track{background:hsl(var(--muted))}
+.occupancy-ring-fill{background:var(--ring-gradient)}
+.occupancy-ring-hole{inset:5px;background:hsl(var(--card))}
+.room-debug-panel{display:grid;gap:2px;padding:8px;border:1px dashed hsl(var(--border));border-radius:8px;background:hsl(var(--card)/.6);font-size:12px}
+.room-debug-panel p{margin:0;line-height:1.25}
 .room-booking-hint{margin-top:-6px;font-size:11px;color:hsl(var(--muted-foreground))}
 .room-bookings-list{display:grid;gap:6px;max-height:160px;overflow-y:auto;padding-right:2px}
 .room-booking-row{display:grid;grid-template-columns:minmax(112px,max-content) minmax(0,1fr);align-items:center;gap:10px;font-size:12px;color:#475569;border:0;background:transparent;border-radius:8px;padding:4px 6px;text-align:left;width:100%}
@@ -173,7 +181,7 @@ input, select { border: 1px solid hsl(var(--border)); border-radius: 12px; paddi
 
 .summary-row{display:flex;justify-content:space-between;align-items:flex-start}
 .filter-row{display:flex;justify-content:space-between;align-items:center;gap:8px}
-.tabs{display:flex;flex-wrap:nowrap;gap:8px;overflow-x:auto;padding:2px 0 4px}.tab-btn{border:0;border-radius:10px;padding:6px 10px;min-height:34px;white-space:nowrap;flex:0 0 auto;background:hsl(var(--muted));cursor:pointer;font-weight:600}.tab-btn.active{background:hsl(var(--primary));color:white}.details-panel{padding-right:16px}
+.overview-segments{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;padding:2px 0 4px;overflow:visible}.overview-segment{border:0;border-radius:10px;padding:6px 8px;min-height:34px;line-height:1.2;white-space:nowrap;text-align:center;font-size:12px;background:hsl(var(--muted));cursor:pointer;font-weight:600;width:100%}.overview-segment.active{background:hsl(var(--primary));color:white}.details-panel{padding-right:16px}
 .table-wrap{max-height:380px;overflow:auto} table{width:100%;border-collapse:collapse} th,td{padding:8px 4px;border-bottom:1px solid hsl(var(--border));text-align:left;font-size:14px;vertical-align:top}
 .table-wrap tr{cursor:pointer;transition:background .15s ease}.table-wrap tr.row-active{background:hsl(var(--muted)/.7)}.table-wrap tr.row-highlighted{background:hsl(var(--primary)/.14)}.table-wrap tr:focus-visible{outline:2px solid hsl(var(--primary));outline-offset:-2px}
 td p{margin:2px 0 0}.occupant-card{border:1px solid hsl(var(--border));border-radius:12px;padding:14px;background:hsl(var(--muted)/.5)}

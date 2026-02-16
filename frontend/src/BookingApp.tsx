@@ -13,7 +13,7 @@ import type { AuthUser } from './auth/AuthProvider';
 import { useToast } from './components/toast';
 import { normalizeDaySlotBookings } from './daySlotBookings';
 import { RESOURCE_KIND_OPTIONS, resourceKindLabel, type ResourceKind } from './resourceKinds';
-import { normalizeRoomIntervals, ROOM_RING_ROTATION_OFFSET_DEG, ROOM_WINDOW_END_MINUTES, ROOM_WINDOW_START_MINUTES, ROOM_WINDOW_TOTAL_MINUTES } from './roomRing';
+import { ROOM_WINDOW_END, ROOM_WINDOW_START, clampInterval, formatMinutes, intervalsToSegments, invertIntervals, mergeIntervals, toMinutes } from './lib/bookingWindows';
 
 type Floorplan = { id: string; name: string; imageUrl: string; isDefault?: boolean; defaultResourceKind?: ResourceKind };
 type FloorplanResource = { id: string; floorplanId: string; kind?: ResourceKind };
@@ -88,7 +88,6 @@ type RoomBookingListEntry = { id: string; start: number; end: number; label: str
 type DeskSlotAvailability = 'FREE' | 'AM_BOOKED' | 'PM_BOOKED' | 'FULL_BOOKED';
 type PopupPlacement = 'top' | 'right' | 'bottom' | 'left';
 type PopupCoordinates = { left: number; top: number; placement: PopupPlacement };
-type TimeInterval = { start: number; end: number };
 type CalendarBooking = { date: string; deskId: string; daySlot?: 'AM' | 'PM' | 'FULL' };
 type DayAvailabilityTone = 'many-free' | 'few-free' | 'none-free';
 type OverviewTab = 'PRESENCE' | 'ROOMS' | 'MY_BOOKINGS';
@@ -204,30 +203,6 @@ const getFirstName = ({ firstName, displayName, email }: { firstName?: string; d
 };
 
 const formatDate = (dateString: string): string => new Date(`${dateString}T00:00:00.000Z`).toLocaleDateString('de-DE');
-const formatMinutesAsTime = (minutes: number): string => {
-  const clamped = Math.max(0, Math.min(24 * 60, minutes));
-  const hour = String(Math.floor(clamped / 60)).padStart(2, '0');
-  const minute = String(clamped % 60).padStart(2, '0');
-  return `${hour}:${minute}`;
-};
-
-const toMinutes = (value?: string): number | null => {
-  if (!value) return null;
-
-  if (/^\d{2}:\d{2}$/.test(value)) {
-    const [hour, minute] = value.split(':').map(Number);
-    if (!Number.isFinite(hour) || !Number.isFinite(minute)) return null;
-    return hour * 60 + minute;
-  }
-
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) return null;
-  const hour = parsed.getHours();
-  const minute = parsed.getMinutes();
-  if (!Number.isFinite(hour) || !Number.isFinite(minute)) return null;
-  return hour * 60 + minute;
-};
-
 const bookingBelongsToDay = (booking: { startTime?: string }, selectedDateValue: string): boolean => {
   if (!booking.startTime) return true;
   const parsed = new Date(booking.startTime);
@@ -235,35 +210,23 @@ const bookingBelongsToDay = (booking: { startTime?: string }, selectedDateValue:
   return toLocalDateKey(parsed) === selectedDateValue;
 };
 
-const mergeIntervals = (intervals: TimeInterval[]): TimeInterval[] => {
-  if (intervals.length === 0) return [];
-  const sorted = [...intervals].sort((a, b) => a.start - b.start);
-  const merged: TimeInterval[] = [sorted[0]];
-  for (let index = 1; index < sorted.length; index += 1) {
-    const current = sorted[index];
-    const last = merged[merged.length - 1];
-    if (current.start <= last.end) {
-      last.end = Math.max(last.end, current.end);
-      continue;
-    }
-    merged.push({ ...current });
+const bookingTimeToMinutes = (value?: string | null): number | null => {
+  if (!value) return null;
+  if (/^\d{2}:\d{2}$/.test(value)) {
+    const parsed = toMinutes(value);
+    return Number.isFinite(parsed) ? parsed : null;
   }
-  return merged;
+
+  const parsedDate = new Date(value);
+  if (Number.isNaN(parsedDate.getTime())) return null;
+  const hhmm = `${String(parsedDate.getHours()).padStart(2, '0')}:${String(parsedDate.getMinutes()).padStart(2, '0')}`;
+  const parsed = toMinutes(hhmm);
+  return Number.isFinite(parsed) ? parsed : null;
 };
 
-const toFreeIntervals = (occupied: TimeInterval[], dayStart = ROOM_WINDOW_START_MINUTES, dayEnd = ROOM_WINDOW_END_MINUTES): TimeInterval[] => {
-  const free: TimeInterval[] = [];
-  let cursor = dayStart;
-  for (const interval of occupied) {
-    const start = Math.max(interval.start, dayStart);
-    const end = Math.min(interval.end, dayEnd);
-    if (end <= dayStart || start >= dayEnd) continue;
-    if (start > cursor) free.push({ start: cursor, end: start });
-    cursor = Math.max(cursor, end);
-  }
-  if (cursor < dayEnd) free.push({ start: cursor, end: dayEnd });
-  return free;
-};
+const ROOM_WINDOW_START_MINUTES = toMinutes(ROOM_WINDOW_START);
+const ROOM_WINDOW_END_MINUTES = toMinutes(ROOM_WINDOW_END);
+
 const isUserBookingConflictError = (error: unknown): error is ApiError => {
   if (!(error instanceof ApiError) || error.status !== 409) return false;
   if (!error.details || typeof error.details !== 'object') return false;
@@ -634,7 +597,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
           endTime: booking.endTime,
           user: booking.user
         }))
-        .sort((left, right) => (toMinutes(left.startTime ?? undefined) ?? 0) - (toMinutes(right.startTime ?? undefined) ?? 0));
+        .sort((left, right) => (bookingTimeToMinutes(left.startTime) ?? 0) - (bookingTimeToMinutes(right.startTime) ?? 0));
     }
 
     return popupDeskBookings
@@ -644,40 +607,33 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
         endTime: booking.endTime ?? null,
         user: { email: booking.userEmail, name: booking.userDisplayName }
       }))
-      .sort((left, right) => (toMinutes(left.startTime ?? undefined) ?? 0) - (toMinutes(right.startTime ?? undefined) ?? 0));
+      .sort((left, right) => (bookingTimeToMinutes(left.startTime) ?? 0) - (bookingTimeToMinutes(right.startTime) ?? 0));
   }, [popupDesk, popupDeskBookings, roomAvailability, selectedDate]);
-  const popupRoomOccupiedIntervals = useMemo(() => normalizeRoomIntervals(mergeIntervals(popupRoomBookingsForSelectedDay.flatMap((booking) => {
-    const start = toMinutes(booking.startTime ?? undefined);
-    const end = toMinutes(booking.endTime ?? undefined);
-    if (start === null || end === null || end <= start) return [];
-    return [{ start, end }];
-  }))), [popupRoomBookingsForSelectedDay]);
-  const popupRoomFreeIntervals = useMemo(() => {
-    if (roomAvailability && roomAvailability.resource.id === popupDesk?.id && roomAvailability.date === selectedDate) {
-      const normalizedWindows = roomAvailability.freeWindows.flatMap((window) => {
-        const start = toMinutes(window.startTime ?? undefined);
-        const end = toMinutes(window.endTime ?? undefined);
-        if (start === null || end === null || end <= start) return [];
-        return [{ start, end }];
-      });
-      return normalizeRoomIntervals(mergeIntervals(normalizedWindows));
-    }
-
-    return toFreeIntervals(popupRoomOccupiedIntervals);
-  }, [popupDesk?.id, popupRoomOccupiedIntervals, roomAvailability, selectedDate]);
+  const popupRoomOccupiedIntervals = useMemo(() => mergeIntervals(popupRoomBookingsForSelectedDay
+    .flatMap((booking) => {
+      const start = bookingTimeToMinutes(booking.startTime);
+      const end = bookingTimeToMinutes(booking.endTime);
+      if (start === null || end === null || end <= start) return [];
+      const clamped = clampInterval({ startMin: start, endMin: end }, ROOM_WINDOW_START_MINUTES, ROOM_WINDOW_END_MINUTES);
+      return clamped ? [clamped] : [];
+    })), [popupRoomBookingsForSelectedDay]);
+  const popupRoomFreeIntervals = useMemo(() => invertIntervals(ROOM_WINDOW_START_MINUTES, ROOM_WINDOW_END_MINUTES, popupRoomOccupiedIntervals), [popupRoomOccupiedIntervals]);
+  const popupRoomOccupiedSegments = useMemo(() => intervalsToSegments(ROOM_WINDOW_START_MINUTES, ROOM_WINDOW_END_MINUTES, popupRoomOccupiedIntervals), [popupRoomOccupiedIntervals]);
   const popupRoomBookingsList = useMemo<RoomBookingListEntry[]>(() => {
     const rendered = popupRoomBookingsForSelectedDay
       .flatMap((booking) => {
-        const start = toMinutes(booking.startTime ?? undefined);
-        const end = toMinutes(booking.endTime ?? undefined);
+        const start = bookingTimeToMinutes(booking.startTime);
+        const end = bookingTimeToMinutes(booking.endTime);
         if (start === null || end === null || end <= start) return [];
+        const clamped = clampInterval({ startMin: start, endMin: end }, ROOM_WINDOW_START_MINUTES, ROOM_WINDOW_END_MINUTES);
+        if (!clamped) return [];
         const bookingEmail = booking.user.email.toLowerCase();
         const isCurrentUser = Boolean(currentUserEmail && bookingEmail === currentUserEmail.toLowerCase());
         return [{
           id: booking.id,
-          start,
-          end,
-          label: `${formatMinutesAsTime(start)} – ${formatMinutesAsTime(end)}`,
+          start: clamped.startMin,
+          end: clamped.endMin,
+          label: `${formatMinutes(clamped.startMin)} – ${formatMinutes(clamped.endMin)}`,
           person: booking.user.name ?? booking.user.email,
           bookingId: booking.id,
           isCurrentUser,
@@ -686,15 +642,14 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
       })
       .sort((a, b) => a.start - b.start);
 
-    console.log('[ROOM] renderedBookings ids', rendered.map((booking) => booking.bookingId ?? booking.id));
     return rendered;
   }, [popupRoomBookingsForSelectedDay, currentUserEmail]);
   const popupRoomFreeSlotChips = useMemo(() => popupRoomFreeIntervals
-    .filter((interval) => interval.end - interval.start >= 30)
+    .filter((interval) => interval.endMin - interval.startMin >= 30)
     .map((interval) => ({
-      startTime: formatMinutesAsTime(interval.start),
-      endTime: formatMinutesAsTime(interval.end),
-      label: `${formatMinutesAsTime(interval.start)} – ${formatMinutesAsTime(interval.end)}`
+      startTime: formatMinutes(interval.startMin),
+      endTime: formatMinutes(interval.endMin),
+      label: `${formatMinutes(interval.startMin)} – ${formatMinutes(interval.endMin)}`
     })), [popupRoomFreeIntervals]);
   const showRoomDebugInfo = useMemo(() => {
     if (typeof window === 'undefined') return false;
@@ -703,26 +658,34 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
 
   const roomDebugInfo = useMemo(() => {
     if (!showRoomDebugInfo || !popupDesk || !isRoomResource(popupDesk)) return undefined;
-    const occupiedMinutes = popupRoomOccupiedIntervals.reduce((total, interval) => total + (interval.end - interval.start), 0);
-    const percent = ROOM_WINDOW_TOTAL_MINUTES > 0 ? (occupiedMinutes / ROOM_WINDOW_TOTAL_MINUTES) * 100 : 0;
-    const firstSegment = popupRoomOccupiedIntervals[0];
-    return `window: ${formatMinutesAsTime(ROOM_WINDOW_START_MINUTES)}-${formatMinutesAsTime(ROOM_WINDOW_END_MINUTES)} · occupied: ${occupiedMinutes}/${ROOM_WINDOW_TOTAL_MINUTES} (${percent.toFixed(3)}%) · rotationOffsetDeg: ${ROOM_RING_ROTATION_OFFSET_DEG} · firstSegment: ${firstSegment ? `${firstSegment.start}-${firstSegment.end}` : '—'}`;
-  }, [popupDesk, popupRoomOccupiedIntervals, showRoomDebugInfo]);
+
+    const formatIntervalList = (intervals: Array<{ startMin: number; endMin: number }>): string => {
+      if (intervals.length === 0) return '—';
+      return intervals.map((interval) => `${formatMinutes(interval.startMin)}–${formatMinutes(interval.endMin)}`).join(', ');
+    };
+
+    return [
+      `window: ${ROOM_WINDOW_START}–${ROOM_WINDOW_END} (${ROOM_WINDOW_START_MINUTES}–${ROOM_WINDOW_END_MINUTES})`,
+      `mergedOccupied: ${formatIntervalList(popupRoomOccupiedIntervals)}`,
+      `free: ${formatIntervalList(popupRoomFreeIntervals)}`,
+      `segments: ${popupRoomOccupiedSegments.length > 0 ? popupRoomOccupiedSegments.map((segment) => `[${segment.p0.toFixed(3)}..${segment.p1.toFixed(3)}]`).join(', ') : '—'}`
+    ];
+  }, [popupDesk, popupRoomFreeIntervals, popupRoomOccupiedIntervals, popupRoomOccupiedSegments, showRoomDebugInfo]);
   const roomBookingConflict = useMemo(() => {
     if (!popupDesk || !isRoomResource(popupDesk)) return '';
-    const start = toMinutes(bookingFormValues.startTime);
-    const end = toMinutes(bookingFormValues.endTime);
+    const start = bookingTimeToMinutes(bookingFormValues.startTime);
+    const end = bookingTimeToMinutes(bookingFormValues.endTime);
     if (start === null || end === null || end <= start) return '';
-    const conflict = popupRoomOccupiedIntervals.find((interval) => start < interval.end && end > interval.start);
+    const conflict = popupRoomOccupiedIntervals.find((interval) => start < interval.endMin && end > interval.startMin);
     if (!conflict) return '';
-    return `Kollidiert mit ${formatMinutesAsTime(conflict.start)} – ${formatMinutesAsTime(conflict.end)}`;
+    return `Kollidiert mit ${formatMinutes(conflict.startMin)} – ${formatMinutes(conflict.endMin)}`;
   }, [popupDesk, bookingFormValues.startTime, bookingFormValues.endTime, popupRoomOccupiedIntervals]);
   const popupMyBookings = useMemo(() => popupDeskBookings.filter((booking) => booking.isCurrentUser), [popupDeskBookings]);
   const popupMySelectedBooking = useMemo(() => {
     if (!popupDesk || isRoomResource(popupDesk) || popupMyBookings.length === 0) return null;
 
     const selectedSlot = bookingFormValues.slot;
-    const toRange = (slot?: string): TimeInterval => {
+    const toRange = (slot?: string): { start: number; end: number } => {
       if (slot === 'AM' || slot === 'MORNING') return { start: 0, end: 1 };
       if (slot === 'PM' || slot === 'AFTERNOON') return { start: 1, end: 2 };
       return { start: 0, end: 2 };
@@ -1096,19 +1059,20 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
         if (nextSlot) defaults.slot = nextSlot;
       } else {
         const occupiedIntervals = mergeIntervals(normalizeDeskBookings(desk).flatMap((booking) => {
-          const start = toMinutes(booking.startTime);
-          const end = toMinutes(booking.endTime);
+          const start = bookingTimeToMinutes(booking.startTime);
+          const end = bookingTimeToMinutes(booking.endTime);
           if (start === null || end === null || end <= start) return [];
-          return [{ start, end }];
+          const clamped = clampInterval({ startMin: start, endMin: end }, ROOM_WINDOW_START_MINUTES, ROOM_WINDOW_END_MINUTES);
+          return clamped ? [clamped] : [];
         }));
-        const freeIntervals = toFreeIntervals(occupiedIntervals);
-        const firstFreeSlot = freeIntervals.find((interval) => interval.end > interval.start);
+        const freeIntervals = invertIntervals(ROOM_WINDOW_START_MINUTES, ROOM_WINDOW_END_MINUTES, occupiedIntervals);
+        const firstFreeSlot = freeIntervals.find((interval) => interval.endMin > interval.startMin);
 
         if (firstFreeSlot) {
-          const startMinutes = firstFreeSlot.start;
-          const endMinutes = Math.min(firstFreeSlot.start + 60, firstFreeSlot.end);
-          defaults.startTime = formatMinutesAsTime(startMinutes);
-          defaults.endTime = formatMinutesAsTime(endMinutes);
+          const startMinutes = firstFreeSlot.startMin;
+          const endMinutes = Math.min(firstFreeSlot.startMin + 60, firstFreeSlot.endMin);
+          defaults.startTime = formatMinutes(startMinutes);
+          defaults.endTime = formatMinutes(endMinutes);
         } else {
           defaults.startTime = '';
           defaults.endTime = '';
@@ -1606,10 +1570,10 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
   const dayOverviewPanel = (
     <section className="card compact-card stack-sm details-panel">
       <h3>Tagesübersicht</h3>
-      <div className="tabs" role="tablist" aria-label="Tagesübersicht Tabs">
-        <button type="button" className={`tab-btn ${overviewTab === 'PRESENCE' ? 'active' : ''}`} onClick={() => setOverviewTab('PRESENCE')}>Anwesenheit</button>
-        <button type="button" className={`tab-btn ${overviewTab === 'ROOMS' ? 'active' : ''}`} onClick={() => setOverviewTab('ROOMS')}>Räume</button>
-        <button type="button" className={`tab-btn ${overviewTab === 'MY_BOOKINGS' ? 'active' : ''}`} onClick={() => setOverviewTab('MY_BOOKINGS')}>Meine Buchungen</button>
+      <div className="overview-segments" role="tablist" aria-label="Tagesübersicht Tabs">
+        <button type="button" role="tab" aria-selected={overviewTab === 'PRESENCE'} title="Anwesenheit" className={`overview-segment ${overviewTab === 'PRESENCE' ? 'active' : ''}`} onClick={() => setOverviewTab('PRESENCE')}>Anwesenheit</button>
+        <button type="button" role="tab" aria-selected={overviewTab === 'ROOMS'} title="Räume" className={`overview-segment ${overviewTab === 'ROOMS' ? 'active' : ''}`} onClick={() => setOverviewTab('ROOMS')}>Räume</button>
+        <button type="button" role="tab" aria-selected={overviewTab === 'MY_BOOKINGS'} title="Meine Buchungen" className={`overview-segment ${overviewTab === 'MY_BOOKINGS' ? 'active' : ''}`} onClick={() => setOverviewTab('MY_BOOKINGS')}>Meine Buchungen</button>
       </div>
 
       {overviewTab === 'PRESENCE' && renderOccupancyList(bookingsForSelectedDate, 'Anwesenheit am ausgewählten Datum', 'Niemand anwesend')}
@@ -1903,6 +1867,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
                       canCancel: booking.isCurrentUser && Boolean(booking.bookingId)
                     })),
                     freeSlots: popupRoomFreeSlotChips,
+                    occupiedSegments: popupRoomOccupiedSegments,
                     isFullyBooked: popupRoomFreeSlotChips.length === 0,
                     conflictMessage: roomBookingConflict,
                     debugInfo: roomDebugInfo,

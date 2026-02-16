@@ -1,4 +1,6 @@
 import { FormEvent, KeyboardEvent, MouseEvent, useEffect, useMemo, useRef, useState } from 'react';
+import type { RingSegment } from '../lib/bookingWindows';
+import { OccupancyRing } from './OccupancyRing';
 
 type BookingType = 'single' | 'recurring';
 type BookingSlot = 'FULL_DAY' | 'MORNING' | 'AFTERNOON';
@@ -57,9 +59,10 @@ export function BookingForm({ values, onChange, onSubmit, onCancel, isSubmitting
   roomSchedule?: {
     bookings: RoomScheduleItem[];
     freeSlots: RoomFreeSlot[];
+    occupiedSegments: RingSegment[];
     isFullyBooked?: boolean;
     conflictMessage?: string;
-    debugInfo?: string;
+    debugInfo?: string[];
     onSelectFreeSlot: (startTime: string, endTime: string) => void;
     onBookingClick?: (event: MouseEvent<HTMLButtonElement>, bookingId: string) => void;
   };
@@ -157,7 +160,10 @@ export function BookingForm({ values, onChange, onSubmit, onCancel, isSubmitting
           {isRoom ? (
             <>
               <section className="room-schedule-block stack-xs">
-                <strong className="room-schedule-title">Heute belegt</strong>
+                <div className="room-schedule-header">
+                  <strong className="room-schedule-title">Heute belegt</strong>
+                  <OccupancyRing segments={roomSchedule?.occupiedSegments ?? []} />
+                </div>
                 {hasCancelableRoomBooking && <p className="room-booking-hint">Tipp: Deine Buchungen kannst du anklicken, um sie zu stornieren.</p>}
                 {roomSchedule && roomSchedule.bookings.length > 0 ? (
                   <div className="room-bookings-list" role="list" aria-label="Raumbelegung heute">
@@ -204,7 +210,11 @@ export function BookingForm({ values, onChange, onSubmit, onCancel, isSubmitting
                   </div>
                 )}
                 {roomSchedule?.isFullyBooked && <p className="room-fully-booked-hint">Heute vollständig belegt</p>}
-                {roomSchedule?.debugInfo && <p className="muted">Debug: {roomSchedule.debugInfo}</p>}
+                {roomSchedule?.debugInfo && roomSchedule.debugInfo.length > 0 && (
+                  <div className="room-debug-panel muted">
+                    {roomSchedule.debugInfo.map((line) => <p key={line}>{line}</p>)}
+                  </div>
+                )}
               </section>
               <div className="split">
                 <div className="stack-xs">
