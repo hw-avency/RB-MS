@@ -13,7 +13,7 @@ import type { AuthUser } from './auth/AuthProvider';
 import { useToast } from './components/toast';
 import { normalizeDaySlotBookings } from './daySlotBookings';
 import { RESOURCE_KIND_OPTIONS, resourceKindLabel, type ResourceKind } from './resourceKinds';
-import { ROOM_WINDOW_END, ROOM_WINDOW_START, clampInterval, formatMinutes, intervalsToSegments, invertIntervals, mergeIntervals, toMinutes } from './lib/bookingWindows';
+import { ROOM_WINDOW_END, ROOM_WINDOW_START, ROOM_WINDOW_TOTAL_MINUTES, clampInterval, formatMinutes, intervalsToSegments, invertIntervals, mergeIntervals, toMinutes } from './lib/bookingWindows';
 
 type Floorplan = { id: string; name: string; imageUrl: string; isDefault?: boolean; defaultResourceKind?: ResourceKind };
 type FloorplanResource = { id: string; floorplanId: string; kind?: ResourceKind };
@@ -92,7 +92,17 @@ type FloorplanTransform = { scale: number; translateX: number; translateY: numbe
 type FloorplanImageSize = { width: number; height: number };
 type CalendarBooking = { date: string; deskId: string; daySlot?: 'AM' | 'PM' | 'FULL' };
 type DayAvailabilityTone = 'many-free' | 'few-free' | 'none-free';
-type OverviewTab = 'PRESENCE' | 'ROOMS' | 'MY_BOOKINGS';
+type OverviewView = 'presence' | 'rooms' | 'myBookings';
+
+const OVERVIEW_QUERY_KEY = 'overview';
+
+const isOverviewView = (value: string | null): value is OverviewView => value === 'presence' || value === 'rooms' || value === 'myBookings';
+
+const getInitialOverviewView = (): OverviewView => {
+  if (typeof window === 'undefined') return 'presence';
+  const queryValue = new URLSearchParams(window.location.search).get(OVERVIEW_QUERY_KEY);
+  return isOverviewView(queryValue) ? queryValue : 'presence';
+};
 
 const POPUP_OFFSET = 12;
 const POPUP_PADDING = 8;
@@ -508,7 +518,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
   const [employees, setEmployees] = useState<BookingEmployee[]>([]);
   const [selectedEmployeeEmail, setSelectedEmployeeEmail] = useState('');
   const [selectedResourceKindFilter, setSelectedResourceKindFilter] = useState<'ALL' | ResourceKind>('ALL');
-  const [overviewTab, setOverviewTab] = useState<OverviewTab>('PRESENCE');
+  const [overviewView, setOverviewView] = useState<OverviewView>(() => getInitialOverviewView());
   const [isManageEditOpen, setIsManageEditOpen] = useState(false);
 
   const [selectedDeskId, setSelectedDeskId] = useState('');
@@ -548,6 +558,15 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
   const [calendarBookings, setCalendarBookings] = useState<CalendarBooking[]>([]);
   const [floorplanResources, setFloorplanResources] = useState<FloorplanResource[]>([]);
   const [bookedCalendarDays, setBookedCalendarDays] = useState<string[]>([]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const params = new URLSearchParams(window.location.search);
+    params.set(OVERVIEW_QUERY_KEY, overviewView);
+    const query = params.toString();
+    const nextUrl = `${window.location.pathname}${query ? `?${query}` : ''}${window.location.hash}`;
+    window.history.replaceState({}, '', nextUrl);
+  }, [overviewView]);
 
   const [highlightedDeskId, setHighlightedDeskId] = useState('');
   const [deskPopupCoords, setDeskPopupCoords] = useState<PopupCoordinates | null>(null);
@@ -767,7 +786,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
     };
 
     return [
-      `window: ${ROOM_WINDOW_START}–${ROOM_WINDOW_END} (${ROOM_WINDOW_START_MINUTES}–${ROOM_WINDOW_END_MINUTES})`,
+      `window: ${ROOM_WINDOW_START}–${ROOM_WINDOW_END} (${ROOM_WINDOW_TOTAL_MINUTES} min)`,
       `mergedOccupied: ${formatIntervalList(popupRoomOccupiedIntervals)}`,
       `free: ${formatIntervalList(popupRoomFreeIntervals)}`,
       `segments: ${popupRoomOccupiedSegments.length > 0 ? popupRoomOccupiedSegments.map((segment) => `[${segment.p0.toFixed(3)}..${segment.p1.toFixed(3)}]`).join(', ') : '—'}`
@@ -1672,15 +1691,18 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
   const dayOverviewPanel = (
     <section className="card compact-card stack-sm details-panel">
       <h3>Tagesübersicht</h3>
-      <div className="overview-segments" role="tablist" aria-label="Tagesübersicht Tabs">
-        <button type="button" role="tab" aria-selected={overviewTab === 'PRESENCE'} title="Anwesenheit" className={`overview-segment ${overviewTab === 'PRESENCE' ? 'active' : ''}`} onClick={() => setOverviewTab('PRESENCE')}>Anwesenheit</button>
-        <button type="button" role="tab" aria-selected={overviewTab === 'ROOMS'} title="Räume" className={`overview-segment ${overviewTab === 'ROOMS' ? 'active' : ''}`} onClick={() => setOverviewTab('ROOMS')}>Räume</button>
-        <button type="button" role="tab" aria-selected={overviewTab === 'MY_BOOKINGS'} title="Meine Buchungen" className={`overview-segment ${overviewTab === 'MY_BOOKINGS' ? 'active' : ''}`} onClick={() => setOverviewTab('MY_BOOKINGS')}>Meine Buchungen</button>
-      </div>
+      <label className="stack-xs overview-view-select">
+        <span className="field-label">Ansicht</span>
+        <select value={overviewView} onChange={(event) => setOverviewView(event.target.value as OverviewView)} aria-label="Ansicht wählen">
+          <option value="presence">Anwesenheit</option>
+          <option value="rooms">Räume</option>
+          <option value="myBookings">Meine Buchungen</option>
+        </select>
+      </label>
 
-      {overviewTab === 'PRESENCE' && renderOccupancyList(bookingsForSelectedDate, 'Anwesenheit am ausgewählten Datum', 'Niemand anwesend')}
+      {overviewView === 'presence' && renderOccupancyList(bookingsForSelectedDate, 'Anwesenheit am ausgewählten Datum', 'Niemand anwesend')}
 
-      {overviewTab === 'ROOMS' && (
+      {overviewView === 'rooms' && (
         <div className="occupancy-list" role="list" aria-label="Raumübersicht">
           {roomsForSelectedDate.length === 0 && <div className="empty-state compact-empty-state"><p>Keine Räume gefunden.</p></div>}
           {roomsForSelectedDate.map(({ room, bookings }) => (
@@ -1696,7 +1718,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
         </div>
       )}
 
-      {overviewTab === 'MY_BOOKINGS' && (
+      {overviewView === 'myBookings' && (
         <div className="occupancy-list" role="list" aria-label="Eigene Buchungen">
           {myBookingsForSelectedDate.length === 0 && <div className="empty-state compact-empty-state"><p>Keine eigenen Buchungen am gewählten Tag.</p></div>}
           {myBookingsForSelectedDate.map(({ desk, booking }) => (

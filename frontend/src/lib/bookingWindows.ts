@@ -1,6 +1,8 @@
 export const ROOM_WINDOW_START = '07:00';
 export const ROOM_WINDOW_END = '18:00';
 
+export const ROOM_WINDOW_TOTAL_MINUTES = 11 * 60;
+
 export type MinuteInterval = { startMin: number; endMin: number };
 export type RingSegment = { p0: number; p1: number };
 
