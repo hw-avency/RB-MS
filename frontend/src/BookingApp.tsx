@@ -1549,8 +1549,14 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
       }
     };
 
+    const isViewportScrollbarInteraction = (event: globalThis.MouseEvent) => {
+      const root = document.documentElement;
+      return event.clientX >= root.clientWidth || event.clientY >= root.clientHeight;
+    };
+
     const closeOnOutsideClick = (event: globalThis.MouseEvent) => {
       if (cancelFlowState === 'CANCEL_CONFIRM_OPEN') return;
+      if (isViewportScrollbarInteraction(event)) return;
       const target = event.target;
       if (!(target instanceof Node)) return;
       if (popupRef.current?.contains(target)) return;
@@ -2607,8 +2613,14 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
       }
     };
 
+    const isViewportScrollbarInteraction = (event: globalThis.MouseEvent) => {
+      const root = document.documentElement;
+      return event.clientX >= root.clientWidth || event.clientY >= root.clientHeight;
+    };
+
     const closeOnOutsideClick = (event: globalThis.MouseEvent) => {
       if (cancelFlowState === 'CANCEL_CONFIRM_OPEN') return;
+      if (isViewportScrollbarInteraction(event)) return;
       const target = event.target;
       if (!(target instanceof Node)) return;
       if (popupRef.current?.contains(target)) return;
