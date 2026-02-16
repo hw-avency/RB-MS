@@ -1759,18 +1759,26 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
       toast.success(overwrite ? 'Umbuchung durchgeführt.' : 'Gebucht', { deskId });
       return;
     }
-    const response = await runWithAppLoading(() => post<BulkBookingResponse>('/recurring-bookings', {
+    const recurringTarget = popupDesk?.id === deskId ? popupDesk : desks.find((desk) => desk.id === deskId);
+    const isRoomRecurring = Boolean(recurringTarget && isRoomResource(recurringTarget));
+    const recurringPayload = {
       resourceId: deskId,
       weekdays: payload.weekdays,
       validFrom: payload.dateFrom,
       validTo: payload.dateTo,
       bookedFor: payload.bookedFor,
       guestName: payload.bookedFor === 'GUEST' ? payload.guestName : undefined,
-      period: payload.slot === 'MORNING' ? 'AM' : payload.slot === 'AFTERNOON' ? 'PM' : 'FULL',
-      startTime: payload.startTime,
-      endTime: payload.endTime,
+      period: isRoomRecurring ? null : payload.slot === 'MORNING' ? 'AM' : payload.slot === 'AFTERNOON' ? 'PM' : 'FULL',
+      startTime: isRoomRecurring ? payload.startTime : null,
+      endTime: isRoomRecurring ? payload.endTime : null,
       overwrite
-    }));
+    };
+
+    if (showRoomDebugInfo) {
+      console.log('[BOOKING_DEBUG] recurring payload', recurringPayload);
+    }
+
+    const response = await runWithAppLoading(() => post<BulkBookingResponse>('/recurring-bookings', recurringPayload));
 
     toast.success(overwrite
       ? `${response.createdCount ?? 0} Tage gebucht, ${response.updatedCount ?? 0} Tage umgebucht.`

@@ -137,7 +137,9 @@ export function BookingForm({ values, onChange, onSubmit, onCancel, isSubmitting
       ? (isRoom
         ? { type: 'single', date: values.date, startTime: values.startTime, endTime: values.endTime, bookedFor: values.bookedFor, guestName: values.bookedFor === 'GUEST' ? values.guestName.trim() : undefined }
         : { type: 'single', date: values.date, slot: values.slot, bookedFor: values.bookedFor, guestName: values.bookedFor === 'GUEST' ? values.guestName.trim() : undefined })
-      : { type: 'recurring', dateFrom: values.dateFrom, dateTo: values.dateTo, weekdays: values.weekdays, slot: isRoom ? undefined : values.slot, startTime: isRoom ? values.startTime : undefined, endTime: isRoom ? values.endTime : undefined, bookedFor: values.bookedFor, guestName: values.bookedFor === 'GUEST' ? values.guestName.trim() : undefined };
+      : (isRoom
+        ? { type: 'recurring', dateFrom: values.dateFrom, dateTo: values.dateTo, weekdays: values.weekdays, startTime: values.startTime, endTime: values.endTime, bookedFor: values.bookedFor, guestName: values.bookedFor === 'GUEST' ? values.guestName.trim() : undefined }
+        : { type: 'recurring', dateFrom: values.dateFrom, dateTo: values.dateTo, weekdays: values.weekdays, slot: values.slot, bookedFor: values.bookedFor, guestName: values.bookedFor === 'GUEST' ? values.guestName.trim() : undefined });
 
     await onSubmit(payload);
   };
