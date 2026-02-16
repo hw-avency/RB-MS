@@ -1606,6 +1606,10 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
     setDialogErrorMessage('');
     setIsManageEditOpen(false);
 
+    const defaults = createDefaultBookingFormValues(selectedDate);
+    setBookingFormValues(defaults);
+    setManageTargetSlot(defaults.slot);
+
     const deskBookings = normalizeDeskBookings(desk);
     const mineBookings = deskBookings.filter((booking) => isMineBooking(booking, currentUser?.id));
     const hasMineBookings = mineBookings.length > 0;
@@ -1632,7 +1636,6 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
     } else if (fullyOccupiedByOthers) {
       setBookingDialogState('IDLE');
     } else {
-      const defaults = createDefaultBookingFormValues(selectedDate);
       if (!isRoomResource(desk)) {
         const nextSlot = getDefaultSlotForDesk(desk);
         if (nextSlot) defaults.slot = nextSlot;
@@ -1681,6 +1684,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
   };
 
   const closeBookingFlow = () => {
+    setBookingFormValues(createDefaultBookingFormValues(selectedDate));
     setDeskPopup(null);
     setRebookConfirm(null);
     setBookingDialogState('IDLE');
@@ -1764,12 +1768,14 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
     const recurringPayload = {
       resourceId: deskId,
       startDate: payload.startDate,
-      endDate: payload.endDate,
+      endDate: payload.endDate ?? payload.startDate,
       patternType: payload.patternType,
       interval: payload.interval,
       byWeekday: payload.byWeekday,
       byMonthday: payload.byMonthday,
       byMonth: payload.byMonth,
+      rangeMode: payload.rangeMode,
+      count: payload.count,
       bookedFor: payload.bookedFor,
       guestName: payload.bookedFor === 'GUEST' ? payload.guestName : undefined,
       period: isRoomRecurring ? null : payload.slot === 'MORNING' ? 'AM' : payload.slot === 'AFTERNOON' ? 'PM' : 'FULL',

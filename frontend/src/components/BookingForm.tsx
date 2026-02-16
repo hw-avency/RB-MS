@@ -13,6 +13,9 @@ export type BookingFormValues = {
   date: string;
   dateFrom: string;
   dateTo: string;
+  endDateTouched: boolean;
+  rangeMode: 'BY_DATE' | 'BY_COUNT';
+  occurrenceCount: number;
   weekdays: number[];
   recurrencePatternType: 'DAILY' | 'WEEKLY' | 'MONTHLY' | 'YEARLY';
   recurrenceInterval: number;
@@ -27,7 +30,63 @@ export type BookingFormValues = {
 
 export type BookingFormSubmitPayload =
   | { type: 'single'; date: string; slot?: BookingSlot; startTime?: string; endTime?: string; bookedFor: 'SELF' | 'GUEST'; guestName?: string }
-  | { type: 'recurring'; startDate: string; endDate: string; patternType: 'DAILY' | 'WEEKLY' | 'MONTHLY' | 'YEARLY'; interval: number; byWeekday?: number[]; byMonthday?: number; byMonth?: number; slot?: BookingSlot; startTime?: string; endTime?: string; bookedFor: 'SELF' | 'GUEST'; guestName?: string };
+  | { type: 'recurring'; startDate: string; endDate?: string; rangeMode: 'BY_DATE' | 'BY_COUNT'; count?: number; patternType: 'DAILY' | 'WEEKLY' | 'MONTHLY' | 'YEARLY'; interval: number; byWeekday?: number[]; byMonthday?: number; byMonth?: number; slot?: BookingSlot; startTime?: string; endTime?: string; bookedFor: 'SELF' | 'GUEST'; guestName?: string };
+
+const addDaysToIsoDate = (dateString: string, days: number): string => {
+  const date = new Date(`${dateString}T00:00:00.000Z`);
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+};
+
+const addMonthsToIsoDate = (dateString: string, months: number): string => {
+  const date = new Date(`${dateString}T00:00:00.000Z`);
+  date.setUTCMonth(date.getUTCMonth() + months);
+  return date.toISOString().slice(0, 10);
+};
+
+const addYearsToIsoDate = (dateString: string, years: number): string => {
+  const date = new Date(`${dateString}T00:00:00.000Z`);
+  date.setUTCFullYear(date.getUTCFullYear() + years);
+  return date.toISOString().slice(0, 10);
+};
+
+const suggestedRecurringEndDate = (startDate: string, patternType: BookingFormValues['recurrencePatternType']): string => {
+  if (patternType === 'DAILY') return addMonthsToIsoDate(startDate, 3);
+  if (patternType === 'WEEKLY') return addMonthsToIsoDate(startDate, 6);
+  if (patternType === 'MONTHLY') return addYearsToIsoDate(startDate, 1);
+  return addYearsToIsoDate(startDate, 10);
+};
+
+const recurrenceIntervalUnitLabel = (patternType: BookingFormValues['recurrencePatternType']): string => {
+  if (patternType === 'DAILY') return 'Tag(e)';
+  if (patternType === 'WEEKLY') return 'Woche(n)';
+  if (patternType === 'MONTHLY') return 'Monat(e)';
+  return 'Jahr(e)';
+};
+
+const calculateCountBasedEndDate = (values: BookingFormValues): string => {
+  const count = Math.min(200, Math.max(1, values.occurrenceCount));
+  const interval = Math.max(1, values.recurrenceInterval);
+  const endProbeDate = values.recurrencePatternType === 'DAILY'
+    ? addDaysToIsoDate(values.dateFrom, interval * count + 7)
+    : values.recurrencePatternType === 'WEEKLY'
+      ? addDaysToIsoDate(values.dateFrom, interval * 7 * count + 14)
+      : values.recurrencePatternType === 'MONTHLY'
+        ? addMonthsToIsoDate(values.dateFrom, interval * count + 1)
+        : addYearsToIsoDate(values.dateFrom, interval * count + 1);
+
+  const dates = expandRecurrence({
+    startDate: values.dateFrom,
+    endDate: endProbeDate,
+    patternType: values.recurrencePatternType,
+    interval,
+    byWeekday: values.recurrencePatternType === 'WEEKLY' ? values.weekdays : undefined,
+    byMonthday: values.recurrencePatternType === 'MONTHLY' || values.recurrencePatternType === 'YEARLY' ? values.recurrenceMonthday : undefined,
+    byMonth: values.recurrencePatternType === 'YEARLY' ? values.recurrenceYearMonth : undefined
+  }, count);
+
+  return dates[count - 1] ?? dates[dates.length - 1] ?? values.dateFrom;
+};
 
 export const createDefaultBookingFormValues = (selectedDate: string): BookingFormValues => {
   const parsed = new Date(`${selectedDate}T00:00:00.000Z`);
@@ -36,7 +95,10 @@ export const createDefaultBookingFormValues = (selectedDate: string): BookingFor
     type: 'single',
     date: selectedDate,
     dateFrom: selectedDate,
-    dateTo: selectedDate,
+    dateTo: suggestedRecurringEndDate(selectedDate, 'WEEKLY'),
+    endDateTouched: false,
+    rangeMode: 'BY_DATE',
+    occurrenceCount: 10,
     weekdays: [defaultWeekday],
     recurrencePatternType: 'WEEKLY',
     recurrenceInterval: 1,
@@ -95,7 +157,7 @@ export function BookingForm({ values, onChange, onSubmit, onCancel, isSubmitting
   }, [allowRecurring, isRoom, onChange, values]);
 
   const fieldErrors = useMemo(() => {
-    const nextErrors: { date?: string; dateFrom?: string; dateTo?: string; weekdays?: string; interval?: string; monthday?: string; yearmonth?: string; startTime?: string; endTime?: string; guestName?: string } = {};
+    const nextErrors: { date?: string; dateFrom?: string; dateTo?: string; weekdays?: string; interval?: string; monthday?: string; yearmonth?: string; occurrenceCount?: string; startTime?: string; endTime?: string; guestName?: string } = {};
 
     if (values.type === 'single' && !values.date) nextErrors.date = 'Datum ist erforderlich.';
     if (values.type === 'single' && isRoom) {
@@ -109,8 +171,11 @@ export function BookingForm({ values, onChange, onSubmit, onCancel, isSubmitting
 
     if (values.type === 'recurring') {
       if (!values.dateFrom) nextErrors.dateFrom = 'Startdatum ist erforderlich.';
-      if (!values.dateTo) nextErrors.dateTo = 'Enddatum ist erforderlich.';
-      if (values.dateFrom && values.dateTo && values.dateFrom > values.dateTo) nextErrors.dateTo = 'Enddatum muss nach dem Startdatum liegen.';
+      if (values.rangeMode === 'BY_DATE') {
+        if (!values.dateTo) nextErrors.dateTo = 'Enddatum ist erforderlich.';
+        if (values.dateFrom && values.dateTo && values.dateFrom > values.dateTo) nextErrors.dateTo = 'Enddatum muss nach dem Startdatum liegen.';
+      }
+      if (values.rangeMode === 'BY_COUNT' && (values.occurrenceCount < 1 || values.occurrenceCount > 200)) nextErrors.occurrenceCount = 'Anzahl muss zwischen 1 und 200 liegen.';
       if (values.recurrenceInterval < 1) nextErrors.interval = 'Intervall muss mindestens 1 sein.';
       if (values.recurrencePatternType === 'WEEKLY' && values.weekdays.length === 0) nextErrors.weekdays = 'Bitte mindestens einen Wochentag auswählen.';
       if ((values.recurrencePatternType === 'MONTHLY' || values.recurrencePatternType === 'YEARLY') && (values.recurrenceMonthday < 1 || values.recurrenceMonthday > 31)) nextErrors.monthday = 'Tag muss zwischen 1 und 31 liegen.';
@@ -130,18 +195,30 @@ export function BookingForm({ values, onChange, onSubmit, onCancel, isSubmitting
 
   const isFormInvalid = Object.values(fieldErrors).some(Boolean) || Boolean(roomSchedule?.conflictMessage);
 
+  useEffect(() => {
+    if (values.type !== 'recurring' || values.endDateTouched || !values.dateFrom) return;
+    const nextDateTo = suggestedRecurringEndDate(values.dateFrom, values.recurrencePatternType);
+    if (values.dateTo === nextDateTo) return;
+    onChange({ ...values, dateTo: nextDateTo });
+  }, [onChange, values]);
+
+  const effectiveRecurrenceEndDate = useMemo(() => {
+    if (values.type !== 'recurring') return values.dateTo;
+    return values.rangeMode === 'BY_COUNT' ? calculateCountBasedEndDate(values) : values.dateTo;
+  }, [values]);
+
   const recurrencePreview = useMemo(() => {
-    if (values.type !== 'recurring' || !values.dateFrom || !values.dateTo) return [];
+    if (values.type !== 'recurring' || !values.dateFrom || !effectiveRecurrenceEndDate) return [];
     return expandRecurrence({
       startDate: values.dateFrom,
-      endDate: values.dateTo,
+      endDate: effectiveRecurrenceEndDate,
       patternType: values.recurrencePatternType,
       interval: values.recurrenceInterval,
       byWeekday: values.recurrencePatternType === 'WEEKLY' ? values.weekdays : undefined,
       byMonthday: values.recurrencePatternType === 'MONTHLY' || values.recurrencePatternType === 'YEARLY' ? values.recurrenceMonthday : undefined,
       byMonth: values.recurrencePatternType === 'YEARLY' ? values.recurrenceYearMonth : undefined
     }, 5);
-  }, [values]);
+  }, [effectiveRecurrenceEndDate, values]);
 
   const toggleWeekday = (weekday: number) => {
     if (values.weekdays.includes(weekday)) {
@@ -167,7 +244,9 @@ export function BookingForm({ values, onChange, onSubmit, onCancel, isSubmitting
         ? {
           type: 'recurring',
           startDate: values.dateFrom,
-          endDate: values.dateTo,
+          endDate: effectiveRecurrenceEndDate,
+          rangeMode: values.rangeMode,
+          count: values.rangeMode === 'BY_COUNT' ? Math.min(200, Math.max(1, values.occurrenceCount)) : undefined,
           patternType: values.recurrencePatternType,
           interval: values.recurrenceInterval,
           byWeekday: values.recurrencePatternType === 'WEEKLY' ? values.weekdays : undefined,
@@ -181,7 +260,9 @@ export function BookingForm({ values, onChange, onSubmit, onCancel, isSubmitting
         : {
           type: 'recurring',
           startDate: values.dateFrom,
-          endDate: values.dateTo,
+          endDate: effectiveRecurrenceEndDate,
+          rangeMode: values.rangeMode,
+          count: values.rangeMode === 'BY_COUNT' ? Math.min(200, Math.max(1, values.occurrenceCount)) : undefined,
           patternType: values.recurrencePatternType,
           interval: values.recurrenceInterval,
           byWeekday: values.recurrencePatternType === 'WEEKLY' ? values.weekdays : undefined,
@@ -221,7 +302,26 @@ export function BookingForm({ values, onChange, onSubmit, onCancel, isSubmitting
       )}
       <div className="stack-xs">
         <label htmlFor="booking-type">Typ</label>
-        <select id="booking-type" ref={typeSelectRef} value={values.type} disabled={disabled} onChange={(event) => onChange({ ...values, type: event.target.value === 'recurring' && allowRecurring ? 'recurring' : 'single' })}>
+        <select
+          id="booking-type"
+          ref={typeSelectRef}
+          value={values.type}
+          disabled={disabled}
+          onChange={(event) => {
+            const nextType = event.target.value === 'recurring' && allowRecurring ? 'recurring' : 'single';
+            if (nextType === 'recurring') {
+              onChange({
+                ...values,
+                type: 'recurring',
+                endDateTouched: false,
+                rangeMode: 'BY_DATE',
+                dateTo: suggestedRecurringEndDate(values.dateFrom, values.recurrencePatternType)
+              });
+              return;
+            }
+            onChange({ ...values, type: 'single' });
+          }}
+        >
           <option value="single">Einzelbuchung</option>
           {allowRecurring && <option value="recurring">Serienbuchung</option>}
         </select>
@@ -366,17 +466,15 @@ export function BookingForm({ values, onChange, onSubmit, onCancel, isSubmitting
             <label>Wiederholungsmuster</label>
             <div className="weekday-toggle-group" role="radiogroup" aria-label="Muster">
               {(['DAILY', 'WEEKLY', 'MONTHLY', 'YEARLY'] as const).map((pattern) => (
-                <button key={pattern} type="button" className={`weekday-toggle ${values.recurrencePatternType === pattern ? 'active' : ''}`} disabled={disabled} onClick={() => onChange({ ...values, recurrencePatternType: pattern })}>{pattern === 'DAILY' ? 'Täglich' : pattern === 'WEEKLY' ? 'Wöchentlich' : pattern === 'MONTHLY' ? 'Monatlich' : 'Jährlich'}</button>
+                <button key={pattern} type="button" className={`weekday-toggle ${values.recurrencePatternType === pattern ? 'active' : ''}`} disabled={disabled} onClick={() => onChange({ ...values, recurrencePatternType: pattern, dateTo: values.endDateTouched ? values.dateTo : suggestedRecurringEndDate(values.dateFrom, pattern) })}>{pattern === 'DAILY' ? 'Täglich' : pattern === 'WEEKLY' ? 'Wöchentlich' : pattern === 'MONTHLY' ? 'Monatlich' : 'Jährlich'}</button>
               ))}
             </div>
-            <div className="split">
-              <div className="stack-xs">
-                <label htmlFor="recurrence-interval">Alle</label>
-                <input id="recurrence-interval" type="number" min={1} value={values.recurrenceInterval} disabled={disabled} onChange={(event) => onChange({ ...values, recurrenceInterval: Math.max(1, Number(event.target.value || 1)) })} />
-                {fieldErrors.interval && <p className="field-error" role="alert">{fieldErrors.interval}</p>}
-              </div>
-              <div className="stack-xs"><label>&nbsp;</label><span className="muted">{values.recurrencePatternType === 'DAILY' ? 'Tag(e)' : values.recurrencePatternType === 'WEEKLY' ? 'Woche(n)' : values.recurrencePatternType === 'MONTHLY' ? 'Monat(e)' : 'Jahr(e)'}</span></div>
+            <div className="recurrence-interval-row" role="group" aria-label="Wiederholungsintervall">
+              <label htmlFor="recurrence-interval">Alle</label>
+              <input id="recurrence-interval" type="number" min={1} value={values.recurrenceInterval} disabled={disabled} onChange={(event) => onChange({ ...values, recurrenceInterval: Math.max(1, Number(event.target.value || 1)) })} />
+              <span className="muted">{recurrenceIntervalUnitLabel(values.recurrencePatternType)}</span>
             </div>
+            {fieldErrors.interval && <p className="field-error" role="alert">{fieldErrors.interval}</p>}
 
             {values.recurrencePatternType === 'WEEKLY' && (
               <div className="stack-xs">
@@ -406,9 +504,22 @@ export function BookingForm({ values, onChange, onSubmit, onCancel, isSubmitting
             )}
           </div>
 
-          <div className="split">
-            <div className="stack-xs"><label htmlFor="booking-date-from">Start</label><input id="booking-date-from" type="date" value={values.dateFrom} disabled={disabled} onChange={(event) => onChange({ ...values, dateFrom: event.target.value })} />{fieldErrors.dateFrom && <p className="field-error" role="alert">{fieldErrors.dateFrom}</p>}</div>
-            <div className="stack-xs"><label htmlFor="booking-date-to">Ende am</label><input id="booking-date-to" type="date" value={values.dateTo} disabled={disabled} onChange={(event) => onChange({ ...values, dateTo: event.target.value })} />{fieldErrors.dateTo && <p className="field-error" role="alert">{fieldErrors.dateTo}</p>}</div>
+          <div className="stack-xs">
+            <strong>Zeitraum der Serie</strong>
+            <div className="stack-xs"><label htmlFor="booking-date-from">Start</label><input id="booking-date-from" type="date" value={values.dateFrom} disabled={disabled} onChange={(event) => onChange({ ...values, dateFrom: event.target.value, recurrenceMonthday: new Date(`${event.target.value || values.dateFrom}T00:00:00.000Z`).getUTCDate(), recurrenceYearMonth: new Date(`${event.target.value || values.dateFrom}T00:00:00.000Z`).getUTCMonth() + 1 })} />{fieldErrors.dateFrom && <p className="field-error" role="alert">{fieldErrors.dateFrom}</p>}</div>
+            <label className="recurrence-range-row">
+              <input type="radio" name="recurrence-range" checked={values.rangeMode === 'BY_DATE'} disabled={disabled} onChange={() => onChange({ ...values, rangeMode: 'BY_DATE' })} />
+              <span>Ende am</span>
+              <input id="booking-date-to" type="date" value={values.dateTo} disabled={disabled || values.rangeMode !== 'BY_DATE'} onChange={(event) => onChange({ ...values, dateTo: event.target.value, endDateTouched: true })} />
+            </label>
+            {fieldErrors.dateTo && <p className="field-error" role="alert">{fieldErrors.dateTo}</p>}
+            <label className="recurrence-range-row">
+              <input type="radio" name="recurrence-range" checked={values.rangeMode === 'BY_COUNT'} disabled={disabled} onChange={() => onChange({ ...values, rangeMode: 'BY_COUNT' })} />
+              <span>Endet nach</span>
+              <input type="number" min={1} max={200} value={values.occurrenceCount} disabled={disabled || values.rangeMode !== 'BY_COUNT'} onChange={(event) => onChange({ ...values, occurrenceCount: Math.min(200, Math.max(1, Number(event.target.value || 1))) })} />
+              <span>Terminen</span>
+            </label>
+            {fieldErrors.occurrenceCount && <p className="field-error" role="alert">{fieldErrors.occurrenceCount}</p>}
           </div>
           {recurrencePreview.length > 0 && <p className="muted">Erste Termine: {recurrencePreview.map((date) => date.slice(8, 10) + '.' + date.slice(5, 7)).join(', ')}{recurrencePreview.length === 5 ? ' …' : ''}</p>}
         </section>
