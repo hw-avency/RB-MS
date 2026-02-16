@@ -1,5 +1,8 @@
-export const ROOM_WINDOW_START = '07:00';
-export const ROOM_WINDOW_END = '18:00';
+export const BOOKABLE_START = '07:00';
+export const BOOKABLE_END = '18:00';
+
+export const ROOM_WINDOW_START = BOOKABLE_START;
+export const ROOM_WINDOW_END = BOOKABLE_END;
 
 export const ROOM_WINDOW_TOTAL_MINUTES = 11 * 60;
 

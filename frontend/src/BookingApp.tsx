@@ -13,7 +13,8 @@ import type { AuthUser } from './auth/AuthProvider';
 import { useToast } from './components/toast';
 import { normalizeDaySlotBookings } from './daySlotBookings';
 import { RESOURCE_KIND_OPTIONS, resourceKindLabel, type ResourceKind } from './resourceKinds';
-import { ROOM_WINDOW_END, ROOM_WINDOW_START, ROOM_WINDOW_TOTAL_MINUTES, clampInterval, formatMinutes, intervalsToSegments, invertIntervals, mergeIntervals, toMinutes } from './lib/bookingWindows';
+import { ROOM_WINDOW_END, ROOM_WINDOW_START, ROOM_WINDOW_TOTAL_MINUTES, clampInterval, formatMinutes, invertIntervals, mergeIntervals, toMinutes } from './lib/bookingWindows';
+import { computeRoomOccupancy } from './lib/roomOccupancy';
 import { getLastMutation, isDebugMode, setLastMutation } from './debug/runtimeDebug';
 
 type Floorplan = { id: string; name: string; imageUrl: string; isDefault?: boolean; defaultResourceKind?: ResourceKind };
@@ -1116,16 +1117,10 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
       }))
       .sort((left, right) => (bookingTimeToMinutes(left.startTime) ?? 0) - (bookingTimeToMinutes(right.startTime) ?? 0));
   }, [popupDesk, popupDeskBookings, roomAvailability, selectedDate]);
-  const popupRoomOccupiedIntervals = useMemo(() => mergeIntervals(popupRoomBookingsForSelectedDay
-    .flatMap((booking) => {
-      const start = bookingTimeToMinutes(booking.startTime);
-      const end = bookingTimeToMinutes(booking.endTime);
-      if (start === null || end === null || end <= start) return [];
-      const clamped = clampInterval({ startMin: start, endMin: end }, ROOM_WINDOW_START_MINUTES, ROOM_WINDOW_END_MINUTES);
-      return clamped ? [clamped] : [];
-    })), [popupRoomBookingsForSelectedDay]);
+  const popupRoomOccupancy = useMemo(() => computeRoomOccupancy(popupRoomBookingsForSelectedDay, selectedDate), [popupRoomBookingsForSelectedDay, selectedDate]);
+  const popupRoomOccupiedIntervals = popupRoomOccupancy.intervals;
   const popupRoomFreeIntervals = useMemo(() => invertIntervals(ROOM_WINDOW_START_MINUTES, ROOM_WINDOW_END_MINUTES, popupRoomOccupiedIntervals), [popupRoomOccupiedIntervals]);
-  const popupRoomOccupiedSegments = useMemo(() => intervalsToSegments(ROOM_WINDOW_START_MINUTES, ROOM_WINDOW_END_MINUTES, popupRoomOccupiedIntervals), [popupRoomOccupiedIntervals]);
+  const popupRoomOccupiedSegments = popupRoomOccupancy.segments;
   const popupRoomBookingsList = useMemo<RoomBookingListEntry[]>(() => {
     const rendered = popupRoomBookingsForSelectedDay
       .flatMap((booking) => {

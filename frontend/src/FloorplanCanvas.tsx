@@ -2,7 +2,9 @@ import { CSSProperties, MouseEvent, RefObject, memo, useEffect, useMemo, useRef,
 import { createPortal } from 'react-dom';
 import { normalizeDaySlotBookings } from './daySlotBookings';
 import { resourceKindLabel } from './resourceKinds';
-import { ROOM_WINDOW_END, ROOM_WINDOW_START, clampInterval, mergeIntervals, toMinutes } from './lib/bookingWindows';
+import { BOOKABLE_END, BOOKABLE_START, ROOM_WINDOW_TOTAL_MINUTES } from './lib/bookingWindows';
+import { computeRoomOccupancy } from './lib/roomOccupancy';
+import { OccupancyRing } from './components/OccupancyRing';
 
 type FloorplanBooking = {
   id?: string;
@@ -49,10 +51,6 @@ const RING_WIDTH = 5;
 const CENTER_SIZE = 28;
 const START_ANGLE = -90;
 const MAX_ROOM_MARKER_LABEL_LENGTH = 4;
-
-const ROOM_WINDOW_START_MINUTES = toMinutes(ROOM_WINDOW_START);
-const ROOM_WINDOW_END_MINUTES = toMinutes(ROOM_WINDOW_END);
-const ROOM_WINDOW_TOTAL_MINUTES = ROOM_WINDOW_END_MINUTES - ROOM_WINDOW_START_MINUTES;
 
 const clamp01 = (value: number): number => Math.min(1, Math.max(0, value));
 
@@ -221,14 +219,10 @@ const DeskOverlay = memo(function DeskOverlay({ desks, selectedDeskId, hoveredDe
             return 'var(--resource-busy)';
           };
 
-          const roomIntervals = mergeIntervals(bookings.flatMap((booking) => {
-            const startMinutes = booking.startTime ? toMinutes(booking.startTime) : Number.NaN;
-            const endMinutes = booking.endTime ? toMinutes(booking.endTime) : Number.NaN;
-            if (!Number.isFinite(startMinutes) || !Number.isFinite(endMinutes) || endMinutes <= startMinutes) return [];
-            const clamped = clampInterval({ startMin: startMinutes, endMin: endMinutes }, ROOM_WINDOW_START_MINUTES, ROOM_WINDOW_END_MINUTES);
-            return clamped ? [clamped] : [];
-          }));
-          const roomCoverage = roomIntervals.reduce((total, interval) => total + (interval.endMin - interval.startMin), 0);
+          const roomOccupancy = isRoom ? computeRoomOccupancy(bookings, selectedDate, BOOKABLE_START, BOOKABLE_END) : null;
+          const roomIntervals = roomOccupancy?.intervals ?? [];
+          const roomSegments = roomOccupancy?.segments ?? [];
+          const roomCoverage = roomOccupancy?.occupiedMinutes ?? 0;
           const isRoomFullyBooked = roomCoverage >= ROOM_WINDOW_TOTAL_MINUTES - 1;
           const amColor = slotColor(amBooking);
           const pmColor = slotColor(pmBooking);
@@ -279,15 +273,9 @@ const DeskOverlay = memo(function DeskOverlay({ desks, selectedDeskId, hoveredDe
               aria-label={`${resourceKindLabel(desk.kind)}: ${getDeskLabel(desk)}`}
             >
               {shouldShowPulse && <div className="pulseHalo" aria-hidden="true" />}
+              {isRoom && <OccupancyRing segments={roomSegments} className="pin-room-ring" label={`Raumbelegung ${getRoomName(desk)}`} />}
               <svg className="pin-ring-svg" viewBox={`0 0 ${PIN_VISUAL_SIZE} ${PIN_VISUAL_SIZE}`} shapeRendering="geometricPrecision" aria-hidden="true">
-                {isRoom ? (
-                  <>
-                    <circle cx={PIN_VISUAL_SIZE / 2} cy={PIN_VISUAL_SIZE / 2} r={RING_RADIUS} className="pin-ring-track" />
-                    {isRoomFullyBooked
-                      ? <circle cx={PIN_VISUAL_SIZE / 2} cy={PIN_VISUAL_SIZE / 2} r={RING_RADIUS} className="pin-ring-arc" style={{ stroke: 'var(--resource-busy)', strokeWidth: RING_WIDTH, strokeLinecap: 'butt' }} />
-                      : roomIntervals.map((interval, index) => <path key={`${desk.id}-${interval.startMin}-${interval.endMin}-${index}`} d={arcPath(((interval.startMin - ROOM_WINDOW_START_MINUTES) / ROOM_WINDOW_TOTAL_MINUTES) * 360, ((interval.endMin - ROOM_WINDOW_START_MINUTES) / ROOM_WINDOW_TOTAL_MINUTES) * 360, RING_RADIUS)} className="pin-ring-arc" style={{ stroke: 'var(--resource-busy)', strokeWidth: RING_WIDTH, strokeLinecap: 'round' }} />)}
-                  </>
-                ) : hasUniformHalfDayColor ? (
+                {isRoom ? null : hasUniformHalfDayColor ? (
                   <circle cx={PIN_VISUAL_SIZE / 2} cy={PIN_VISUAL_SIZE / 2} r={RING_RADIUS} className="pin-ring-arc" style={{ stroke: amColor, strokeWidth: RING_WIDTH, strokeLinecap: shouldUseButtCap ? 'butt' : 'round' }} />
                 ) : (
                   <>
@@ -360,9 +348,11 @@ const DeskOverlay = memo(function DeskOverlay({ desks, selectedDeskId, hoveredDe
             const full = tooltipBookings.find((booking) => slotFromBooking(booking) === 'FULL');
             const am = full ?? tooltipBookings.find((booking) => slotFromBooking(booking) === 'AM');
             const pm = full ?? tooltipBookings.find((booking) => slotFromBooking(booking) === 'PM');
-            const state = tooltipDesk.kind === 'RAUM'
-              ? (tooltipBookings.length > 0 ? 'occupied-segments' : 'free')
-              : full ? 'full-day' : am || pm ? 'half-day' : 'free';
+            if (tooltipDesk.kind === 'RAUM') {
+              const roomDebug = computeRoomOccupancy(tooltipBookings, selectedDate, BOOKABLE_START, BOOKABLE_END);
+              return <span className="muted">debug: resourceId={tooltipDesk.id}; type={tooltipDesk.kind ?? 'SONSTIGES'}; bookingsForResourceCount={tooltipBookings.length}; occupancy={roomDebug.segments.length > 0 ? 'occupied-segments' : 'free'}; segments={roomDebug.segments.length}; occupiedMinutes={roomDebug.occupiedMinutes}; percentOccupied={(roomDebug.occupiedRatio * 100).toFixed(1)}%</span>;
+            }
+            const state = full ? 'full-day' : am || pm ? 'half-day' : 'free';
             return <span className="muted">debug: resourceId={tooltipDesk.id}; type={tooltipDesk.kind ?? 'SONSTIGES'}; bookingsForResourceCount={tooltipBookings.length}; occupancy={state}</span>;
           })()}
         </div>,

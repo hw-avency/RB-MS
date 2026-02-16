@@ -19,10 +19,10 @@ const ringBackground = (segments: RingSegment[]): string => {
   return `conic-gradient(from 0deg, ${stops.join(', ')})`;
 };
 
-export function OccupancyRing({ segments, label = 'Raumbelegung' }: { segments: RingSegment[]; label?: string }) {
+export function OccupancyRing({ segments, label = 'Raumbelegung', className }: { segments: RingSegment[]; label?: string; className?: string }) {
   return (
     <span
-      className="occupancy-ring"
+      className={`occupancy-ring ${className ?? ""}`.trim()}
       role="img"
       aria-label={label}
       style={{ ['--ring-gradient' as string]: ringBackground(segments) }}
