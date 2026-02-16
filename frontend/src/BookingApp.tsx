@@ -83,7 +83,6 @@ type TimeInterval = { start: number; end: number };
 type CalendarBooking = { date: string; deskId: string; daySlot?: 'AM' | 'PM' | 'FULL' };
 type DayAvailabilityTone = 'many-free' | 'few-free' | 'none-free';
 type OverviewTab = 'PRESENCE' | 'ROOMS' | 'MY_BOOKINGS';
-type QuickBookSlot = { id: string; label: string; payload: BookingSubmitPayload };
 
 const POPUP_OFFSET = 12;
 const POPUP_PADDING = 8;
@@ -702,28 +701,6 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
   const popupOwnBookingIsRecurring = useMemo(() => popupDeskBookings.some((booking) => booking.isCurrentUser && booking.type === 'recurring'), [popupDeskBookings]);
   const cancelConfirmDesk = useMemo(() => (cancelConfirmContext ? desks.find((desk) => desk.id === cancelConfirmContext.deskId) ?? null : null), [desks, cancelConfirmContext]);
   const cancelConfirmBookingLabel = cancelConfirmContext?.bookingLabel ?? bookingSlotLabel(cancelConfirmDesk?.booking);
-  const popupQuickBookSlots = useMemo<QuickBookSlot[]>(() => {
-    if (!popupDesk || !canBookDesk(popupDesk)) return [];
-    if (isRoomResource(popupDesk)) {
-      return popupRoomFreeSlotChips.map((slot) => ({
-        id: `${slot.startTime}-${slot.endTime}`,
-        label: slot.label,
-        payload: { type: 'single', date: selectedDate, startTime: slot.startTime, endTime: slot.endTime }
-      }));
-    }
-
-    const availability = getDeskSlotAvailability(popupDesk);
-    if (availability === 'FREE') {
-      return [
-        { id: 'FULL_DAY', label: 'Ganztag', payload: { type: 'single', date: selectedDate, slot: 'FULL_DAY' } },
-        { id: 'MORNING', label: 'Vormittag', payload: { type: 'single', date: selectedDate, slot: 'MORNING' } },
-        { id: 'AFTERNOON', label: 'Nachmittag', payload: { type: 'single', date: selectedDate, slot: 'AFTERNOON' } }
-      ];
-    }
-    if (availability === 'AM_BOOKED') return [{ id: 'AFTERNOON', label: 'Nachmittag', payload: { type: 'single', date: selectedDate, slot: 'AFTERNOON' } }];
-    if (availability === 'PM_BOOKED') return [{ id: 'MORNING', label: 'Vormittag', payload: { type: 'single', date: selectedDate, slot: 'MORNING' } }];
-    return [];
-  }, [popupDesk, popupRoomFreeSlotChips, selectedDate]);
   const calendarDays = useMemo(() => buildCalendarDays(visibleMonth), [visibleMonth]);
   const calendarRange = useMemo(() => ({
     from: toDateKey(calendarDays[0]),
@@ -1103,10 +1080,6 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
     setCancelConfirmContext(null);
     setIsCancellingBooking(false);
     setCancelDialogError('');
-  };
-
-  const handleQuickBook = async (slot: QuickBookSlot) => {
-    await handleBookingSubmit(slot.payload);
   };
 
   const openCancelConfirm = () => {
@@ -1814,20 +1787,40 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
               <div className="desk-popup-header">
                 <div className="stack-xxs">
                   <h3>{resourceKindLabel(popupDesk.kind)}: {popupDesk.name}</h3>
-                  <p className="muted">Quick-Book · Heute freie Zeitfenster</p>
+                  <p className="muted">Buchung anlegen{!isRoomResource(popupDesk) ? ` · ${deskAvailabilityLabel(popupDeskAvailability)}` : ''}</p>
                 </div>
                 <button type="button" className="btn btn-ghost desk-popup-close" aria-label="Popover schließen" onClick={closeBookingFlow}>✕</button>
               </div>
-              {popupQuickBookSlots.length > 0 ? (
-                <div className="room-free-slots" role="group" aria-label="Schnellbuchung Zeitfenster">
-                  {popupQuickBookSlots.map((slot) => (
-                    <button key={slot.id} type="button" className="free-slot-chip" disabled={bookingDialogState === 'SUBMITTING'} onClick={() => void handleQuickBook(slot)}>{slot.label}</button>
-                  ))}
-                </div>
-              ) : (
-                <p className="muted">Heute keine freien Zeitfenster verfügbar.</p>
-              )}
-              {dialogErrorMessage && <p className="error-inline">{dialogErrorMessage}</p>}
+              <BookingForm
+                values={bookingFormValues}
+                onChange={setBookingFormValues}
+                onCancel={closeBookingFlow}
+                onSubmit={handleBookingSubmit}
+                isSubmitting={bookingDialogState === 'SUBMITTING'}
+                disabled={bookingDialogState === 'SUBMITTING'}
+                errorMessage={dialogErrorMessage}
+                allowRecurring={popupDesk.effectiveAllowSeries !== false}
+                resourceKind={popupDesk.kind}
+                roomSchedule={isRoomResource(popupDesk)
+                  ? {
+                    bookings: popupRoomBookingsList.map((booking) => ({
+                      id: booking.id,
+                      label: booking.label,
+                      person: booking.person,
+                      isCurrentUser: booking.isCurrentUser,
+                      canCancel: booking.isCurrentUser && Boolean(booking.bookingId)
+                    })),
+                    freeSlots: popupRoomFreeSlotChips,
+                    isFullyBooked: popupRoomFreeSlotChips.length === 0,
+                    conflictMessage: roomBookingConflict,
+                    debugInfo: showRoomDebugInfo ? `bookings loaded: ${popupRoomBookingsList.length} · date: ${selectedDate} · room: ${popupDesk.name}` : undefined,
+                    onSelectFreeSlot: (startTime, endTime) => {
+                      setBookingFormValues((current) => ({ ...current, startTime, endTime }));
+                    },
+                    onBookingClick: handleRoomBookingCancel
+                  }
+                  : undefined}
+              />
             </>
           ) : (
             <>
