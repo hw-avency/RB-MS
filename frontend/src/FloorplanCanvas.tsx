@@ -4,7 +4,6 @@ import { normalizeDaySlotBookings } from './daySlotBookings';
 import { resourceKindLabel } from './resourceKinds';
 import { BOOKABLE_END, BOOKABLE_START, ROOM_WINDOW_TOTAL_MINUTES } from './lib/bookingWindows';
 import { computeRoomOccupancy } from './lib/roomOccupancy';
-import { OccupancyRing } from './components/OccupancyRing';
 
 type FloorplanBooking = {
   id?: string;
@@ -49,6 +48,8 @@ const PIN_VISUAL_SIZE = 36;
 const RING_RADIUS = 14.5;
 const RING_WIDTH = 5;
 const CENTER_SIZE = 28;
+const ROOM_RING_RADIUS = 19;
+const ROOM_RING_WIDTH = 4;
 const START_ANGLE = -90;
 const MAX_ROOM_MARKER_LABEL_LENGTH = 4;
 
@@ -119,6 +120,19 @@ const arcPath = (startDeg: number, endDeg: number, radius: number): string => {
   return `M ${start.x} ${start.y} A ${radius} ${radius} 0 ${largeArc} 1 ${end.x} ${end.y}`;
 };
 
+const arcPathForSize = (size: number, startDeg: number, endDeg: number, radius: number): string => {
+  const toPoint = (deg: number): { x: number; y: number } => {
+    const radians = (deg * Math.PI) / 180;
+    return { x: size / 2 + radius * Math.cos(radians), y: size / 2 + radius * Math.sin(radians) };
+  };
+
+  const start = toPoint(startDeg);
+  const end = toPoint(endDeg);
+  const sweep = endDeg - startDeg;
+  const largeArc = Math.abs(sweep) > 180 ? 1 : 0;
+  return `M ${start.x} ${start.y} A ${radius} ${radius} 0 ${largeArc} 1 ${end.x} ${end.y}`;
+};
+
 type FloorplanCanvasProps = {
   imageUrl: string;
   imageAlt: string;
@@ -181,9 +195,9 @@ const DeskOverlay = memo(function DeskOverlay({ desks, selectedDeskId, hoveredDe
     if (!displayedRect || !imageSize || imageSize.width <= 0 || imageSize.height <= 0) return null;
     const sx = displayedRect.width / imageSize.width;
     const sy = displayedRect.height / imageSize.height;
-    return (point: PixelPoint): PixelPoint => ({
-      x: displayedRect.left + point.x * sx,
-      y: displayedRect.top + point.y * sy,
+    return (point: PixelPoint): { xPct: number; yPct: number } => ({
+      xPct: clamp01(point.x * sx / displayedRect.width),
+      yPct: clamp01(point.y * sy / displayedRect.height),
     });
   }, [displayedRect, imageSize]);
 
@@ -194,7 +208,7 @@ const DeskOverlay = memo(function DeskOverlay({ desks, selectedDeskId, hoveredDe
           const rawPoint = toPixelPoint(desk);
           if (!rawPoint) return null;
           const isLegacyPoint = isLegacyNormalizedPoint(rawPoint);
-          if (!mapPoint || (isLegacyPoint && !imageSize)) return null;
+          if (!displayedRect || !mapPoint || (isLegacyPoint && !imageSize)) return null;
           const point = isLegacyPoint && imageSize
             ? { x: rawPoint.x * imageSize.width, y: rawPoint.y * imageSize.height }
             : rawPoint;
@@ -237,7 +251,10 @@ const DeskOverlay = memo(function DeskOverlay({ desks, selectedDeskId, hoveredDe
               data-desk-id={desk.id}
               className={`desk-pin ${selectedDeskId === desk.id ? 'selected' : ''} ${hoveredDeskId === desk.id ? 'hovered' : ''} ${desk.isCurrentUsersDesk ? 'is-own-desk' : ''} ${desk.isHighlighted ? 'is-highlighted' : ''} ${desk.isSelected ? 'is-selected' : ''} ${!isClickable ? 'is-click-disabled' : ''}`}
               data-free={shouldShowPulse ? 'true' : 'false'}
-              style={{ left: `${displayPoint.x - PIN_HITBOX_SIZE / 2}px`, top: `${displayPoint.y - PIN_HITBOX_SIZE / 2}px` }}
+              style={{
+                left: `${displayedRect.left + displayPoint.xPct * displayedRect.width}px`,
+                top: `${displayedRect.top + displayPoint.yPct * displayedRect.height}px`
+              }}
               onMouseEnter={(event) => {
                 const rect = event.currentTarget.getBoundingClientRect();
                 setTooltip({ deskId: desk.id, left: rect.left + rect.width / 2, top: rect.top - 10 });
@@ -273,22 +290,42 @@ const DeskOverlay = memo(function DeskOverlay({ desks, selectedDeskId, hoveredDe
               aria-label={`${resourceKindLabel(desk.kind)}: ${getDeskLabel(desk)}`}
             >
               {shouldShowPulse && <div className="pulseHalo" aria-hidden="true" />}
-              {isRoom && <OccupancyRing segments={roomSegments} className="pin-room-ring" label={`Raumbelegung ${getRoomName(desk)}`} />}
-              <svg className="pin-ring-svg" viewBox={`0 0 ${PIN_VISUAL_SIZE} ${PIN_VISUAL_SIZE}`} shapeRendering="geometricPrecision" aria-hidden="true">
-                {isRoom ? null : hasUniformHalfDayColor ? (
+              {isRoom ? (
+                <>
+                  <svg className="room-marker-ring" viewBox={`0 0 ${PIN_HITBOX_SIZE} ${PIN_HITBOX_SIZE}`} shapeRendering="geometricPrecision" aria-hidden="true">
+                    <circle cx={PIN_HITBOX_SIZE / 2} cy={PIN_HITBOX_SIZE / 2} r={ROOM_RING_RADIUS} className="pin-ring-track" style={{ strokeWidth: ROOM_RING_WIDTH }} />
+                    {roomSegments.map((segment) => (
+                      <path
+                        key={`${desk.id}-${segment.p0.toFixed(3)}-${segment.p1.toFixed(3)}`}
+                        d={arcPathForSize(PIN_HITBOX_SIZE, START_ANGLE + segment.p0 * 360, START_ANGLE + segment.p1 * 360, ROOM_RING_RADIUS)}
+                        className="pin-ring-arc"
+                        style={{ stroke: 'var(--resource-busy)', strokeWidth: ROOM_RING_WIDTH, strokeLinecap: 'round' }}
+                      />
+                    ))}
+                  </svg>
+                </>
+              ) : (
+                <svg className="pin-ring-svg" viewBox={`0 0 ${PIN_VISUAL_SIZE} ${PIN_VISUAL_SIZE}`} shapeRendering="geometricPrecision" aria-hidden="true">
+                  {hasUniformHalfDayColor ? (
                   <circle cx={PIN_VISUAL_SIZE / 2} cy={PIN_VISUAL_SIZE / 2} r={RING_RADIUS} className="pin-ring-arc" style={{ stroke: amColor, strokeWidth: RING_WIDTH, strokeLinecap: shouldUseButtCap ? 'butt' : 'round' }} />
                 ) : (
                   <>
                     <path d={arcPath(START_ANGLE, START_ANGLE + 180, RING_RADIUS)} className="pin-ring-arc" style={{ stroke: amColor, strokeWidth: RING_WIDTH, strokeLinecap: 'round' }} />
                     <path d={arcPath(START_ANGLE + 180, START_ANGLE + 360, RING_RADIUS)} className="pin-ring-arc" style={{ stroke: pmColor, strokeWidth: RING_WIDTH, strokeLinecap: 'round' }} />
                   </>
-                )}
-              </svg>
+                  )}
+                </svg>
+              )}
 
               <span className="pin-center" style={{ width: CENTER_SIZE, height: CENTER_SIZE }}>
                 {isRoom ? (
                   <span className="room-center-label">
-                    <span className="room-center-icon" aria-hidden="true">⌂</span>
+                    <span className="room-center-icon" aria-hidden="true">
+                      <svg viewBox="0 0 24 24" role="presentation" focusable="false">
+                        <circle cx="12" cy="12" r="7" fill="none" />
+                        <path d="M12 8.5V12l2.5 1.75" fill="none" />
+                      </svg>
+                    </span>
                     {roomMarkerLabel && <small>{roomMarkerLabel}</small>}
                   </span>
                 ) : bookings.length >= 2 && !fullBooking ? (
