@@ -101,12 +101,6 @@ type SessionRecord = {
 };
 type AuthUser = { id: string; email: string; displayName: string; role: EmployeeRole; isActive: boolean };
 
-const isAuthUserAdmin = (user?: AuthUser | null): boolean => {
-  if (!user || !user.isActive) return false;
-  const isBreakglass = Boolean(ADMIN_EMAIL && user.email.trim().toLowerCase() === ADMIN_EMAIL);
-  return user.role === 'admin' || isBreakglass;
-};
-
 declare global {
   namespace Express {
     interface Request {
@@ -432,72 +426,12 @@ const requireAdmin: express.RequestHandler = (req, res, next) => {
     return;
   }
 
-  if (!isAuthUserAdmin(req.authUser)) {
+  if (!req.authUser.isActive || req.authUser.role !== 'admin') {
     res.status(403).json({ error: 'forbidden', message: 'Admin role required' });
     return;
   }
 
   next();
-};
-
-const cancelBookingWithAuthorization = async ({
-  bookingId,
-  actor,
-  requestId
-}: {
-  bookingId: string;
-  actor: { userId: string; email: string; isAdmin: boolean };
-  requestId: string;
-}): Promise<{ status: 200 } | { status: 403 } | { status: 404 }> => {
-  const existing = await prisma.booking.findUnique({
-    where: { id: bookingId },
-    include: { desk: { select: { kind: true } } }
-  });
-
-  if (!existing) {
-    console.warn('BOOKING_CANCEL', { requestId, userId: actor.userId, bookingId, resourceType: null, status: 404, error: 'Booking not found' });
-    return { status: 404 };
-  }
-
-  const bookingOwner = existing.userEmail
-    ? await prisma.user.findFirst({
-      where: { email: { equals: existing.userEmail, mode: 'insensitive' } },
-      select: { id: true }
-    })
-    : null;
-
-  const allowed = canCancelBooking({
-    booking: {
-      bookedFor: existing.bookedFor,
-      userId: bookingOwner?.id ?? null,
-      createdByUserId: existing.createdByUserId
-    },
-    actor: {
-      userId: actor.userId,
-      isAdmin: actor.isAdmin
-    }
-  });
-
-  console.info('CANCEL_AUTHZ_CHECK', {
-    requestId,
-    actorId: actor.userId,
-    actorEmail: actor.email,
-    actorIsAdmin: actor.isAdmin,
-    bookingId,
-    bookedFor: existing.bookedFor,
-    bookingUserId: bookingOwner?.id ?? null,
-    createdByUserId: existing.createdByUserId,
-    allowed
-  });
-
-  if (!allowed) {
-    console.warn('BOOKING_CANCEL', { requestId, userId: actor.userId, bookingId, resourceType: existing.desk?.kind ?? null, status: 403, error: 'Not allowed to cancel this booking' });
-    return { status: 403 };
-  }
-
-  await prisma.booking.delete({ where: { id: bookingId } });
-  console.info('BOOKING_CANCEL', { requestId, userId: actor.userId, bookingId, resourceType: existing.desk?.kind ?? null, status: 200, error: null });
-  return { status: 200 };
 };
 
 const toDateOnly = (value: string): Date | null => {
@@ -2216,32 +2150,61 @@ app.delete('/bookings/:id', async (req, res) => {
   }
 
   try {
-    if (!req.authUser) {
-      console.warn('BOOKING_CANCEL', { requestId, userId, bookingId: id, resourceType: null, status: 401, error: 'Authentication required' });
-      res.status(401).json({ error: 'unauthorized', message: 'Authentication required' });
-      return;
-    }
-
-    const cancelResult = await cancelBookingWithAuthorization({
-      bookingId: id,
-      requestId,
-      actor: {
-        userId: req.authUser.id,
-        email: req.authUser.email,
-        isAdmin: isAuthUserAdmin(req.authUser)
-      }
+    const existing = await prisma.booking.findUnique({
+      where: { id },
+      include: { desk: { select: { kind: true } } }
     });
-
-    if (cancelResult.status === 404) {
+    if (!existing) {
+      console.warn('BOOKING_CANCEL', { requestId, userId, bookingId: id, resourceType: null, status: 404, error: 'Booking not found' });
       res.status(404).json({ error: 'not_found', message: 'Booking not found' });
       return;
     }
 
-    if (cancelResult.status === 403) {
+    if (!req.authUser) {
+      console.warn('BOOKING_CANCEL', { requestId, userId, bookingId: id, resourceType: existing.desk?.kind ?? null, status: 401, error: 'Authentication required' });
+      res.status(401).json({ error: 'unauthorized', message: 'Authentication required' });
+      return;
+    }
+
+    const bookingOwner = existing.userEmail
+      ? await prisma.user.findFirst({
+        where: { email: { equals: existing.userEmail, mode: 'insensitive' } },
+        select: { id: true }
+      })
+      : null;
+
+    const allowed = canCancelBooking({
+      booking: {
+        bookedFor: existing.bookedFor,
+        userId: bookingOwner?.id ?? null,
+        createdByUserId: existing.createdByUserId
+      },
+      actor: {
+        userId: req.authUser.id,
+        isAdmin: req.authUser.role === 'admin'
+      }
+    });
+
+    console.info('CANCEL_AUTHZ_CHECK', {
+      requestId,
+      bookingId: id,
+      bookedFor: existing.bookedFor,
+      bookingUserId: bookingOwner?.id ?? null,
+      createdByUserId: existing.createdByUserId,
+      actorUserId: req.authUser.id,
+      actorEmail: req.authUser.email,
+      actorIsAdmin: req.authUser.role === 'admin',
+      allowed
+    });
+
+    if (!allowed) {
+      console.warn('BOOKING_CANCEL', { requestId, userId, bookingId: id, resourceType: existing.desk?.kind ?? null, status: 403, error: 'Not allowed to cancel this booking' });
       res.status(403).json({ code: 'FORBIDDEN', message: 'Not allowed to cancel this booking' });
       return;
     }
 
+    await prisma.booking.delete({ where: { id } });
+    console.info('BOOKING_CANCEL', { requestId, userId, bookingId: id, resourceType: existing.desk?.kind ?? null, status: 200, error: null });
     res.status(200).json({ ok: true });
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : 'Unexpected booking cancel error';
@@ -3539,37 +3502,14 @@ app.get('/admin/bookings', requireAdmin, async (req, res) => {
 });
 
 app.delete('/admin/bookings', requireAdmin, async (req, res) => {
-  const requestId = req.requestId ?? 'unknown';
   const ids = getIdsFromQuery(req.query.ids as string | string[] | undefined);
   if (ids.length === 0) {
     res.status(400).json({ error: 'validation', message: 'ids is required' });
     return;
   }
 
-  if (!req.authUser) {
-    res.status(401).json({ error: 'unauthorized', message: 'Authentication required' });
-    return;
-  }
-
-  let deletedCount = 0;
-  let notFoundCount = 0;
-
-  for (const bookingId of ids) {
-    const cancelResult = await cancelBookingWithAuthorization({
-      bookingId,
-      requestId,
-      actor: {
-        userId: req.authUser.id,
-        email: req.authUser.email,
-        isAdmin: isAuthUserAdmin(req.authUser)
-      }
-    });
-
-    if (cancelResult.status === 200) deletedCount += 1;
-    if (cancelResult.status === 404) notFoundCount += 1;
-  }
-
-  res.status(200).json({ deletedCount, notFoundCount });
+  const result = await prisma.booking.deleteMany({ where: { id: { in: ids } } });
+  res.status(200).json({ deletedCount: result.count });
 });
 
 app.post('/admin/bookings/cleanup-duplicates', requireAdmin, async (_req, res) => {
@@ -3610,39 +3550,19 @@ app.post('/admin/bookings/cleanup-duplicates', requireAdmin, async (_req, res) =
 });
 
 app.delete('/admin/bookings/:id', requireAdmin, async (req, res) => {
-  const requestId = req.requestId ?? 'unknown';
   const id = getRouteId(req.params.id);
   if (!id) {
     res.status(400).json({ error: 'validation', message: 'id is required' });
     return;
   }
 
-  if (!req.authUser) {
-    res.status(401).json({ error: 'unauthorized', message: 'Authentication required' });
-    return;
-  }
-
-  const cancelResult = await cancelBookingWithAuthorization({
-    bookingId: id,
-    requestId,
-    actor: {
-      userId: req.authUser.id,
-      email: req.authUser.email,
-      isAdmin: isAuthUserAdmin(req.authUser)
-    }
-  });
-
-  if (cancelResult.status === 404) {
+  const result = await prisma.booking.deleteMany({ where: { id } });
+  if (result.count === 0) {
     res.status(404).json({ error: 'not_found', message: 'Booking not found' });
     return;
   }
 
-  if (cancelResult.status === 403) {
-    res.status(403).json({ code: 'FORBIDDEN', message: 'Not allowed to cancel this booking' });
-    return;
-  }
-
-  res.status(200).json({ deletedCount: 1 });
+  res.status(200).json({ deletedCount: result.count });
 });
 
 app.patch('/admin/bookings/:id', requireAdmin, async (req, res) => {

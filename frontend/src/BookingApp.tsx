@@ -1237,19 +1237,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
     return popupMyBookings[0];
   }, [bookingFormValues.slot, popupDesk, popupMyBookings]);
   const hasUnexpectedMultipleMyBookings = popupMyBookings.length > 1;
-  const popupHasAnyBooking = popupDeskBookings.length > 0;
-  const popupIsDeskOrParking = popupDesk?.kind === 'TISCH' || popupDesk?.kind === 'PARKPLATZ';
-  const popupIsFullyOccupied = popupDeskAvailability === 'FULL_BOOKED';
-  const popupHasAnyCancellableBooking = useMemo(
-    () => popupDeskBookings.some((booking) => canCancelBooking(booking, currentUser)),
-    [popupDeskBookings, currentUser]
-  );
-  const popupIsFullyOccupiedByOthers = Boolean(popupIsDeskOrParking && popupHasAnyBooking && popupIsFullyOccupied && !popupHasAnyCancellableBooking);
-  const popupMode: 'create' | 'manage' | 'readonly' = popupMySelectedBooking && popupDesk && !isRoomResource(popupDesk)
-    ? 'manage'
-    : popupIsFullyOccupiedByOthers
-      ? 'readonly'
-      : 'create';
+  const popupMode: 'create' | 'manage' = popupMySelectedBooking && popupDesk && !isRoomResource(popupDesk) ? 'manage' : 'create';
   const popupDeskState = popupDesk ? (popupMode === 'manage' ? 'MINE' : !canBookDesk(popupDesk) ? (popupDesk.isCurrentUsersDesk ? 'MINE' : 'TAKEN') : 'FREE') : null;
   const popupOwnBookingIsRecurring = useMemo(() => popupDeskBookings.some((booking) => booking.isCurrentUser && booking.type === 'recurring'), [popupDeskBookings]);
   const manageSlotConflict = useMemo(() => {
@@ -2478,8 +2466,8 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
                 onCancel={closeBookingFlow}
                 onSubmit={handleBookingSubmit}
                 isSubmitting={bookingDialogState === 'SUBMITTING'}
-                disabled={bookingDialogState === 'SUBMITTING' || popupIsFullyOccupiedByOthers}
-                errorMessage={popupIsFullyOccupiedByOthers ? 'Heute vollständig belegt' : dialogErrorMessage}
+                disabled={bookingDialogState === 'SUBMITTING'}
+                errorMessage={dialogErrorMessage}
                 allowRecurring={popupDesk.effectiveAllowSeries !== false}
                 resourceKind={popupDesk.kind}
                 roomSchedule={isRoomResource(popupDesk)
@@ -2514,10 +2502,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
                 <p className="muted">Datum: {new Date(`${selectedDate}T00:00:00.000Z`).toLocaleDateString('de-DE')}</p>
                 {popupMode === 'manage' && popupMySelectedBooking
                   ? <p className="muted">Deine Buchung: {bookingSlotLabel(popupMySelectedBooking)}</p>
-                  : popupMode === 'readonly'
-                    ? <p className="muted">Heute vollständig belegt</p>
-                    : !isRoomResource(popupDesk) && <p className="muted">Status: {deskAvailabilityLabel(popupDeskAvailability)}</p>}
-                {(popupMode === 'readonly' || popupDeskBookings.length > 0) && <p className="muted"><strong>Heute belegt</strong></p>}
+                  : !isRoomResource(popupDesk) && <p className="muted">Status: {deskAvailabilityLabel(popupDeskAvailability)}</p>}
                 {popupDeskBookings.map((booking) => (
                   <p key={booking.id ?? `${booking.userEmail ?? 'unknown'}-${bookingSlotLabel(booking)}`} className="muted">
                     {bookingSlotLabel(booking)}: {getBookingDisplayName(booking)}{booking.bookedFor === 'GUEST' ? ` · gebucht von ${getBookingCreatorName(booking)}` : ''}
