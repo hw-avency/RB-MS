@@ -377,7 +377,9 @@ function DashboardPage({ path, navigate, onLogout, currentUser }: RouteProps) {
                   {recent.map((booking) => {
                     const desk = desks.find((item) => item.id === booking.deskId);
                     const floorplan = floorplans.find((plan) => plan.id === desk?.floorplanId);
-                    const userName = booking.userDisplayName || booking.userEmail;
+                    const creatorName = getCreatorDisplay(booking);
+                    const creatorEmail = getCreatorEmail(booking);
+                    const guestName = booking.guestName?.trim() || 'Unbekannt';
                     return (
                       <tr
                         key={booking.id}
@@ -393,9 +395,12 @@ function DashboardPage({ path, navigate, onLogout, currentUser }: RouteProps) {
                         }}
                       >
                         <td>
-                          <div className="occupant-person-cell">
-                            <Avatar displayName={booking.userDisplayName} email={booking.userEmail} size={28} />
-                            <strong>{userName}</strong>
+                          <div className="stack-xs">
+                            <div className="occupant-person-cell">
+                              <Avatar displayName={creatorName} email={creatorEmail} size={28} />
+                              <strong>{creatorName}</strong>
+                            </div>
+                            {booking.bookedFor === 'GUEST' && <span className="muted">Gast: {guestName}</span>}
                           </div>
                         </td>
                         <td>{formatDateOnly(booking.date)}</td>

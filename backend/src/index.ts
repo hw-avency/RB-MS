@@ -2604,23 +2604,52 @@ app.get('/bookings', async (req, res) => {
   }
 
   const employeesByEmail = await getActiveEmployeesByEmail(bookings.map((booking) => booking.userEmail).filter((email): email is string => Boolean(email)));
+  const usersByEmail = new Map((await prisma.user.findMany({
+    where: {
+      email: {
+        in: Array.from(new Set(bookings.map((booking) => booking.userEmail).filter((email): email is string => Boolean(email)).map((email) => normalizeEmail(email))))
+      }
+    },
+    select: { id: true, email: true, displayName: true }
+  })).map((user) => [normalizeEmail(user.email), user]));
   const enrichedBookings = bookings.map((booking) => ({
+    ...(function () {
+      const normalizedUserEmail = booking.userEmail ? normalizeEmail(booking.userEmail) : null;
+      const employee = normalizedUserEmail ? employeesByEmail.get(normalizedUserEmail) : undefined;
+      const appUser = normalizedUserEmail ? usersByEmail.get(normalizedUserEmail) : undefined;
+      const fallbackUser = booking.userEmail
+        ? {
+          id: appUser?.id ?? booking.createdByUserId ?? `legacy-${normalizedUserEmail}`,
+          displayName: employee?.displayName ?? appUser?.displayName ?? booking.userEmail,
+          email: booking.userEmail
+        }
+        : null;
+      const createdBy = resolveCreatedBySummary({
+        createdBy: booking.createdBy,
+        createdByUserId: booking.createdByUserId,
+        fallbackUser
+      });
+
+      return {
+        createdBy,
+        createdByUserId: createdBy.id,
+        user: booking.bookedFor === 'SELF' && fallbackUser ? fallbackUser : null,
+        userDisplayName: employee?.displayName,
+        employeeId: employee?.id,
+        userPhotoUrl: employee?.photoUrl ?? undefined
+      };
+    })(),
     id: booking.id,
     deskId: booking.deskId,
     userEmail: booking.userEmail,
     bookedFor: booking.bookedFor,
     guestName: booking.guestName,
-    createdByUserId: booking.createdByUserId,
-    createdBy: booking.createdBy,
     date: booking.date,
     createdAt: booking.createdAt,
     daySlot: booking.daySlot ?? bookingSlotToDaySlot(booking.slot),
     slot: booking.slot,
     startTime: minuteToHHMM(booking.startMinute ?? (booking.startTime ? booking.startTime.getUTCHours() * 60 + booking.startTime.getUTCMinutes() : null)),
-    endTime: minuteToHHMM(booking.endMinute ?? (booking.endTime ? booking.endTime.getUTCHours() * 60 + booking.endTime.getUTCMinutes() : null)),
-    employeeId: booking.userEmail ? employeesByEmail.get(normalizeEmail(booking.userEmail))?.id : undefined,
-    userDisplayName: booking.userEmail ? employeesByEmail.get(normalizeEmail(booking.userEmail))?.displayName : undefined,
-    userPhotoUrl: booking.userEmail ? (employeesByEmail.get(normalizeEmail(booking.userEmail))?.photoUrl ?? undefined) : undefined
+    endTime: minuteToHHMM(booking.endMinute ?? (booking.endTime ? booking.endTime.getUTCHours() * 60 + booking.endTime.getUTCMinutes() : null))
   }));
 
   res.status(200).json(enrichedBookings);
