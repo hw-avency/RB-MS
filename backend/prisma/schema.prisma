@@ -63,6 +63,7 @@ model Employee {
   createdAt   DateTime  @default(now())
   sessions    Session[]
   bookingsCreated Booking[] @relation("BookingCreatedByEmployee")
+  bookingsForSelf Booking[] @relation("BookingEmployee")
   recurringBookingsCreated RecurringBooking[] @relation("RecurringBookingCreatedByEmployee")
 }
 
@@ -106,6 +107,7 @@ model Booking {
   userEmail String?
   bookedFor BookedFor @default(SELF)
   guestName String?
+  employeeId String?
   creatorUnknown Boolean @default(false)
   createdByEmployeeId String
   createdByEmployee Employee @relation("BookingCreatedByEmployee", fields: [createdByEmployeeId], references: [id], onDelete: Restrict)
@@ -121,8 +123,10 @@ model Booking {
   createdAt DateTime @default(now())
   desk      Desk     @relation(fields: [deskId], references: [id], onDelete: Cascade)
   createdBy User? @relation("BookingCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
+  employee Employee? @relation("BookingEmployee", fields: [employeeId], references: [id], onDelete: SetNull)
 
   @@index([userEmail, date])
+  @@index([employeeId, date])
   @@index([date])
   @@index([deskId])
   @@index([createdByUserId])

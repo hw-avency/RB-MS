@@ -15,6 +15,7 @@ import { normalizeDaySlotBookings } from './daySlotBookings';
 import { RESOURCE_KIND_OPTIONS, resourceKindLabel, type ResourceKind } from './resourceKinds';
 import { ROOM_WINDOW_END, ROOM_WINDOW_START, ROOM_WINDOW_TOTAL_MINUTES, clampInterval, formatMinutes, invertIntervals, mergeIntervals, toMinutes } from './lib/bookingWindows';
 import { computeRoomOccupancy } from './lib/roomOccupancy';
+import { bookingDisplayName, canCancelBooking, isMineBooking } from './lib/bookingOwnership';
 import { getLastMutation, isDebugMode, setLastMutation } from './debug/runtimeDebug';
 
 type Floorplan = { id: string; name: string; imageUrl: string; isDefault?: boolean; defaultResourceKind?: ResourceKind };
@@ -33,6 +34,7 @@ type OccupancyBookingData = {
   guestName?: string | null;
   createdBy?: BookingActor;
   createdByUserId?: string;
+  createdByEmployeeId?: string;
   type?: 'single' | 'recurring';
   daySlot?: 'AM' | 'PM' | 'FULL';
   slot?: 'FULL_DAY' | 'MORNING' | 'AFTERNOON' | 'CUSTOM';
@@ -90,7 +92,7 @@ type DeskPopupState = { deskId: string; anchorRect: DOMRect; openedAt: number };
 type CancelConfirmContext = DeskPopupState & { bookingIds: string[]; bookingLabel: string; isRecurring: boolean; keepPopoverOpen: boolean };
 type OccupancyBooking = NonNullable<OccupancyDesk['booking']>;
 type NormalizedOccupancyBooking = ReturnType<typeof normalizeDaySlotBookings<OccupancyBooking>>[number];
-type RoomAvailabilityBooking = { id: string; startTime: string | null; endTime: string | null; bookedFor?: 'SELF' | 'GUEST'; guestName?: string | null; userId?: string | null; user: { email?: string | null; name?: string | null; displayName?: string | null } | null; createdBy?: BookingActor; createdByUserId?: string; type?: 'single' | 'recurring'; };
+type RoomAvailabilityBooking = { id: string; startTime: string | null; endTime: string | null; bookedFor?: 'SELF' | 'GUEST'; guestName?: string | null; employeeId?: string | null; userId?: string | null; user: { email?: string | null; name?: string | null; displayName?: string | null } | null; createdBy?: BookingActor; createdByUserId?: string; createdByEmployeeId?: string; type?: 'single' | 'recurring'; };
 type RoomAvailabilityResponse = {
   resource: { id: string; name: string; type: string };
   date: string;
@@ -104,9 +106,10 @@ type RoomAvailabilityResponse = {
     endTime: string | null;
     bookedFor?: 'SELF' | 'GUEST';
     guestName?: string | null;
+    employeeId?: string | null;
     userId?: string | null;
     createdBy: BookingActor;
-    createdByUserId?: string;
+    createdByEmployeeId?: string;
     type?: 'single' | 'recurring';
     user: { email?: string | null; name?: string | null; displayName?: string | null } | null;
   }>;
@@ -123,7 +126,7 @@ type RoomBookingListEntry = {
   isRecurring: boolean;
   bookedFor?: 'SELF' | 'GUEST';
   userId?: string | null;
-  createdByUserId?: string;
+  createdByEmployeeId?: string;
   canCancel: boolean;
 };
 type DeskSlotAvailability = 'FREE' | 'AM_BOOKED' | 'PM_BOOKED' | 'FULL_BOOKED';
@@ -270,37 +273,10 @@ const getFirstName = ({ firstName, displayName, email }: { firstName?: string; d
   return 'Unbekannt';
 };
 
-const getBookingDisplayName = (booking: { bookedFor?: 'SELF' | 'GUEST'; guestName?: string | null; user?: { displayName?: string | null; name?: string | null; email?: string | null } | null; userDisplayName?: string; userEmail?: string | null }): string => {
-  if (booking.bookedFor === 'GUEST') {
-    return `Gast: ${booking.guestName?.trim() || 'Unbekannt'}`;
-  }
-
-  return booking.user?.displayName
-    ?? booking.user?.name
-    ?? booking.userDisplayName
-    ?? booking.userEmail
-    ?? booking.user?.email
-    ?? 'Unbekannt';
-};
 
 const getBookingCreatorName = (booking: { createdBy?: BookingActor }): string => {
   return booking.createdBy?.displayName ?? booking.createdBy?.name ?? 'Unbekannt';
 };
-
-const isMineForStyling = (
-  booking: { bookedFor?: 'SELF' | 'GUEST'; userId?: string | null; createdByUserId?: string },
-  me?: AuthUser | null
-): boolean => {
-  if (!me) return false;
-  if (booking.bookedFor === 'SELF') return Boolean(booking.userId && booking.userId === me.id);
-  if (booking.bookedFor === 'GUEST') return Boolean(booking.createdByUserId && booking.createdByUserId === me.id);
-  return false;
-};
-
-const canCancelBooking = (
-  booking: { bookedFor?: 'SELF' | 'GUEST'; userId?: string | null; createdByUserId?: string },
-  me?: AuthUser | null
-): boolean => Boolean(me && (me.role === 'admin' || isMineForStyling(booking, me)));
 
 const formatDate = (dateString: string): string => new Date(`${dateString}T00:00:00.000Z`).toLocaleDateString('de-DE');
 const bookingBelongsToDay = (booking: { startTime?: string }, selectedDateValue: string): boolean => {
@@ -432,7 +408,7 @@ const mapBookingsForDay = (desks: OccupancyDesk[]): OccupantForDay[] => {
 
   desks.forEach((desk) => {
     for (const booking of normalizeDeskBookings(desk)) {
-      const fullName = getBookingDisplayName(booking);
+      const fullName = bookingDisplayName(booking);
 
       const occupant: OccupantForDay = {
         deskId: desk.id,
@@ -481,7 +457,7 @@ const enrichDeskBookings = ({
       : undefined;
     const employeePhotoUrl = resolveApiUrl(employee?.photoUrl);
     const bookingPhotoUrl = resolveApiUrl(booking.userPhotoUrl);
-    const isCurrentUser = isMineForStyling(booking, currentUser);
+    const isCurrentUser = isMineBooking(booking, currentUser?.id);
 
     return {
       ...booking,
@@ -1092,9 +1068,10 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
           endTime: booking.endTime,
           bookedFor: booking.bookedFor,
           guestName: booking.guestName,
-          userId: booking.userId,
+          employeeId: booking.employeeId ?? booking.userId ?? null,
+        userId: booking.userId,
           createdBy: booking.createdBy,
-          createdByUserId: booking.createdByUserId,
+          createdByEmployeeId: booking.createdByEmployeeId,
           type: booking.type,
           user: booking.user
         }))
@@ -1108,9 +1085,11 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
         endTime: booking.endTime ?? null,
         bookedFor: booking.bookedFor,
         guestName: booking.guestName,
+        employeeId: booking.employeeId ?? booking.userId ?? null,
         userId: booking.userId,
         createdBy: booking.createdBy,
         createdByUserId: booking.createdByUserId,
+        createdByEmployeeId: booking.createdByEmployeeId,
         type: booking.type,
         user: booking.bookedFor === 'GUEST'
           ? null
@@ -1130,20 +1109,20 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
         if (start === null || end === null || end <= start) return [];
         const clamped = clampInterval({ startMin: start, endMin: end }, ROOM_WINDOW_START_MINUTES, ROOM_WINDOW_END_MINUTES);
         if (!clamped) return [];
-        const isCurrentUser = isMineForStyling(booking, currentUser);
-        const canCancel = canCancelBooking(booking, currentUser);
+        const isCurrentUser = isMineBooking(booking, currentUser?.id);
+        const canCancel = canCancelBooking(booking, currentUser?.id, currentUser?.role === 'admin');
         return [{
           id: booking.id,
           start: clamped.startMin,
           end: clamped.endMin,
           label: `${formatMinutes(clamped.startMin)} – ${formatMinutes(clamped.endMin)}`,
-          person: getBookingDisplayName(booking),
+          person: bookingDisplayName(booking),
           bookingId: booking.id,
           isCurrentUser,
           isRecurring: booking.type === 'recurring',
           bookedFor: booking.bookedFor,
           userId: booking.userId,
-          createdByUserId: booking.createdByUserId,
+          createdByEmployeeId: booking.createdByEmployeeId,
           canCancel
         }];
       })
@@ -1251,7 +1230,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
     if (!conflict) return '';
     return `Kollidiert mit ${formatMinutes(conflict.startMin)} – ${formatMinutes(conflict.endMin)}`;
   }, [popupDesk, bookingFormValues.startTime, bookingFormValues.endTime, popupRoomOccupiedIntervals]);
-  const popupMyBookings = useMemo(() => popupDeskBookings.filter((booking) => booking.isCurrentUser), [popupDeskBookings]);
+  const popupMyBookings = useMemo(() => popupDeskBookings.filter((booking) => isMineBooking(booking, currentUser?.id)), [popupDeskBookings, currentUser?.id]);
   const popupMySelectedBooking = useMemo(() => {
     if (!popupDesk || isRoomResource(popupDesk) || popupMyBookings.length === 0) return null;
 
@@ -1272,8 +1251,8 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
     return popupMyBookings[0];
   }, [bookingFormValues.slot, popupDesk, popupMyBookings]);
   const hasUnexpectedMultipleMyBookings = popupMyBookings.length > 1;
-  const popupMode: 'create' | 'manage' = popupMySelectedBooking && popupDesk && !isRoomResource(popupDesk) ? 'manage' : 'create';
-  const popupDeskState = popupDesk ? (popupMode === 'manage' ? 'MINE' : !canBookDesk(popupDesk) ? (popupDesk.isCurrentUsersDesk ? 'MINE' : 'TAKEN') : 'FREE') : null;
+  const popupMode: 'create' | 'manage' = popupDesk && popupMyBookings.length > 0 ? 'manage' : 'create';
+  const popupDeskState = popupDesk ? (popupMode === 'manage' ? 'MINE' : !canBookDesk(popupDesk) ? 'TAKEN' : 'FREE') : null;
   const popupOwnBookingIsRecurring = useMemo(() => popupDeskBookings.some((booking) => booking.isCurrentUser && booking.type === 'recurring'), [popupDeskBookings]);
   const manageSlotConflict = useMemo(() => {
     if (!popupDesk || !popupMySelectedBooking || isRoomResource(popupDesk)) return '';
@@ -1627,13 +1606,38 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
     setDialogErrorMessage('');
     setIsManageEditOpen(false);
 
-    if (canBookDesk(desk)) {
+    const deskBookings = normalizeDeskBookings(desk);
+    const mineBookings = deskBookings.filter((booking) => isMineBooking(booking, currentUser?.id));
+    const hasMineBookings = mineBookings.length > 0;
+
+    let fullyOccupiedByOthers = false;
+    if (isRoomResource(desk)) {
+      const occupiedIntervals = mergeIntervals(deskBookings
+        .filter((booking) => !isMineBooking(booking, currentUser?.id))
+        .flatMap((booking) => {
+          const start = bookingTimeToMinutes(booking.startTime);
+          const end = bookingTimeToMinutes(booking.endTime);
+          if (start === null || end === null || end <= start) return [];
+          const clamped = clampInterval({ startMin: start, endMin: end }, ROOM_WINDOW_START_MINUTES, ROOM_WINDOW_END_MINUTES);
+          return clamped ? [clamped] : [];
+        }));
+      const freeIntervals = invertIntervals(ROOM_WINDOW_START_MINUTES, ROOM_WINDOW_END_MINUTES, occupiedIntervals);
+      fullyOccupiedByOthers = freeIntervals.every((interval) => interval.endMin <= interval.startMin);
+    } else {
+      fullyOccupiedByOthers = !canBookDesk(desk);
+    }
+
+    if (hasMineBookings) {
+      setBookingDialogState('IDLE');
+    } else if (fullyOccupiedByOthers) {
+      setBookingDialogState('IDLE');
+    } else {
       const defaults = createDefaultBookingFormValues(selectedDate);
       if (!isRoomResource(desk)) {
         const nextSlot = getDefaultSlotForDesk(desk);
         if (nextSlot) defaults.slot = nextSlot;
       } else {
-        const occupiedIntervals = mergeIntervals(normalizeDeskBookings(desk).flatMap((booking) => {
+        const occupiedIntervals = mergeIntervals(deskBookings.flatMap((booking) => {
           const start = bookingTimeToMinutes(booking.startTime);
           const end = bookingTimeToMinutes(booking.endTime);
           if (start === null || end === null || end <= start) return [];
@@ -1656,8 +1660,6 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
       setBookingFormValues(defaults);
       setManageTargetSlot(defaults.slot);
       setBookingDialogState('BOOKING_OPEN');
-    } else {
-      setBookingDialogState('IDLE');
     }
 
     const row = occupantRowRefs.current[deskId];
@@ -2486,12 +2488,12 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
           role="menu"
           data-placement={deskPopupCoords?.placement ?? 'right'}
         >
-          {popupMode === 'create' ? (
+          {popupMode === 'create' || isRoomResource(popupDesk) ? (
             <>
               <div className="desk-popup-header">
                 <div className="stack-xxs">
                   <h3>{resourceKindLabel(popupDesk.kind)}: {popupDesk.name}</h3>
-                  <p className="muted">Buchung anlegen{!isRoomResource(popupDesk) ? ` · ${deskAvailabilityLabel(popupDeskAvailability)}` : ''}</p>
+                  <p className="muted">{popupMode === 'manage' ? 'Deine Buchungen verwalten' : 'Buchung anlegen'}{!isRoomResource(popupDesk) ? ` · ${deskAvailabilityLabel(popupDeskAvailability)}` : ''}</p>
                 </div>
                 <button type="button" className="btn btn-ghost desk-popup-close" aria-label="Popover schließen" onClick={closeBookingFlow} disabled={isCancellingBooking}>✕</button>
               </div>
@@ -2520,9 +2522,11 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
                       label: booking.label,
                       person: booking.person,
                       isCurrentUser: booking.isCurrentUser,
+                      isSelfMine: booking.isCurrentUser && booking.bookedFor === 'SELF',
+                      isGuestMine: booking.isCurrentUser && booking.bookedFor === 'GUEST',
                       canCancel: booking.canCancel && Boolean(booking.bookingId),
                       debugMeta: showRoomDebugInfo
-                        ? `bookedFor=${booking.bookedFor ?? '-'} · userId=${booking.userId ?? '-'} · createdByUserId=${booking.createdByUserId ?? '-'} · canCancel=${booking.canCancel ? 'true' : 'false'}`
+                        ? `bookedFor=${booking.bookedFor ?? '-'} · employeeId=${booking.userId ?? '-'} · createdByEmployeeId=${booking.createdByEmployeeId ?? '-'} · canCancel=${booking.canCancel ? 'true' : 'false'}`
                         : undefined
                     })),
                     freeSlots: popupRoomFreeSlotChips,
@@ -2549,7 +2553,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
                   : !isRoomResource(popupDesk) && <p className="muted">Status: {deskAvailabilityLabel(popupDeskAvailability)}</p>}
                 {popupDeskBookings.map((booking) => (
                   <p key={booking.id ?? `${booking.userEmail ?? 'unknown'}-${bookingSlotLabel(booking)}`} className="muted">
-                    {bookingSlotLabel(booking)}: {getBookingDisplayName(booking)}{booking.bookedFor === 'GUEST' ? ` · gebucht von ${getBookingCreatorName(booking)}` : ''}
+                    {bookingSlotLabel(booking)}: {bookingDisplayName(booking)}{booking.bookedFor === 'GUEST' ? ` · gebucht von ${getBookingCreatorName(booking)}` : ''}
                   </p>
                 ))}
                 {showRoomDebugInfo && (

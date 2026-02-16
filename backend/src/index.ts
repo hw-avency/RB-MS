@@ -969,15 +969,17 @@ const findDuplicateUserDateGroups = (bookings: Array<{ id: string; userEmail: st
   return Array.from(counts.entries()).filter(([, count]) => count > 1);
 };
 
-const mapBookingResponse = (booking: BookingWithCreator) => ({
+const mapBookingResponse = (booking: BookingWithCreator & { employeeId?: string | null }) => ({
   id: booking.id,
   deskId: booking.deskId,
   userEmail: booking.userEmail,
+  employeeId: booking.employeeId ?? null,
   bookedFor: booking.bookedFor,
   guestName: booking.guestName,
   createdByEmployee: booking.createdByEmployee,
   createdBy: booking.createdByEmployee,
   createdByUserId: booking.createdByEmployeeId,
+  createdByEmployeeId: booking.createdByEmployeeId,
   date: booking.date,
   daySlot: booking.daySlot,
   slot: booking.slot,
@@ -1997,10 +1999,6 @@ app.post('/bookings', async (req, res) => {
     return;
   }
 
-  if (bookingMode === 'SELF' && !userEmail) {
-    res.status(400).json({ error: 'validation', message: 'userEmail is required for SELF bookings' });
-    return;
-  }
 
   const parsedDate = toDateOnly(date);
   if (!parsedDate) {
@@ -2022,7 +2020,7 @@ app.post('/bookings', async (req, res) => {
 
   const bookingWindow = bookingWindowResult.value;
   const shouldReplaceExisting = overwrite ?? replaceExisting ?? false;
-  const identity = bookingMode === 'SELF' ? await findBookingIdentity(userEmail ?? '') : null;
+  const identity = bookingMode === 'SELF' ? await findBookingIdentity(userEmail ?? actorEmployee.email) : null;
 
   const result = await prisma.$transaction(async (tx) => {
     if (identity) {
@@ -2083,7 +2081,8 @@ app.post('/bookings', async (req, res) => {
     const created = await tx.booking.create({
       data: {
         deskId,
-        userEmail: identity?.normalizedEmail ?? null,
+        userEmail: bookingMode === 'SELF' ? (identity?.normalizedEmail ?? actorEmployee.email) : null,
+        employeeId: bookingMode === 'SELF' ? actorEmployee.id : null,
         bookedFor: bookingMode,
         guestName: bookingMode === 'GUEST' ? normalizedGuestName : null,
         createdByEmployeeId: actorEmployee.id,
@@ -2104,7 +2103,7 @@ app.post('/bookings', async (req, res) => {
       console.info('BOOKING_CREATE', {
         actorEmployeeId: actorEmployee.id,
         bookedFor: bookingMode,
-        employeeId: identity?.normalizedEmail ?? null,
+        employeeId: created.employeeId ?? null,
         guestName: bookingMode === 'GUEST' ? normalizedGuestName : null,
         createdByEmployeeId: created.createdByEmployeeId
       });
@@ -2153,8 +2152,7 @@ app.put('/bookings/:id', async (req, res) => {
     return;
   }
 
-  const authEmail = req.authUser?.email;
-  if (req.authUser?.role !== 'admin' && existing.userEmail !== authEmail && existing.createdByEmployeeId !== actorEmployee.id) {
+  if (req.authUser?.role !== 'admin' && !canCancelBooking({ booking: { bookedFor: existing.bookedFor, employeeId: existing.employeeId, createdByEmployeeId: existing.createdByEmployeeId }, actor: { employeeId: actorEmployee.id, email: req.authUser?.email ?? '', isAdmin: false } })) {
     res.status(403).json({ error: 'forbidden', message: 'Cannot update booking of another user' });
     return;
   }
@@ -2184,6 +2182,11 @@ app.put('/bookings/:id', async (req, res) => {
     return;
   }
 
+  if (existing.bookedFor === 'SELF' && !actorEmployee.id) {
+    res.status(400).json({ error: 'validation', message: 'employeeId is required for SELF bookings' });
+    return;
+  }
+
   const nextWindow = bookingWindowResult.value;
   const conflicts = await prisma.booking.findMany({ where: { deskId, date: bookingDate, id: { not: existing.id } }, orderBy: [{ createdAt: 'desc' }] });
   const conflict = conflicts.find((candidate) => {
@@ -2199,7 +2202,9 @@ app.put('/bookings/:id', async (req, res) => {
     where: { id },
     data: {
       deskId,
+      employeeId: existing.bookedFor === 'SELF' ? actorEmployee.id : null,
       guestName: nextGuestName,
+      createdByEmployeeId: actorEmployee.id,
       daySlot: nextWindow.mode === 'day' ? nextWindow.daySlot : null,
       startMinute: nextWindow.mode === 'time' ? nextWindow.startMinute : null,
       endMinute: nextWindow.mode === 'time' ? nextWindow.endMinute : null,
@@ -2253,7 +2258,7 @@ app.delete('/bookings/:id', async (req, res) => {
     const allowed = canCancelBooking({
       booking: {
         bookedFor: existing.bookedFor,
-        userEmail: existing.userEmail,
+        employeeId: existing.employeeId,
         createdByEmployeeId: existing.createdByEmployeeId
       },
       actor: {
@@ -2263,18 +2268,17 @@ app.delete('/bookings/:id', async (req, res) => {
       }
     });
 
-    console.info('CANCEL_AUTHZ_CHECK', {
-      requestId,
-      bookingId: id,
-      bookedFor: existing.bookedFor,
-      bookingUserEmail: existing.userEmail,
-      createdByEmployeeId: existing.createdByEmployeeId,
-      actorEmployeeId: actorEmployee.id,
-      actorUserId: req.authUser.id,
-      actorEmail: req.authUser.email,
-      actorIsAdmin: req.authUser.role === 'admin',
-      allowed
-    });
+    if (process.env.DEBUG === '1') {
+      console.info('CANCEL_AUTHZ_CHECK', {
+        bookingId: id,
+        bookedFor: existing.bookedFor,
+        employeeId: existing.employeeId,
+        createdByEmployeeId: existing.createdByEmployeeId,
+        actorEmployeeId: actorEmployee.id,
+        actorIsAdmin: req.authUser.role === 'admin',
+        allowed
+      });
+    }
 
     if (!allowed) {
       console.warn('BOOKING_CANCEL', { requestId, userId, bookingId: id, resourceType: existing.desk?.kind ?? null, status: 403, error: 'Not allowed to cancel this booking' });
@@ -2519,7 +2523,7 @@ app.post('/bookings/range', async (req, res) => {
         if (existing.deskId !== deskId || existing.userEmail !== identity.normalizedEmail) {
           await tx.booking.update({
             where: { id: existing.id },
-            data: { deskId, userEmail: identity.normalizedEmail }
+            data: { deskId, userEmail: identity.normalizedEmail, employeeId: actorEmployee.id, bookedFor: 'SELF', guestName: null, createdByEmployeeId: actorEmployee.id }
           });
         }
 
@@ -2528,7 +2532,7 @@ app.post('/bookings/range', async (req, res) => {
         continue;
       }
 
-      await tx.booking.create({ data: { deskId, userEmail: identity.normalizedEmail, createdByEmployeeId: actorEmployee.id, createdByUserId: req.authUser?.source === 'local' ? req.authUser.id : null, createdByEmail: req.authUser?.email ?? null, bookedFor: 'SELF', guestName: null, date: targetDate } });
+      await tx.booking.create({ data: { deskId, userEmail: identity.normalizedEmail, employeeId: actorEmployee.id, createdByEmployeeId: actorEmployee.id, createdByUserId: req.authUser?.source === 'local' ? req.authUser.id : null, createdByEmail: req.authUser?.email ?? null, bookedFor: 'SELF', guestName: null, date: targetDate } });
       createdCount += 1;
     }
 
@@ -2613,6 +2617,7 @@ app.get('/bookings', async (req, res) => {
       id: true,
       deskId: true,
       userEmail: true,
+      employeeId: true,
       bookedFor: true,
       guestName: true,
       createdByEmployeeId: true,
@@ -2670,7 +2675,7 @@ app.get('/bookings', async (req, res) => {
     createdByEmployeeId: booking.createdByEmployeeId,
         user: booking.bookedFor === 'SELF' && fallbackUser ? fallbackUser : null,
         userDisplayName: employee?.displayName,
-        employeeId: employee?.id,
+        employeeId: booking.employeeId ?? employee?.id,
         userPhotoUrl: employee?.photoUrl ?? undefined
       };
     })(),
@@ -2735,7 +2740,7 @@ app.get('/occupancy', async (req, res) => {
       createdByUserId: booking.createdByEmployeeId,
       createdByEmployeeId: booking.createdByEmployeeId,
       creatorUnknown: booking.creatorUnknown,
-      employeeId: booking.userEmail ? employeesByEmail.get(normalizeEmail(booking.userEmail))?.id : undefined,
+      employeeId: booking.employeeId ?? (booking.userEmail ? employeesByEmail.get(normalizeEmail(booking.userEmail))?.id : undefined),
       userDisplayName: booking.userEmail ? employeesByEmail.get(normalizeEmail(booking.userEmail))?.displayName : undefined,
       userPhotoUrl: booking.userEmail ? (employeesByEmail.get(normalizeEmail(booking.userEmail))?.photoUrl ?? undefined) : undefined,
       deskName: desk.name,
@@ -2870,7 +2875,8 @@ app.get('/resources/:resourceId/availability', async (req, res) => {
     endTime: minuteToHHMM(booking.endMinute ?? (booking.endTime ? booking.endTime.getUTCHours() * 60 + booking.endTime.getUTCMinutes() : null)),
     bookedFor: booking.bookedFor,
     guestName: booking.guestName,
-    userId: booking.userEmail ? (usersByEmail.get(normalizeEmail(booking.userEmail)) ?? null) : null,
+    employeeId: booking.employeeId ?? null,
+    userId: booking.employeeId ?? null,
     createdBy: booking.createdByEmployee,
     createdByUserId: booking.createdByEmployeeId,
     createdByEmployeeId: booking.createdByEmployeeId,

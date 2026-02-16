@@ -106,6 +106,7 @@ input, select { border: 1px solid hsl(var(--border)); border-radius: 12px; paddi
 .room-business-ring-track{fill:none;stroke:hsl(var(--muted));stroke-linecap:round}
 .room-business-ring-gap{fill:none;stroke:hsl(var(--muted-foreground)/.35);stroke-linecap:round}
 .room-business-ring-booked{fill:none;stroke:var(--resource-busy);stroke-linecap:round}
+.desk-pin.is-own-desk .room-business-ring-booked{stroke:var(--resource-own)}
 .room-business-ring-tick{stroke:hsl(var(--muted-foreground)/.45);stroke-width:1.6}
 .pin-center{position:relative;z-index:2;border-radius:999px;background:#fff;display:flex;align-items:center;justify-content:center;overflow:hidden;box-shadow:inset 0 0 0 1px rgba(148,163,184,.55),0 2px 7px rgba(15,23,42,.14)}
 .room-center-label{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;line-height:1;color:#1f2937}
