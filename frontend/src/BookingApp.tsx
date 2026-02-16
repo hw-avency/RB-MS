@@ -8,7 +8,7 @@ import { BookingForm, createDefaultBookingFormValues } from './components/Bookin
 import type { BookingFormSubmitPayload, BookingFormValues } from './components/BookingForm';
 import { UserMenu } from './components/UserMenu';
 import { FloorplanCanvas } from './FloorplanCanvas';
-import { APP_TITLE, COMPANY_LOGO_URL } from './config';
+import { APP_TITLE, APP_VERSION, COMPANY_LOGO_URL } from './config';
 import type { AuthUser } from './auth/AuthProvider';
 import { useToast } from './components/toast';
 import { normalizeDaySlotBookings } from './daySlotBookings';
@@ -2028,7 +2028,6 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
         <section className="card stack-sm down-card">
           <h2>Backend nicht erreichbar</h2>
           <p>Bitte prüfen, ob Server läuft.</p>
-          <p className="muted">Backend-URL: {API_BASE}</p>
           <div>
             <button className="btn" onClick={retryHealthCheck}>Erneut versuchen</button>
           </div>
@@ -2331,7 +2330,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
       )}
 
 
-      <p className="api-base">API: {API_BASE}</p>
+      <p className="api-base">{APP_TITLE} · v{APP_VERSION}</p>
     </main>
   );
 }
