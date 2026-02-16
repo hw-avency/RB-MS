@@ -59,6 +59,7 @@ export function BookingForm({ values, onChange, onSubmit, onCancel, isSubmitting
     freeSlots: RoomFreeSlot[];
     isFullyBooked?: boolean;
     conflictMessage?: string;
+    debugInfo?: string;
     onSelectFreeSlot: (startTime: string, endTime: string) => void;
     onBookingClick?: (bookingId: string) => void;
   };
@@ -195,6 +196,7 @@ export function BookingForm({ values, onChange, onSubmit, onCancel, isSubmitting
                   </div>
                 )}
                 {roomSchedule?.isFullyBooked && <p className="room-fully-booked-hint">Heute vollständig belegt</p>}
+                {roomSchedule?.debugInfo && <p className="muted">Debug: {roomSchedule.debugInfo}</p>}
               </section>
               <div className="split">
                 <div className="stack-xs">

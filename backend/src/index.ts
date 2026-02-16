@@ -412,6 +412,95 @@ const toDateOnly = (value: string): Date | null => {
 
 const toISODateOnly = (value: Date): string => value.toISOString().slice(0, 10);
 
+const BERLIN_TIME_ZONE = 'Europe/Berlin';
+const ROOM_WORK_START_MINUTE = 7 * 60;
+const ROOM_WORK_END_MINUTE = 18 * 60;
+
+const getTimeZoneOffsetMs = (date: Date, timeZone: string): number => {
+  const formatter = new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false
+  });
+
+  const parts = formatter.formatToParts(date);
+  const values = new Map(parts.map((part) => [part.type, part.value]));
+  const year = Number.parseInt(values.get('year') ?? '', 10);
+  const month = Number.parseInt(values.get('month') ?? '', 10);
+  const day = Number.parseInt(values.get('day') ?? '', 10);
+  const hour = Number.parseInt(values.get('hour') ?? '', 10);
+  const minute = Number.parseInt(values.get('minute') ?? '', 10);
+  const second = Number.parseInt(values.get('second') ?? '', 10);
+
+  const asUtc = Date.UTC(year, month - 1, day, hour, minute, second);
+  return asUtc - date.getTime();
+};
+
+const zonedDateTimeToUtc = (year: number, month: number, day: number, hour: number, minute: number, second = 0): Date => {
+  const utcGuess = new Date(Date.UTC(year, month - 1, day, hour, minute, second));
+  const offset = getTimeZoneOffsetMs(utcGuess, BERLIN_TIME_ZONE);
+  return new Date(utcGuess.getTime() - offset);
+};
+
+const getBerlinDayBoundsUtc = (date: Date): { dayStartUtc: Date; dayEndUtc: Date } => {
+  const year = date.getUTCFullYear();
+  const month = date.getUTCMonth() + 1;
+  const day = date.getUTCDate();
+
+  const nextDay = new Date(Date.UTC(year, month - 1, day + 1));
+
+  return {
+    dayStartUtc: zonedDateTimeToUtc(year, month, day, 0, 0, 0),
+    dayEndUtc: zonedDateTimeToUtc(nextDay.getUTCFullYear(), nextDay.getUTCMonth() + 1, nextDay.getUTCDate(), 0, 0, 0)
+  };
+};
+
+const mergeTimeIntervals = (intervals: Array<{ start: number; end: number }>): Array<{ start: number; end: number }> => {
+  if (intervals.length === 0) return [];
+  const sorted = [...intervals].sort((left, right) => left.start - right.start);
+  const merged = [{ ...sorted[0] }];
+
+  for (let index = 1; index < sorted.length; index += 1) {
+    const current = sorted[index];
+    const previous = merged[merged.length - 1];
+    if (current.start <= previous.end) {
+      previous.end = Math.max(previous.end, current.end);
+      continue;
+    }
+    merged.push({ ...current });
+  }
+
+  return merged;
+};
+
+const toFreeTimeWindows = (
+  occupied: Array<{ start: number; end: number }>,
+  dayStart = ROOM_WORK_START_MINUTE,
+  dayEnd = ROOM_WORK_END_MINUTE
+): Array<{ start: number; end: number }> => {
+  const free: Array<{ start: number; end: number }> = [];
+  let cursor = dayStart;
+
+  for (const interval of occupied) {
+    const start = Math.max(interval.start, dayStart);
+    const end = Math.min(interval.end, dayEnd);
+    if (end <= dayStart || start >= dayEnd) continue;
+    if (start > cursor) free.push({ start: cursor, end: start });
+    cursor = Math.max(cursor, end);
+  }
+
+  if (cursor < dayEnd) {
+    free.push({ start: cursor, end: dayEnd });
+  }
+
+  return free;
+};
+
 const addUtcDays = (value: Date, days: number): Date => {
   const next = new Date(value);
   next.setUTCDate(next.getUTCDate() + days);
@@ -2416,6 +2505,101 @@ app.get('/occupancy', async (req, res) => {
     floorplanId,
     desks: occupancyDesks,
     people
+  });
+});
+
+app.get('/resources/:resourceId/availability', async (req, res) => {
+  const requestId = req.requestId ?? 'unknown';
+  const resourceId = typeof req.params.resourceId === 'string' ? req.params.resourceId : '';
+  const date = typeof req.query.date === 'string' ? req.query.date : undefined;
+
+  if (!resourceId || !date) {
+    res.status(400).json({ error: 'validation', message: 'resourceId and date are required' });
+    return;
+  }
+
+  const parsedDate = toDateOnly(date);
+  if (!parsedDate) {
+    res.status(400).json({ error: 'validation', message: 'date must be in YYYY-MM-DD format' });
+    return;
+  }
+
+  const { dayStartUtc, dayEndUtc } = getBerlinDayBoundsUtc(parsedDate);
+
+  const desk = await prisma.desk.findUnique({
+    where: { id: resourceId },
+    select: { id: true, name: true, kind: true }
+  });
+
+  if (!desk) {
+    res.status(404).json({ error: 'not_found', message: 'Resource not found' });
+    return;
+  }
+
+  if (desk.kind !== 'RAUM') {
+    res.status(400).json({ error: 'validation', message: 'Availability endpoint is only available for room resources' });
+    return;
+  }
+
+  const bookings = await prisma.booking.findMany({
+    where: {
+      deskId: resourceId,
+      startTime: { lt: dayEndUtc },
+      endTime: { gt: dayStartUtc }
+    },
+    orderBy: [{ startTime: 'asc' }, { createdAt: 'asc' }]
+  });
+
+  console.info('ROOM_AVAILABILITY_QUERY', {
+    requestId,
+    resourceId,
+    date,
+    dayStart: dayStartUtc.toISOString(),
+    dayEnd: dayEndUtc.toISOString(),
+    bookingsCount: bookings.length
+  });
+
+  const employeesByEmail = await getActiveEmployeesByEmail(bookings.map((booking) => booking.userEmail));
+  const mappedBookings = bookings.map((booking) => ({
+    id: booking.id,
+    resourceId,
+    resourceType: desk.kind,
+    start: booking.startTime?.toISOString() ?? null,
+    end: booking.endTime?.toISOString() ?? null,
+    startTime: minuteToHHMM(booking.startMinute ?? (booking.startTime ? booking.startTime.getUTCHours() * 60 + booking.startTime.getUTCMinutes() : null)),
+    endTime: minuteToHHMM(booking.endMinute ?? (booking.endTime ? booking.endTime.getUTCHours() * 60 + booking.endTime.getUTCMinutes() : null)),
+    createdBy: booking.userEmail,
+    user: {
+      email: booking.userEmail,
+      name: employeesByEmail.get(normalizeEmail(booking.userEmail))?.displayName ?? booking.userEmail
+    }
+  }));
+
+  const occupiedIntervals = mergeTimeIntervals(bookings.flatMap((booking) => {
+    const start = booking.startMinute ?? (booking.startTime ? booking.startTime.getUTCHours() * 60 + booking.startTime.getUTCMinutes() : null);
+    const end = booking.endMinute ?? (booking.endTime ? booking.endTime.getUTCHours() * 60 + booking.endTime.getUTCMinutes() : null);
+    if (typeof start !== 'number' || typeof end !== 'number' || end <= start) return [];
+    return [{ start, end }];
+  }));
+
+  const freeWindows = toFreeTimeWindows(occupiedIntervals).map((window) => ({
+    startTime: minuteToHHMM(window.start),
+    endTime: minuteToHHMM(window.end),
+    label: `${minuteToHHMM(window.start)} – ${minuteToHHMM(window.end)}`
+  }));
+
+  res.status(200).json({
+    requestId,
+    resource: {
+      id: desk.id,
+      name: desk.name,
+      type: desk.kind
+    },
+    date,
+    dayStart: dayStartUtc.toISOString(),
+    dayEnd: dayEndUtc.toISOString(),
+    bookings: mappedBookings,
+    freeWindows
   });
 });
 

@@ -58,6 +58,23 @@ type DeskPopupState = { deskId: string; anchorRect: DOMRect; openedAt: number };
 type CancelConfirmContext = DeskPopupState & { bookingIds: string[]; bookingLabel: string; isRecurring: boolean; keepPopoverOpen: boolean };
 type OccupancyBooking = NonNullable<OccupancyDesk['booking']>;
 type NormalizedOccupancyBooking = ReturnType<typeof normalizeDaySlotBookings<OccupancyBooking>>[number];
+type RoomAvailabilityBooking = { id: string; startTime: string | null; endTime: string | null; user: { email: string; name?: string } };
+type RoomAvailabilityResponse = {
+  resource: { id: string; name: string; type: string };
+  date: string;
+  bookings: Array<{
+    id: string;
+    resourceId: string;
+    resourceType: string;
+    start: string | null;
+    end: string | null;
+    startTime: string | null;
+    endTime: string | null;
+    createdBy: string;
+    user: { email: string; name: string };
+  }>;
+  freeWindows: Array<{ startTime: string | null; endTime: string | null; label: string }>;
+};
 type RoomBookingListEntry = { id: string; start: number; end: number; label: string; person: string; bookingId?: string; isCurrentUser: boolean; isRecurring: boolean };
 type DeskSlotAvailability = 'FREE' | 'AM_BOOKED' | 'PM_BOOKED' | 'FULL_BOOKED';
 type PopupPlacement = 'top' | 'right' | 'bottom' | 'left';
@@ -488,6 +505,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
   const [visibleMonth, setVisibleMonth] = useState(startOfMonth(today));
 
   const [occupancy, setOccupancy] = useState<OccupancyResponse | null>(null);
+  const [roomAvailability, setRoomAvailability] = useState<RoomAvailabilityResponse | null>(null);
   const [todayOccupancy, setTodayOccupancy] = useState<OccupancyResponse | null>(null);
   const [employees, setEmployees] = useState<BookingEmployee[]>([]);
   const [selectedEmployeeEmail, setSelectedEmployeeEmail] = useState('');
@@ -577,38 +595,71 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
   const popupDesk = useMemo(() => (deskPopup ? desks.find((desk) => desk.id === deskPopup.deskId) ?? null : null), [desks, deskPopup]);
   const popupDeskAvailability = useMemo(() => getDeskSlotAvailability(popupDesk), [popupDesk]);
   const popupDeskBookings = useMemo(() => (popupDesk ? normalizeDeskBookings(popupDesk) : []), [popupDesk]);
-  const popupRoomBookingsForSelectedDay = useMemo(() => popupDeskBookings.filter((booking) => bookingBelongsToDay(booking, selectedDate)), [popupDeskBookings, selectedDate]);
+  const popupRoomBookingsForSelectedDay = useMemo<RoomAvailabilityBooking[]>(() => {
+    if (!popupDesk || !isRoomResource(popupDesk)) return [];
+    if (roomAvailability && roomAvailability.resource.id === popupDesk.id && roomAvailability.date === selectedDate) {
+      return roomAvailability.bookings
+        .map((booking) => ({
+          id: booking.id,
+          startTime: booking.startTime,
+          endTime: booking.endTime,
+          user: booking.user
+        }))
+        .sort((left, right) => (toMinutes(left.startTime ?? undefined) ?? 0) - (toMinutes(right.startTime ?? undefined) ?? 0));
+    }
+
+    return popupDeskBookings
+      .map((booking) => ({
+        id: booking.id ?? `${booking.userEmail}-${booking.startTime}-${booking.endTime}`,
+        startTime: booking.startTime ?? null,
+        endTime: booking.endTime ?? null,
+        user: { email: booking.userEmail, name: booking.userDisplayName }
+      }))
+      .sort((left, right) => (toMinutes(left.startTime ?? undefined) ?? 0) - (toMinutes(right.startTime ?? undefined) ?? 0));
+  }, [popupDesk, popupDeskBookings, roomAvailability, selectedDate]);
   const popupRoomOccupiedIntervals = useMemo(() => mergeIntervals(popupRoomBookingsForSelectedDay.flatMap((booking) => {
-    const start = toMinutes(booking.startTime);
-    const end = toMinutes(booking.endTime);
+    const start = toMinutes(booking.startTime ?? undefined);
+    const end = toMinutes(booking.endTime ?? undefined);
     if (start === null || end === null || end <= start) return [];
     return [{ start, end }];
   })), [popupRoomBookingsForSelectedDay]);
-  const popupRoomFreeIntervals = useMemo(() => toFreeIntervals(popupRoomOccupiedIntervals), [popupRoomOccupiedIntervals]);
+  const popupRoomFreeIntervals = useMemo(() => {
+    if (roomAvailability && roomAvailability.resource.id === popupDesk?.id && roomAvailability.date === selectedDate) {
+      const normalizedWindows = roomAvailability.freeWindows.flatMap((window) => {
+        const start = toMinutes(window.startTime ?? undefined);
+        const end = toMinutes(window.endTime ?? undefined);
+        if (start === null || end === null || end <= start) return [];
+        return [{ start, end }];
+      });
+      return mergeIntervals(normalizedWindows);
+    }
+
+    return toFreeIntervals(popupRoomOccupiedIntervals);
+  }, [popupDesk?.id, popupRoomOccupiedIntervals, roomAvailability, selectedDate]);
   const popupRoomBookingsList = useMemo<RoomBookingListEntry[]>(() => {
     const rendered = popupRoomBookingsForSelectedDay
       .flatMap((booking) => {
-        const start = toMinutes(booking.startTime);
-        const end = toMinutes(booking.endTime);
+        const start = toMinutes(booking.startTime ?? undefined);
+        const end = toMinutes(booking.endTime ?? undefined);
         if (start === null || end === null || end <= start) return [];
-        const bookingEmail = booking.userEmail.toLowerCase();
-        const isCurrentUser = Boolean(booking.isCurrentUser || (currentUser?.id && booking.employeeId === currentUser.id) || (currentUserEmail && bookingEmail === currentUserEmail.toLowerCase()));
+        const bookingEmail = booking.user.email.toLowerCase();
+        const isCurrentUser = Boolean(currentUserEmail && bookingEmail === currentUserEmail.toLowerCase());
         return [{
-          id: booking.id ?? `${booking.userEmail}-${booking.startTime}-${booking.endTime}`,
+          id: booking.id,
           start,
           end,
           label: `${formatMinutesAsTime(start)} – ${formatMinutesAsTime(end)}`,
-          person: booking.userDisplayName ?? booking.userEmail,
+          person: booking.user.name ?? booking.user.email,
           bookingId: booking.id,
           isCurrentUser,
-          isRecurring: booking.type === 'recurring'
+          isRecurring: false
         }];
       })
       .sort((a, b) => a.start - b.start);
 
     console.log('[ROOM] renderedBookings ids', rendered.map((booking) => booking.bookingId ?? booking.id));
     return rendered;
-  }, [popupRoomBookingsForSelectedDay, currentUser?.id, currentUserEmail]);
+  }, [popupRoomBookingsForSelectedDay, currentUserEmail]);
   const popupRoomFreeSlotChips = useMemo(() => popupRoomFreeIntervals
     .filter((interval) => interval.end - interval.start >= 30)
     .map((interval) => ({
@@ -888,6 +939,34 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
     };
   }, [deskPopup]);
 
+
+  const showRoomDebugInfo = useMemo(() => {
+    if (typeof window === 'undefined') return false;
+    return new URLSearchParams(window.location.search).get('debug') === '1';
+  }, []);
+
+  useEffect(() => {
+    if (!popupDesk || !isRoomResource(popupDesk)) {
+      setRoomAvailability(null);
+      return;
+    }
+
+    let cancelled = false;
+    runWithAppLoading(async () => {
+      const response = await get<RoomAvailabilityResponse>(`/resources/${encodeURIComponent(popupDesk.id)}/availability?date=${encodeURIComponent(selectedDate)}`);
+      if (cancelled) return;
+      setRoomAvailability(response);
+    }).catch((error) => {
+      if (cancelled) return;
+      setRoomAvailability(null);
+      toast.error(getApiErrorMessage(error, 'Raumverfügbarkeit konnte nicht geladen werden.'));
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [popupDesk, selectedDate]);
+
   const triggerDeskHighlight = (deskId: string, hold = 1300) => {
     setHighlightedDeskId(deskId);
     if (highlightTimerRef.current) {
@@ -962,7 +1041,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
     const refreshed = await loadOccupancy(selectedFloorplanId, options?.date ?? selectedDate);
     if (options?.requestId && options.roomId && refreshed) {
       const roomDesk = refreshed.desks.find((desk) => desk.id === options.roomId);
-      const roomDeskBookings = roomDesk ? normalizeDeskBookings(roomDesk).filter((booking) => bookingBelongsToDay(booking, options.date ?? selectedDate)) : [];
+      const roomDeskBookings = roomDesk ? normalizeDeskBookings(roomDesk) : [];
       const roomBookingsCount = roomDeskBookings.length;
       console.log('[ROOM] freshBookings ids', roomDeskBookings.map((booking) => booking.id));
       logMutation('ROOM_REFETCH_DONE', { requestId: options.requestId, roomId: options.roomId, count: roomBookingsCount });
@@ -1546,6 +1625,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
                     freeSlots: popupRoomFreeSlotChips,
                     isFullyBooked: popupRoomFreeSlotChips.length === 0,
                     conflictMessage: roomBookingConflict,
+                    debugInfo: showRoomDebugInfo ? `bookings loaded: ${popupRoomBookingsList.length} · date: ${selectedDate} · room: ${popupDesk.name}` : undefined,
                     onSelectFreeSlot: (startTime, endTime) => {
                       setBookingFormValues((current) => ({ ...current, startTime, endTime }));
                     },
