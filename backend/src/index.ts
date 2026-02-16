@@ -2407,7 +2407,7 @@ app.post('/bookings/range', async (req, res) => {
     return;
   }
 
-  const desk = await prisma.desk.findUnique({ where: { id: deskId }, select: { id: true, name: true, kind: true } });
+  const desk = await prisma.desk.findUnique({ where: { id: deskId }, select: { id: true, name: true, kind: true, floorplanId: true } });
   if (!desk) {
     res.status(404).json({ error: 'not_found', message: 'Desk not found' });
     return;
@@ -2712,17 +2712,12 @@ app.get('/occupancy', async (req, res) => {
   });
 
   const deskIds = desks.map((desk) => desk.id);
-  const singleBookings = await prisma.booking.findMany({
-    where: {
-      date: parsedDate,
-      deskId: { in: deskIds }
-    },
-    include: {
-      createdByEmployee: { select: { id: true, displayName: true, email: true } }
-    },
-    orderBy: [{ createdAt: 'asc' }]
-  });
+  const bookingsInRange = await getBookingsForDateRange(parsedDate, parsedDate, floorplanId);
+  const singleBookings = bookingsInRange.singleBookings
+    .filter((booking) => deskIds.includes(booking.deskId))
+    .sort((left, right) => left.createdAt.getTime() - right.createdAt.getTime());
 
+  const recurringOccurrenceKeys = new Set(bookingsInRange.occurrences.map((occurrence) => `${occurrence.resourceId}|${occurrence.date}|${occurrence.createdByEmployeeId}`));
   const employeesByEmail = await getActiveEmployeesByEmail(singleBookings.map((booking) => booking.userEmail).filter((email): email is string => Boolean(email)));
   const bookingsByDeskId = new Map<string, typeof singleBookings>();
   for (const booking of singleBookings) {
@@ -2745,7 +2740,7 @@ app.get('/occupancy', async (req, res) => {
       userPhotoUrl: booking.userEmail ? (employeesByEmail.get(normalizeEmail(booking.userEmail))?.photoUrl ?? undefined) : undefined,
       deskName: desk.name,
       deskId: desk.id,
-      type: 'single' as const,
+      type: recurringOccurrenceKeys.has(`${booking.deskId}|${toISODateOnly(booking.date)}|${booking.createdByEmployeeId}`) ? 'recurring' as const : 'single' as const,
       daySlot: booking.daySlot ?? bookingSlotToDaySlot(booking.slot),
       slot: booking.slot,
       startTime: minuteToHHMM(booking.startMinute ?? (booking.startTime ? booking.startTime.getUTCHours() * 60 + booking.startTime.getUTCMinutes() : null)),
@@ -2822,7 +2817,7 @@ app.get('/resources/:resourceId/availability', async (req, res) => {
 
   const desk = await prisma.desk.findUnique({
     where: { id: resourceId },
-    select: { id: true, name: true, kind: true }
+    select: { id: true, name: true, kind: true, floorplanId: true }
   });
 
   if (!desk) {
@@ -2844,6 +2839,8 @@ app.get('/resources/:resourceId/availability', async (req, res) => {
     include: { createdByEmployee: { select: { id: true, displayName: true, email: true } } },
     orderBy: [{ startTime: 'asc' }, { createdAt: 'asc' }]
   });
+  const bookingsInRange = await getBookingsForDateRange(parsedDate, parsedDate, desk.floorplanId);
+  const recurringOccurrenceKeys = new Set(bookingsInRange.occurrences.map((occurrence) => `${occurrence.resourceId}|${occurrence.date}|${occurrence.createdByEmployeeId}`));
 
   console.info('ROOM_AVAILABILITY_QUERY', {
     requestId,
@@ -2878,6 +2875,7 @@ app.get('/resources/:resourceId/availability', async (req, res) => {
     createdByUserId: booking.createdByEmployeeId,
     createdByEmployeeId: booking.createdByEmployeeId,
     creatorUnknown: booking.creatorUnknown,
+    type: recurringOccurrenceKeys.has(`${resourceId}|${toISODateOnly(booking.date)}|${booking.createdByEmployeeId}`) ? 'recurring' : 'single',
     user: {
       email: booking.userEmail,
       name: booking.bookedFor === 'GUEST'
@@ -2914,308 +2912,222 @@ app.get('/resources/:resourceId/availability', async (req, res) => {
   });
 });
 
+const recurringToWindow = (recurring: { period: DaySlot | null; startTime: string | null; endTime: string | null }, resourceKind: ResourceKind): BookingWindowInput | null => {
+  if (resourceKind === 'RAUM') {
+    if (!recurring.startTime || !recurring.endTime) return null;
+    const startMinute = parseTimeToMinute(recurring.startTime);
+    const endMinute = parseTimeToMinute(recurring.endTime);
+    if (startMinute === null || endMinute === null || endMinute <= startMinute) return null;
+    return { mode: 'time', startMinute, endMinute };
+  }
+
+  if (!recurring.period) return null;
+  return { mode: 'day', daySlot: recurring.period };
+};
+
+const getBookingsForDateRange = async (from: Date, to: Date, floorplanId: string) => {
+  const [singleBookings, recurringBookings] = await Promise.all([
+    prisma.booking.findMany({
+      where: {
+        date: { gte: from, lte: to },
+        desk: { floorplanId }
+      },
+      include: {
+        desk: { select: { id: true, kind: true, floorplanId: true } },
+        createdByEmployee: { select: { id: true, displayName: true, email: true } }
+      }
+    }),
+    prisma.recurringBooking.findMany({
+      where: {
+        resource: { floorplanId },
+        validFrom: { lte: to },
+        OR: [{ validTo: null }, { validTo: { gte: from } }]
+      },
+      include: {
+        resource: { select: { id: true, kind: true, floorplanId: true } },
+        createdByEmployee: { select: { id: true, displayName: true, email: true } }
+      }
+    })
+  ]);
+
+  const occurrences = recurringBookings.flatMap((recurring) => {
+    const end = recurring.validTo && recurring.validTo < to ? recurring.validTo : to;
+    const rangeStart = recurring.validFrom > from ? recurring.validFrom : from;
+    const window = recurringToWindow(recurring, recurring.resource.kind);
+    if (!window) return [];
+
+    return datesInRange(rangeStart, end)
+      .filter((dateValue) => dateValue.getUTCDay() === recurring.weekday)
+      .map((dateValue) => ({
+        recurringId: recurring.id,
+        resourceId: recurring.resourceId,
+        date: toISODateOnly(dateValue),
+        bookedFor: recurring.bookedFor,
+        guestName: recurring.guestName,
+        createdByEmployeeId: recurring.createdByEmployeeId,
+        window
+      }));
+  });
+
+  return { singleBookings, recurringBookings, occurrences };
+};
+
 app.post('/recurring-bookings', async (req, res) => {
-  const { deskId, userEmail, weekday, validFrom, validTo } = req.body as {
-    deskId?: string;
-    userEmail?: string;
+  const { resourceId, weekdays, weekday, validFrom, validTo, bookedFor, guestName, period, startTime, endTime } = req.body as {
+    resourceId?: string;
+    weekdays?: number[];
     weekday?: number;
     validFrom?: string;
     validTo?: string | null;
+    bookedFor?: BookedFor;
+    guestName?: string | null;
+    period?: DaySlot | null;
+    startTime?: string | null;
+    endTime?: string | null;
   };
 
-  if (!deskId || !userEmail || typeof weekday !== 'number' || !validFrom) {
-    res.status(400).json({ error: 'validation', message: 'deskId, userEmail, weekday and validFrom are required' });
+  const normalizedWeekdays = Array.from(new Set(Array.isArray(weekdays) ? weekdays : (typeof weekday === 'number' ? [weekday] : [])));
+  if (!resourceId || normalizedWeekdays.length === 0 || !validFrom) {
+    res.status(400).json({ error: 'validation', message: 'resourceId, weekday(s) and validFrom are required' });
     return;
   }
 
-  if (weekday < 0 || weekday > 6) {
-    res.status(400).json({ error: 'validation', message: 'weekday must be between 0 and 6' });
+  if (normalizedWeekdays.some((entry) => !Number.isInteger(entry) || entry < 0 || entry > 6)) {
+    res.status(400).json({ error: 'validation', message: 'weekday values must be between 0 and 6' });
     return;
   }
 
   const parsedValidFrom = toDateOnly(validFrom);
   const parsedValidTo = validTo ? toDateOnly(validTo) : null;
-
   if (!parsedValidFrom || (validTo && !parsedValidTo)) {
     res.status(400).json({ error: 'validation', message: 'validFrom/validTo must be in YYYY-MM-DD format' });
     return;
   }
-
 
   if (parsedValidTo && parsedValidTo < parsedValidFrom) {
     res.status(400).json({ error: 'validation', message: 'validTo must be on or after validFrom' });
     return;
   }
 
-  const desk = await prisma.desk.findUnique({ where: { id: deskId }, include: { floorplan: { select: { defaultAllowSeries: true } } } });
-  if (!desk) {
-    res.status(404).json({ error: 'not_found', message: 'Desk not found' });
+  let actorEmployee;
+  try {
+    actorEmployee = await requireActorEmployee(req);
+  } catch (error) {
+    const status = (error as Error & { status?: number }).status ?? 403;
+    res.status(status).json({ error: status === 401 ? 'unauthorized' : 'forbidden', message: (error as Error).message });
     return;
   }
 
-  if (!resolveEffectiveAllowSeries(desk)) {
+  const resource = await prisma.desk.findUnique({ where: { id: resourceId }, include: { floorplan: { select: { defaultAllowSeries: true } } } });
+  if (!resource) {
+    res.status(404).json({ error: 'not_found', message: 'Resource not found' });
+    return;
+  }
+
+  if (!resolveEffectiveAllowSeries(resource)) {
     res.status(409).json({ error: 'conflict', message: 'Recurring bookings are not allowed for this resource' });
     return;
+  }
+
+  const normalizedBookedFor: BookedFor = bookedFor === 'GUEST' ? 'GUEST' : 'SELF';
+  const normalizedGuestName = normalizedBookedFor === 'GUEST' ? (guestName?.trim() ?? '') : '';
+  if (normalizedBookedFor === 'GUEST' && normalizedGuestName.length < 2) {
+    res.status(400).json({ error: 'validation', message: 'guestName is required for guest bookings' });
+    return;
+  }
+
+  const normalizedPeriod = period ? parseDaySlot(period) : null;
+  if (resource.kind === 'RAUM') {
+    if (normalizedPeriod) {
+      res.status(400).json({ error: 'validation', message: 'period must be null for room recurrences' });
+      return;
+    }
+    if (!startTime || !endTime || parseTimeToMinute(startTime) === null || parseTimeToMinute(endTime) === null || parseTimeToMinute(endTime)! <= parseTimeToMinute(startTime)!) {
+      res.status(400).json({ error: 'validation', message: 'startTime and endTime are required for room recurrences' });
+      return;
+    }
+  } else {
+    if (!normalizedPeriod) {
+      res.status(400).json({ error: 'validation', message: 'period is required for non-room recurrences' });
+      return;
+    }
+    if (startTime || endTime) {
+      res.status(400).json({ error: 'validation', message: 'startTime/endTime must be null for non-room recurrences' });
+      return;
+    }
   }
 
   const effectiveValidTo = parsedValidTo ?? endOfCurrentYear();
-  const targetDates = datesInRange(parsedValidFrom, effectiveValidTo).filter((dateValue) => dateValue.getUTCDay() === weekday);
-  const identity = await findBookingIdentity(userEmail);
-
-  let actorEmployee;
-  try {
-    actorEmployee = await requireActorEmployee(req);
-  } catch (error) {
-    const status = (error as Error & { status?: number }).status ?? 403;
-    res.status(status).json({ error: status === 401 ? 'unauthorized' : 'forbidden', message: (error as Error).message });
+  const targetDates = datesInRange(parsedValidFrom, effectiveValidTo).filter((dateValue) => normalizedWeekdays.includes(dateValue.getUTCDay()));
+  const recurrenceWindow = recurringToWindow({ period: normalizedPeriod, startTime: startTime ?? null, endTime: endTime ?? null }, resource.kind);
+  if (!recurrenceWindow) {
+    res.status(400).json({ error: 'validation', message: 'Invalid recurring booking window' });
     return;
   }
 
   const result = await prisma.$transaction(async (tx) => {
-    const lockKeys = Array.from(new Set(targetDates.flatMap((targetDate) => [
-      bookingUserKeyForDate(identity.userKey, targetDate),
-      bookingDeskKeyForDate(deskId, targetDate)
-    ]))).sort();
-
-    for (const lockKey of lockKeys) {
-      await acquireBookingLock(tx, lockKey);
-    }
-
-    let createdCount = 0;
-    let updatedCount = 0;
-    for (const targetDate of targetDates) {
-      const existingUserBooking = await findOverlappingBooking(tx, { identity, date: targetDate, targetKind: desk.kind, window: { mode: 'day', daySlot: 'FULL' } });
-      const existingDeskBooking = await tx.booking.findFirst({ where: { deskId, date: targetDate, OR: [{ daySlot: 'FULL' }, { slot: 'FULL_DAY' }] } });
-
-      if (existingUserBooking) {
-        if (existingUserBooking.deskId === deskId) {
-          if (existingUserBooking.userEmail !== identity.normalizedEmail) {
-            await tx.booking.update({ where: { id: existingUserBooking.id }, data: { userEmail: identity.normalizedEmail } });
-            updatedCount += 1;
-          }
-          continue;
-        }
-
-        if (existingDeskBooking && existingDeskBooking.id !== existingUserBooking.id) {
-          await tx.booking.delete({ where: { id: existingDeskBooking.id } });
-        }
-
-        await tx.booking.update({
-          where: { id: existingUserBooking.id },
-          data: { deskId, userEmail: identity.normalizedEmail }
-        });
-        updatedCount += 1;
-        continue;
-      }
-
-      if (existingDeskBooking) {
-        await tx.booking.update({ where: { id: existingDeskBooking.id }, data: { userEmail: identity.normalizedEmail } });
-        updatedCount += 1;
-        continue;
-      }
-
-      await tx.booking.create({ data: { deskId, userEmail: identity.normalizedEmail, createdByEmployeeId: actorEmployee.id, createdByUserId: req.authUser?.source === 'local' ? req.authUser.id : null, createdByEmail: req.authUser?.email ?? null, bookedFor: 'SELF', guestName: null, date: targetDate } });
-      createdCount += 1;
-    }
-
-    const recurringBooking = await tx.recurringBooking.create({
-      data: {
-        deskId,
-        userEmail: identity.normalizedEmail,
-        weekday,
-        validFrom: parsedValidFrom,
-        validTo: parsedValidTo
-      }
+    const conflicts = await tx.booking.findMany({
+      where: { date: { in: targetDates }, deskId: resourceId },
+      include: { desk: { select: { name: true, kind: true } } }
     });
 
-    return { recurringBooking, createdCount, updatedCount, dates: targetDates.map((targetDate) => toISODateOnly(targetDate)) };
-  });
+    const conflictDates = Array.from(new Set(conflicts
+      .filter((booking) => {
+        const candidateWindow = bookingToWindow(booking);
+        return candidateWindow ? windowsOverlap(recurrenceWindow, candidateWindow) : false;
+      })
+      .map((booking) => toISODateOnly(booking.date))));
 
-  res.status(201).json(result);
-});
-
-app.post('/recurring-bookings/bulk', async (req, res) => {
-  const { deskId, userEmail, weekdays, validFrom, validTo, replaceExisting, overrideExisting } = req.body as {
-    deskId?: string;
-    userEmail?: string;
-    weekdays?: number[];
-    validFrom?: string;
-    validTo?: string;
-    replaceExisting?: boolean;
-    overrideExisting?: boolean;
-  };
-
-  if (!deskId || !userEmail || !Array.isArray(weekdays) || !validFrom) {
-    res.status(400).json({ error: 'validation', message: 'deskId, userEmail, weekdays and validFrom are required' });
-    return;
-  }
-
-  const uniqueWeekdays = Array.from(new Set(weekdays));
-  if (uniqueWeekdays.length !== weekdays.length || uniqueWeekdays.length === 0) {
-    res.status(400).json({ error: 'validation', message: 'weekdays must be unique and non-empty' });
-    return;
-  }
-
-  if (uniqueWeekdays.some((weekday) => !Number.isInteger(weekday) || weekday < 0 || weekday > 6)) {
-    res.status(400).json({ error: 'validation', message: 'weekdays must contain values between 0 and 6' });
-    return;
-  }
-
-  const parsedValidFrom = toDateOnly(validFrom);
-  const parsedValidTo = validTo ? toDateOnly(validTo) : endOfCurrentYear();
-  if (!parsedValidFrom || !parsedValidTo) {
-    res.status(400).json({ error: 'validation', message: 'validFrom/validTo must be in YYYY-MM-DD format' });
-    return;
-  }
-
-  if (parsedValidTo < parsedValidFrom) {
-    res.status(400).json({ error: 'validation', message: 'validTo must be on or after validFrom' });
-    return;
-  }
-
-  const desk = await prisma.desk.findUnique({ where: { id: deskId }, select: { id: true, kind: true, allowSeriesOverride: true, floorplan: { select: { defaultAllowSeries: true } } } });
-  if (!desk) {
-    res.status(404).json({ error: 'not_found', message: 'Desk not found' });
-    return;
-  }
-
-  if (!resolveEffectiveAllowSeries(desk)) {
-    res.status(409).json({ error: 'conflict', message: 'Recurring bookings are not allowed for this resource' });
-    return;
-  }
-
-  const shouldOverrideExisting = overrideExisting ?? replaceExisting ?? false;
-  const targetDates = datesInRange(parsedValidFrom, parsedValidTo).filter((date) => uniqueWeekdays.includes(date.getUTCDay()));
-  const identity = await findBookingIdentity(userEmail);
-
-  let actorEmployee;
-  try {
-    actorEmployee = await requireActorEmployee(req);
-  } catch (error) {
-    const status = (error as Error & { status?: number }).status ?? 403;
-    res.status(status).json({ error: status === 401 ? 'unauthorized' : 'forbidden', message: (error as Error).message });
-    return;
-  }
-
-  const result = await prisma.$transaction(async (tx) => {
-    const lockKeys = Array.from(new Set(targetDates.flatMap((targetDate) => [
-      bookingUserKeyForDate(identity.userKey, targetDate),
-      bookingDeskKeyForDate(deskId, targetDate)
-    ]))).sort();
-    for (const lockKey of lockKeys) {
-      await acquireBookingLock(tx, lockKey);
-    }
-
-    const bookingsForTargets = await tx.booking.findMany({
-      where: {
-        date: { in: targetDates },
-        userEmail: { in: identity.emailAliases },
-        desk: { kind: desk.kind }
-      },
-      include: { desk: { select: { name: true, kind: true } } },
-      orderBy: [{ date: 'asc' }, { createdAt: 'desc' }, { id: 'desc' }]
-    });
-
-    const existingByDate = new Map<string, BookingWithDeskContext>();
-    const duplicateIdsToDelete: string[] = [];
-    for (const booking of bookingsForTargets) {
-      const key = toISODateOnly(booking.date);
-      if (!existingByDate.has(key)) {
-        existingByDate.set(key, booking);
-      } else {
-        duplicateIdsToDelete.push(booking.id);
-      }
-    }
-
-    if (duplicateIdsToDelete.length > 0) {
-      await tx.booking.deleteMany({ where: { id: { in: duplicateIdsToDelete } } });
-    }
-
-    const keepIds = Array.from(existingByDate.values()).map((booking) => booking.id);
-    const deskSingleConflicts = await tx.booking.findMany({
-      where: {
-        date: { in: targetDates },
-        deskId,
-        id: { notIn: keepIds },
-        userEmail: { notIn: identity.emailAliases }
-      },
-      orderBy: { date: 'asc' }
-    });
-
-    if (deskSingleConflicts.length > 0) {
-      const conflictingDates = deskSingleConflicts.map((booking) => toISODateOnly(booking.date));
+    if (conflictDates.length > 0) {
       return {
         kind: 'conflict' as const,
-        message: 'Recurring series conflicts with existing single-day bookings',
-        details: {
-          deskId,
-          weekdays: uniqueWeekdays,
-          validFrom,
-          validTo: toISODateOnly(parsedValidTo),
-          conflictingDates,
-          conflictingDatesPreview: conflictingDates.slice(0, 10)
-        }
+        message: 'Recurring series conflicts with existing bookings',
+        details: { resourceId, conflictDates }
       };
     }
 
-    let createdCount = 0;
-    let updatedCount = 0;
-    const skippedDates: string[] = [];
-    const updatedDates: string[] = [];
-
-    for (const targetDate of targetDates) {
-      const dateKey = toISODateOnly(targetDate);
-      const existing = existingByDate.get(dateKey);
-
-      if (existing) {
-        if (!shouldOverrideExisting) {
-          skippedDates.push(dateKey);
-          continue;
-        }
-
-        if (existing.deskId !== deskId || existing.userEmail !== identity.normalizedEmail) {
-          await tx.booking.update({ where: { id: existing.id }, data: { deskId, userEmail: identity.normalizedEmail } });
-        }
-
-        updatedCount += 1;
-        updatedDates.push(dateKey);
-        continue;
+    const createdBookings = await Promise.all(targetDates.map((targetDate) => tx.booking.create({
+      data: {
+        deskId: resourceId,
+        userEmail: normalizedBookedFor === 'SELF' ? actorEmployee.email : null,
+        bookedFor: normalizedBookedFor,
+        guestName: normalizedBookedFor === 'GUEST' ? normalizedGuestName : null,
+        createdByEmployeeId: actorEmployee.id,
+        createdByUserId: req.authUser?.source === 'local' ? req.authUser.id : null,
+        createdByEmail: req.authUser?.email ?? null,
+        date: targetDate,
+        daySlot: recurrenceWindow.mode === 'day' ? recurrenceWindow.daySlot : null,
+        slot: recurrenceWindow.mode === 'day' ? (recurrenceWindow.daySlot === 'FULL' ? 'FULL_DAY' : recurrenceWindow.daySlot === 'AM' ? 'MORNING' : 'AFTERNOON') : 'CUSTOM',
+        startMinute: recurrenceWindow.mode === 'time' ? recurrenceWindow.startMinute : null,
+        endMinute: recurrenceWindow.mode === 'time' ? recurrenceWindow.endMinute : null,
+        startTime: recurrenceWindow.mode === 'time' ? new Date(Date.UTC(targetDate.getUTCFullYear(), targetDate.getUTCMonth(), targetDate.getUTCDate(), Math.floor(recurrenceWindow.startMinute / 60), recurrenceWindow.startMinute % 60, 0, 0)) : null,
+        endTime: recurrenceWindow.mode === 'time' ? new Date(Date.UTC(targetDate.getUTCFullYear(), targetDate.getUTCMonth(), targetDate.getUTCDate(), Math.floor(recurrenceWindow.endMinute / 60), recurrenceWindow.endMinute % 60, 0, 0)) : null
       }
+    })));
 
-      await tx.booking.create({ data: { deskId, userEmail: identity.normalizedEmail, createdByEmployeeId: actorEmployee.id, createdByUserId: req.authUser?.source === 'local' ? req.authUser.id : null, createdByEmail: req.authUser?.email ?? null, bookedFor: 'SELF', guestName: null, date: targetDate } });
-      createdCount += 1;
-    }
-
-    await tx.recurringBooking.deleteMany({
-      where: {
-        deskId,
-        weekday: { in: uniqueWeekdays },
-        validFrom: { lte: parsedValidTo },
-        OR: [{ validTo: null }, { validTo: { gte: parsedValidFrom } }]
+    const recurringBookings = await Promise.all(normalizedWeekdays.map((weekdayValue) => tx.recurringBooking.create({
+      data: {
+        resourceId,
+        createdByEmployeeId: actorEmployee.id,
+        weekday: weekdayValue,
+        validFrom: parsedValidFrom,
+        validTo: parsedValidTo,
+        bookedFor: normalizedBookedFor,
+        guestName: normalizedBookedFor === 'GUEST' ? normalizedGuestName : null,
+        period: recurrenceWindow.mode === 'day' ? recurrenceWindow.daySlot : null,
+        startTime: recurrenceWindow.mode === 'time' ? startTime : null,
+        endTime: recurrenceWindow.mode === 'time' ? endTime : null
       }
-    });
-
-    const recurringBookings = await Promise.all(
-      uniqueWeekdays.map((weekday) => tx.recurringBooking.create({
-        data: {
-          deskId,
-          userEmail: identity.normalizedEmail,
-          weekday,
-          validFrom: parsedValidFrom,
-          validTo: parsedValidTo
-        }
-      }))
-    );
+    })));
 
     return {
       kind: 'ok' as const,
       payload: {
         recurringBookings,
-        createdCount,
-        updatedCount,
-        skippedCount: skippedDates.length,
-        skippedDates,
-        updatedDates
+        createdCount: createdBookings.length,
+        updatedCount: 0,
+        skippedCount: 0,
+        skippedDates: []
       }
     };
   });
@@ -3228,11 +3140,16 @@ app.post('/recurring-bookings/bulk', async (req, res) => {
   res.status(201).json(result.payload);
 });
 
+app.post('/recurring-bookings/bulk', async (_req, res) => {
+  res.status(410).json({ error: 'deprecated', message: 'Use POST /recurring-bookings with resourceId and weekdays' });
+});
+
 app.get('/recurring-bookings', async (req, res) => {
   const floorplanId = typeof req.query.floorplanId === 'string' ? req.query.floorplanId : undefined;
 
   const recurringBookings = await prisma.recurringBooking.findMany({
-    where: floorplanId ? { desk: { floorplanId } } : undefined,
+    where: floorplanId ? { resource: { floorplanId } } : undefined,
+    include: { resource: true, createdByEmployee: { select: { id: true, displayName: true, email: true } } },
     orderBy: [{ validFrom: 'asc' }, { createdAt: 'asc' }]
   });
 
@@ -3881,15 +3798,10 @@ app.get('/admin/recurring-bookings', requireAdmin, async (req, res) => {
   const floorplanId = typeof req.query.floorplanId === 'string' ? req.query.floorplanId : undefined;
 
   const recurringBookings = await prisma.recurringBooking.findMany({
-    where: floorplanId ? { desk: { floorplanId } } : undefined,
+    where: floorplanId ? { resource: { floorplanId } } : undefined,
     include: {
-      desk: {
-        select: {
-          id: true,
-          name: true,
-          floorplanId: true
-        }
-      }
+      resource: { select: { id: true, name: true, floorplanId: true, kind: true } },
+      createdByEmployee: { select: { id: true, displayName: true, email: true } }
     },
     orderBy: [{ validFrom: 'asc' }, { createdAt: 'asc' }]
   });
@@ -3897,82 +3809,36 @@ app.get('/admin/recurring-bookings', requireAdmin, async (req, res) => {
   res.status(200).json(recurringBookings);
 });
 
-app.delete('/admin/recurring-bookings/:id', requireAdmin, async (req, res) => {
+app.delete('/recurring-bookings/:id', async (req, res) => {
   const id = getRouteId(req.params.id);
   if (!id) {
     res.status(400).json({ error: 'validation', message: 'id is required' });
     return;
   }
 
-  try {
-    await prisma.recurringBooking.delete({ where: { id } });
-    res.status(204).send();
-  } catch (error) {
-    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2025') {
-      res.status(404).json({ error: 'not_found', message: 'Recurring booking not found' });
-      return;
-    }
-    throw error;
-  }
-});
-
-app.patch('/admin/recurring-bookings/:id', requireAdmin, async (req, res) => {
-  const id = getRouteId(req.params.id);
-  if (!id) {
-    res.status(400).json({ error: 'validation', message: 'id is required' });
-    return;
-  }
-
-  const { userEmail, weekday, validFrom, validTo } = req.body as {
-    userEmail?: string;
-    weekday?: number;
-    validFrom?: string;
-    validTo?: string | null;
-  };
-
-  if (!userEmail && typeof weekday !== 'number' && !validFrom && typeof validTo === 'undefined') {
-    res.status(400).json({ error: 'validation', message: 'No fields to update' });
-    return;
-  }
-
-  const existing = await prisma.recurringBooking.findUnique({ where: { id } });
-  if (!existing) {
+  const recurring = await prisma.recurringBooking.findUnique({ where: { id } });
+  if (!recurring) {
     res.status(404).json({ error: 'not_found', message: 'Recurring booking not found' });
     return;
   }
 
-  if (typeof weekday === 'number' && (weekday < 0 || weekday > 6)) {
-    res.status(400).json({ error: 'validation', message: 'weekday must be between 0 and 6' });
+  let actorEmployee;
+  try {
+    actorEmployee = await requireActorEmployee(req);
+  } catch (error) {
+    const status = (error as Error & { status?: number }).status ?? 403;
+    res.status(status).json({ error: status === 401 ? 'unauthorized' : 'forbidden', message: (error as Error).message });
     return;
   }
 
-  const parsedValidFromValue = validFrom ? toDateOnly(validFrom) : existing.validFrom;
-  const parsedValidTo =
-    typeof validTo === 'undefined' ? existing.validTo : validTo === null || validTo === '' ? null : toDateOnly(validTo);
-
-  if ((validFrom && !parsedValidFromValue) || (typeof validTo === 'string' && validTo !== '' && !parsedValidTo)) {
-    res.status(400).json({ error: 'validation', message: 'validFrom/validTo must be in YYYY-MM-DD format' });
+  const isAdmin = req.authUser?.role === 'admin';
+  if (!isAdmin && recurring.createdByEmployeeId !== actorEmployee.id) {
+    res.status(403).json({ error: 'forbidden', message: 'Not allowed to delete this recurring booking' });
     return;
   }
 
-  const parsedValidFrom = parsedValidFromValue as Date;
-
-  if (parsedValidTo && parsedValidTo < parsedValidFrom) {
-    res.status(400).json({ error: 'validation', message: 'validTo must be on or after validFrom' });
-    return;
-  }
-
-  const updated = await prisma.recurringBooking.update({
-    where: { id },
-    data: {
-      ...(userEmail ? { userEmail: normalizeEmail(userEmail) } : {}),
-      ...(typeof weekday === 'number' ? { weekday } : {}),
-      ...(validFrom ? { validFrom: parsedValidFrom } : {}),
-      ...(typeof validTo !== 'undefined' ? { validTo: parsedValidTo } : {})
-    }
-  });
-
-  res.status(200).json(updated);
+  await prisma.recurringBooking.delete({ where: { id } });
+  res.status(204).send();
 });
 
 const start = async () => {

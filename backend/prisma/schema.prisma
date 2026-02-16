@@ -63,6 +63,7 @@ model Employee {
   createdAt   DateTime  @default(now())
   sessions    Session[]
   bookingsCreated Booking[] @relation("BookingCreatedByEmployee")
+  recurringBookingsCreated RecurringBooking[] @relation("RecurringBookingCreatedByEmployee")
 }
 
 model Floorplan {
@@ -87,7 +88,7 @@ model Desk {
   createdAt         DateTime           @default(now())
   floorplan         Floorplan          @relation(fields: [floorplanId], references: [id], onDelete: Cascade)
   bookings          Booking[]
-  recurringBookings RecurringBooking[]
+  recurringBookings RecurringBooking[] @relation("RecurringBookingResource")
 
   @@index([floorplanId])
 }
@@ -148,14 +149,21 @@ enum BookingSlot {
 }
 
 model RecurringBooking {
-  id        String    @id @default(cuid())
-  deskId    String
-  userEmail String
-  weekday   Int
-  validFrom DateTime  @db.Date
-  validTo   DateTime? @db.Date
-  createdAt DateTime  @default(now())
-  desk      Desk      @relation(fields: [deskId], references: [id], onDelete: Cascade)
+  id                  String    @id @default(cuid())
+  resourceId          String
+  createdByEmployeeId String
+  weekday             Int
+  validFrom           DateTime  @db.Date
+  validTo             DateTime? @db.Date
+  bookedFor           BookedFor @default(SELF)
+  guestName           String?
+  period              DaySlot?
+  startTime           String?
+  endTime             String?
+  createdAt           DateTime  @default(now())
+  resource            Desk      @relation("RecurringBookingResource", fields: [resourceId], references: [id], onDelete: Cascade)
+  createdByEmployee   Employee  @relation("RecurringBookingCreatedByEmployee", fields: [createdByEmployeeId], references: [id], onDelete: Restrict)
 
-  @@index([deskId])
+  @@index([resourceId, weekday, validFrom, validTo])
+  @@index([createdByEmployeeId])
 }

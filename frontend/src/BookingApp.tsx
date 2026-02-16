@@ -90,7 +90,7 @@ type DeskPopupState = { deskId: string; anchorRect: DOMRect; openedAt: number };
 type CancelConfirmContext = DeskPopupState & { bookingIds: string[]; bookingLabel: string; isRecurring: boolean; keepPopoverOpen: boolean };
 type OccupancyBooking = NonNullable<OccupancyDesk['booking']>;
 type NormalizedOccupancyBooking = ReturnType<typeof normalizeDaySlotBookings<OccupancyBooking>>[number];
-type RoomAvailabilityBooking = { id: string; startTime: string | null; endTime: string | null; bookedFor?: 'SELF' | 'GUEST'; guestName?: string | null; userId?: string | null; user: { email?: string | null; name?: string | null; displayName?: string | null } | null; createdBy?: BookingActor; createdByUserId?: string; };
+type RoomAvailabilityBooking = { id: string; startTime: string | null; endTime: string | null; bookedFor?: 'SELF' | 'GUEST'; guestName?: string | null; userId?: string | null; user: { email?: string | null; name?: string | null; displayName?: string | null } | null; createdBy?: BookingActor; createdByUserId?: string; type?: 'single' | 'recurring'; };
 type RoomAvailabilityResponse = {
   resource: { id: string; name: string; type: string };
   date: string;
@@ -107,6 +107,7 @@ type RoomAvailabilityResponse = {
     userId?: string | null;
     createdBy: BookingActor;
     createdByUserId?: string;
+    type?: 'single' | 'recurring';
     user: { email?: string | null; name?: string | null; displayName?: string | null } | null;
   }>;
   freeWindows: Array<{ startTime: string | null; endTime: string | null; label: string }>;
@@ -1094,6 +1095,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
           userId: booking.userId,
           createdBy: booking.createdBy,
           createdByUserId: booking.createdByUserId,
+          type: booking.type,
           user: booking.user
         }))
         .sort((left, right) => (bookingTimeToMinutes(left.startTime) ?? 0) - (bookingTimeToMinutes(right.startTime) ?? 0));
@@ -1109,6 +1111,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
         userId: booking.userId,
         createdBy: booking.createdBy,
         createdByUserId: booking.createdByUserId,
+        type: booking.type,
         user: booking.bookedFor === 'GUEST'
           ? null
           : { email: booking.userEmail ?? undefined, name: booking.userDisplayName }
@@ -1137,7 +1140,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
           person: getBookingDisplayName(booking),
           bookingId: booking.id,
           isCurrentUser,
-          isRecurring: false,
+          isRecurring: booking.type === 'recurring',
           bookedFor: booking.bookedFor,
           userId: booking.userId,
           createdByUserId: booking.createdByUserId,
@@ -1754,13 +1757,17 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
       toast.success(overwrite ? 'Umbuchung durchgeführt.' : 'Gebucht', { deskId });
       return;
     }
-    const response = await runWithAppLoading(() => post<BulkBookingResponse>('/recurring-bookings/bulk', {
-      deskId,
-      userEmail: selectedEmployeeEmail,
+    const response = await runWithAppLoading(() => post<BulkBookingResponse>('/recurring-bookings', {
+      resourceId: deskId,
       weekdays: payload.weekdays,
       validFrom: payload.dateFrom,
       validTo: payload.dateTo,
-      overrideExisting: overwrite
+      bookedFor: payload.bookedFor,
+      guestName: payload.bookedFor === 'GUEST' ? payload.guestName : undefined,
+      period: payload.slot === 'MORNING' ? 'AM' : payload.slot === 'AFTERNOON' ? 'PM' : 'FULL',
+      startTime: payload.startTime,
+      endTime: payload.endTime,
+      overwrite
     }));
 
     toast.success(overwrite

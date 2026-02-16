@@ -22,7 +22,7 @@ export type BookingFormValues = {
 
 export type BookingFormSubmitPayload =
   | { type: 'single'; date: string; slot?: BookingSlot; startTime?: string; endTime?: string; bookedFor: 'SELF' | 'GUEST'; guestName?: string }
-  | { type: 'recurring'; dateFrom: string; dateTo: string; weekdays: number[] };
+  | { type: 'recurring'; dateFrom: string; dateTo: string; weekdays: number[]; slot?: BookingSlot; startTime?: string; endTime?: string; bookedFor: 'SELF' | 'GUEST'; guestName?: string };
 
 export const createDefaultBookingFormValues = (selectedDate: string): BookingFormValues => {
   const defaultWeekday = new Date(`${selectedDate}T00:00:00.000Z`).getUTCDay();
@@ -80,7 +80,7 @@ export function BookingForm({ values, onChange, onSubmit, onCancel, isSubmitting
   }, []);
 
   useEffect(() => {
-    if (allowRecurring || values.type !== 'recurring' || isRoom) return;
+    if (allowRecurring || values.type !== 'recurring') return;
     onChange({ ...values, type: 'single' });
   }, [allowRecurring, isRoom, onChange, values]);
 
@@ -102,6 +102,12 @@ export function BookingForm({ values, onChange, onSubmit, onCancel, isSubmitting
       if (!values.dateTo) nextErrors.dateTo = 'Enddatum ist erforderlich.';
       if (values.dateFrom && values.dateTo && values.dateFrom > values.dateTo) nextErrors.dateTo = 'Enddatum muss nach dem Startdatum liegen.';
       if (values.weekdays.length === 0) nextErrors.weekdays = 'Bitte mindestens einen Wochentag auswählen.';
+      if (isRoom) {
+        if (!values.startTime) nextErrors.startTime = 'Startzeit ist erforderlich.';
+        if (!values.endTime) nextErrors.endTime = 'Endzeit ist erforderlich.';
+        if (values.startTime && values.endTime && values.startTime >= values.endTime) nextErrors.endTime = 'Endzeit muss nach Startzeit liegen.';
+      }
+      if (values.bookedFor === 'GUEST' && values.guestName.trim().length < 2) nextErrors.guestName = 'Gastname ist erforderlich (mind. 2 Zeichen).';
     }
 
     return nextErrors;
@@ -131,7 +137,7 @@ export function BookingForm({ values, onChange, onSubmit, onCancel, isSubmitting
       ? (isRoom
         ? { type: 'single', date: values.date, startTime: values.startTime, endTime: values.endTime, bookedFor: values.bookedFor, guestName: values.bookedFor === 'GUEST' ? values.guestName.trim() : undefined }
         : { type: 'single', date: values.date, slot: values.slot, bookedFor: values.bookedFor, guestName: values.bookedFor === 'GUEST' ? values.guestName.trim() : undefined })
-      : { type: 'recurring', dateFrom: values.dateFrom, dateTo: values.dateTo, weekdays: values.weekdays };
+      : { type: 'recurring', dateFrom: values.dateFrom, dateTo: values.dateTo, weekdays: values.weekdays, slot: isRoom ? undefined : values.slot, startTime: isRoom ? values.startTime : undefined, endTime: isRoom ? values.endTime : undefined, bookedFor: values.bookedFor, guestName: values.bookedFor === 'GUEST' ? values.guestName.trim() : undefined };
 
     await onSubmit(payload);
   };
@@ -160,17 +166,15 @@ export function BookingForm({ values, onChange, onSubmit, onCancel, isSubmitting
           {fieldErrors.guestName && <p className="field-error" role="alert">{fieldErrors.guestName}</p>}
         </div>
       )}
-      {!isRoom && (
-        <div className="stack-xs">
-          <label htmlFor="booking-type">Typ</label>
-          <select id="booking-type" ref={typeSelectRef} value={values.type} disabled={disabled} onChange={(event) => onChange({ ...values, type: event.target.value === 'recurring' && allowRecurring ? 'recurring' : 'single' })}>
-            <option value="single">Einzelbuchung</option>
-            {allowRecurring && <option value="recurring">Serienbuchung</option>}
-          </select>
-        </div>
-      )}
+      <div className="stack-xs">
+        <label htmlFor="booking-type">Typ</label>
+        <select id="booking-type" ref={typeSelectRef} value={values.type} disabled={disabled} onChange={(event) => onChange({ ...values, type: event.target.value === 'recurring' && allowRecurring ? 'recurring' : 'single' })}>
+          <option value="single">Einzelbuchung</option>
+          {allowRecurring && <option value="recurring">Serienbuchung</option>}
+        </select>
+      </div>
 
-      {!allowRecurring && !isRoom && <p className="muted">Für diese Ressource sind Serientermine nicht erlaubt.</p>}
+      {!allowRecurring && <p className="muted">Für diese Ressource sind Serientermine nicht erlaubt.</p>}
 
       {values.type === 'single' && (
         <>
@@ -278,6 +282,29 @@ export function BookingForm({ values, onChange, onSubmit, onCancel, isSubmitting
         <>
           <div className="stack-xs"><label htmlFor="booking-date-from">Startdatum</label><input id="booking-date-from" type="date" value={values.dateFrom} disabled={disabled} onChange={(event) => onChange({ ...values, dateFrom: event.target.value })} />{fieldErrors.dateFrom && <p className="field-error" role="alert">{fieldErrors.dateFrom}</p>}</div>
           <div className="stack-xs"><label htmlFor="booking-date-to">Enddatum</label><input id="booking-date-to" type="date" value={values.dateTo} disabled={disabled} onChange={(event) => onChange({ ...values, dateTo: event.target.value })} />{fieldErrors.dateTo && <p className="field-error" role="alert">{fieldErrors.dateTo}</p>}</div>
+          {isRoom ? (
+            <div className="split">
+              <div className="stack-xs">
+                <label htmlFor="booking-recurring-start-time">Von</label>
+                <input id="booking-recurring-start-time" type="time" value={values.startTime} disabled={disabled} onChange={(event) => onChange({ ...values, startTime: event.target.value })} />
+                {fieldErrors.startTime && <p className="field-error" role="alert">{fieldErrors.startTime}</p>}
+              </div>
+              <div className="stack-xs">
+                <label htmlFor="booking-recurring-end-time">Bis</label>
+                <input id="booking-recurring-end-time" type="time" value={values.endTime} disabled={disabled} onChange={(event) => onChange({ ...values, endTime: event.target.value })} />
+                {fieldErrors.endTime && <p className="field-error" role="alert">{fieldErrors.endTime}</p>}
+              </div>
+            </div>
+          ) : (
+            <div className="stack-xs">
+              <label htmlFor="booking-recurring-slot">Zeitraum</label>
+              <select id="booking-recurring-slot" value={values.slot} disabled={disabled} onChange={(event) => onChange({ ...values, slot: event.target.value as BookingSlot })}>
+                <option value="FULL_DAY">Ganzer Tag</option>
+                <option value="MORNING">Vormittag</option>
+                <option value="AFTERNOON">Nachmittag</option>
+              </select>
+            </div>
+          )}
           <div className="stack-xs">
             <label>Wochentage</label>
             <div className="weekday-toggle-group" role="group" aria-label="Wochentage">
