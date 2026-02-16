@@ -662,6 +662,8 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
   const highlightTimerRef = useRef<number | null>(null);
   const popupRef = useRef<HTMLElement | null>(null);
   const cancelDialogRef = useRef<HTMLElement | null>(null);
+  const recurringConflictDialogRef = useRef<HTMLElement | null>(null);
+  const rebookDialogRef = useRef<HTMLElement | null>(null);
   const floorplanViewportRef = useRef<HTMLDivElement | null>(null);
   const floorplanTransformLayerRef = useRef<HTMLDivElement | null>(null);
   const hasFloorplanManualTransformRef = useRef(false);
@@ -1561,6 +1563,8 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
       if (!(target instanceof Node)) return;
       if (popupRef.current?.contains(target)) return;
       if (cancelDialogRef.current?.contains(target)) return;
+      if (recurringConflictDialogRef.current?.contains(target)) return;
+      if (rebookDialogRef.current?.contains(target)) return;
       const anchorElement = deskAnchorElementsRef.current.get(deskPopup.deskId);
       if (anchorElement?.contains(target)) return;
       closePopup();
@@ -2625,6 +2629,8 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
       if (!(target instanceof Node)) return;
       if (popupRef.current?.contains(target)) return;
       if (cancelDialogRef.current?.contains(target)) return;
+      if (recurringConflictDialogRef.current?.contains(target)) return;
+      if (rebookDialogRef.current?.contains(target)) return;
       const anchorElement = deskAnchorElementsRef.current.get(deskPopup.deskId);
       if (anchorElement?.contains(target)) return;
       closePopup();
@@ -2937,7 +2943,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
 
       {recurringConflictState && popupDesk && createPortal(
         <div className="overlay" role="presentation">
-          <section className="card dialog stack-sm rebook-dialog" role="dialog" aria-modal="true" aria-labelledby="series-conflict-title">
+          <section ref={recurringConflictDialogRef} className="card dialog stack-sm rebook-dialog" role="dialog" aria-modal="true" aria-labelledby="series-conflict-title">
             <h3 id="series-conflict-title">Konflikte gefunden</h3>
             <p>An {recurringConflictState.conflictDates.length} Tagen bestehen bereits Buchungen. Wie möchtest du fortfahren?</p>
             <p className="muted">
@@ -2958,7 +2964,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
 
       {rebookConfirm && createPortal(
         <div className="overlay" role="presentation">
-          <section className="card dialog stack-sm rebook-dialog" role="dialog" aria-modal="true" aria-labelledby="rebook-title">
+          <section ref={rebookDialogRef} className="card dialog stack-sm rebook-dialog" role="dialog" aria-modal="true" aria-labelledby="rebook-title">
             <h3 id="rebook-title">Umbuchen?</h3>
             <p>
               Du hast am <strong className="rebook-date">{formatDate(rebookConfirm.date)}</strong> bereits eine {rebookConfirm.existingKindLabel ?? rebookConfirm.deskKindLabel}-Buchung{rebookConfirm.existingSlotLabel ? ` (${rebookConfirm.existingSlotLabel})` : ''}.
