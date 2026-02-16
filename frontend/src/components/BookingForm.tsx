@@ -1,4 +1,4 @@
-import { FormEvent, KeyboardEvent, useEffect, useMemo, useRef, useState } from 'react';
+import { FormEvent, KeyboardEvent, MouseEvent, useEffect, useMemo, useRef, useState } from 'react';
 
 type BookingType = 'single' | 'recurring';
 type BookingSlot = 'FULL_DAY' | 'MORNING' | 'AFTERNOON';
@@ -61,7 +61,7 @@ export function BookingForm({ values, onChange, onSubmit, onCancel, isSubmitting
     conflictMessage?: string;
     debugInfo?: string;
     onSelectFreeSlot: (startTime: string, endTime: string) => void;
-    onBookingClick?: (bookingId: string) => void;
+    onBookingClick?: (event: MouseEvent<HTMLButtonElement>, bookingId: string) => void;
   };
 }) {
   const [localError, setLocalError] = useState('');
@@ -167,7 +167,15 @@ export function BookingForm({ values, onChange, onSubmit, onCancel, isSubmitting
                         type="button"
                         className={`room-booking-row ${booking.canCancel ? 'is-clickable' : ''}`}
                         role="listitem"
-                        onClick={() => roomSchedule.onBookingClick?.(booking.id)}
+                        onClick={(event) => {
+                          event.preventDefault();
+                          event.stopPropagation();
+                          roomSchedule.onBookingClick?.(event, booking.id);
+                        }}
+                        onMouseDown={(event) => {
+                          event.preventDefault();
+                          event.stopPropagation();
+                        }}
                         disabled={!booking.canCancel || disabled || isSubmitting}
                         title={booking.canCancel ? 'Eigene Buchung stornieren' : undefined}
                         aria-label={booking.canCancel ? `Buchung ${booking.label.replace(' – ', '-')} stornieren` : undefined}

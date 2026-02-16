@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { MouseEvent, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { API_BASE, ApiError, checkBackendHealth, get, markBackendAvailable, post, resolveApiUrl } from './api';
 import { cancelBooking, createRoomBooking } from './api/bookings';
@@ -48,6 +48,14 @@ type RebookConfirmState = {
   anchorRect: DOMRect;
 };
 type CancelFlowState = 'NONE' | 'DESK_POPOVER_OPEN' | 'CANCEL_CONFIRM_OPEN';
+type CancelDebugAction = 'IDLE' | 'CANCEL_CLICK' | 'CANCEL_REQUEST' | 'CANCEL_SUCCESS' | 'REFRESH_DONE' | 'CANCEL_ERROR';
+type CancelDebugState = {
+  lastAction: CancelDebugAction;
+  bookingId: string | null;
+  endpoint: string;
+  httpStatus: number | null;
+  errorMessage: string;
+};
 type BulkBookingResponse = {
   createdCount?: number;
   updatedCount?: number;
@@ -535,7 +543,15 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
   const [cancelFlowState, setCancelFlowState] = useState<CancelFlowState>('NONE');
   const [cancelConfirmContext, setCancelConfirmContext] = useState<CancelConfirmContext | null>(null);
   const [isCancellingBooking, setIsCancellingBooking] = useState(false);
+  const [cancellingBookingId, setCancellingBookingId] = useState<string | null>(null);
   const [cancelDialogError, setCancelDialogError] = useState('');
+  const [cancelDebugState, setCancelDebugState] = useState<CancelDebugState>({
+    lastAction: 'IDLE',
+    bookingId: null,
+    endpoint: '',
+    httpStatus: null,
+    errorMessage: ''
+  });
   const [calendarBookings, setCalendarBookings] = useState<CalendarBooking[]>([]);
   const [floorplanResources, setFloorplanResources] = useState<FloorplanResource[]>([]);
   const [bookedCalendarDays, setBookedCalendarDays] = useState<string[]>([]);
@@ -545,6 +561,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
   const occupantRowRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const highlightTimerRef = useRef<number | null>(null);
   const popupRef = useRef<HTMLElement | null>(null);
+  const cancelDialogRef = useRef<HTMLElement | null>(null);
   const availabilityCacheRef = useRef<Map<string, Map<string, DayAvailabilityTone>>>(new Map());
   const deskAnchorElementsRef = useRef<Map<string, HTMLElement>>(new Map());
 
@@ -929,21 +946,27 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
     };
 
     const closeOnEscape = (event: KeyboardEvent) => {
+      if (cancelFlowState === 'CANCEL_CONFIRM_OPEN') return;
       if (event.key === 'Escape') {
         closePopup();
       }
     };
 
-    const closeOnOutsideClick = (event: MouseEvent) => {
+    const closeOnOutsideClick = (event: globalThis.MouseEvent) => {
+      if (cancelFlowState === 'CANCEL_CONFIRM_OPEN') return;
       const target = event.target;
       if (!(target instanceof Node)) return;
       if (popupRef.current?.contains(target)) return;
+      if (cancelDialogRef.current?.contains(target)) return;
       const anchorElement = deskAnchorElementsRef.current.get(deskPopup.deskId);
       if (anchorElement?.contains(target)) return;
       closePopup();
     };
 
-    const closeOnViewportChange = () => closePopup();
+    const closeOnViewportChange = () => {
+      if (cancelFlowState === 'CANCEL_CONFIRM_OPEN') return;
+      closePopup();
+    };
 
     window.addEventListener('keydown', closeOnEscape);
     window.addEventListener('mousedown', closeOnOutsideClick, true);
@@ -958,7 +981,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
       window.removeEventListener('wheel', closeOnViewportChange);
       window.removeEventListener('resize', closeOnViewportChange);
     };
-  }, [deskPopup]);
+  }, [cancelFlowState, deskPopup]);
 
 
   const showRoomDebugInfo = useMemo(() => {
@@ -1058,7 +1081,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
     }
   };
 
-  const reloadBookings = async (options?: { requestId?: string; roomId?: string; date?: string }) => {
+  const reloadBookings = async (options?: { requestId?: string; roomId?: string; date?: string }): Promise<OccupancyResponse | null> => {
     const refreshed = await loadOccupancy(selectedFloorplanId, options?.date ?? selectedDate);
     if (options?.requestId && options.roomId && refreshed) {
       const roomDesk = refreshed.desks.find((desk) => desk.id === options.roomId);
@@ -1067,6 +1090,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
       console.log('[ROOM] freshBookings ids', roomDeskBookings.map((booking) => booking.id));
       logMutation('ROOM_REFETCH_DONE', { requestId: options.requestId, roomId: options.roomId, count: roomBookingsCount });
     }
+    return refreshed;
   };
 
   const closeBookingFlow = () => {
@@ -1079,8 +1103,16 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
     setCancelFlowState('NONE');
     setCancelConfirmContext(null);
     setIsCancellingBooking(false);
+    setCancellingBookingId(null);
     setCancelDialogError('');
   };
+
+  const updateCancelDebug = useCallback((next: Partial<CancelDebugState> & { lastAction: CancelDebugAction }) => {
+    setCancelDebugState((current) => ({
+      ...current,
+      ...next
+    }));
+  }, []);
 
   const openCancelConfirm = () => {
     if (!deskPopup || !popupDesk || popupDeskState !== 'MINE') return;
@@ -1098,10 +1130,11 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
       bookingIds,
       bookingLabel: bookingSlotLabel(ownBooking),
       isRecurring: normalizeDeskBookings(popupDesk).some((booking) => booking.isCurrentUser && booking.type === 'recurring'),
-      keepPopoverOpen: false
+      keepPopoverOpen: true
     });
     setCancelDialogError('');
     setIsCancellingBooking(false);
+    setCancellingBookingId(null);
     setCancelFlowState('CANCEL_CONFIRM_OPEN');
   };
 
@@ -1113,6 +1146,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
 
     setCancelDialogError('');
     setIsCancellingBooking(false);
+    setCancellingBookingId(null);
     setCancelConfirmContext(null);
     setCancelFlowState('DESK_POPOVER_OPEN');
   };
@@ -1271,7 +1305,9 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
     setRebookConfirm(null);
   };
 
-  const handleRoomBookingCancel = (bookingId: string) => {
+  const handleRoomBookingCancel = (event: MouseEvent<HTMLButtonElement>, bookingId: string) => {
+    event.preventDefault();
+    event.stopPropagation();
     if (!deskPopup || !popupDesk || !isRoomResource(popupDesk)) return;
     const selectedBooking = popupRoomBookingsList.find((booking) => booking.id === bookingId);
     if (!selectedBooking || !selectedBooking.isCurrentUser || !selectedBooking.bookingId) return;
@@ -1285,13 +1321,17 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
     });
     setCancelDialogError('');
     setIsCancellingBooking(false);
+    setCancellingBookingId(null);
     setCancelFlowState('CANCEL_CONFIRM_OPEN');
   };
 
   const cancelBookingWithRefresh = async ({ bookingId, requestId, deskId, date, keepPopoverOpen, popupDeskId, isRoomCancel }: { bookingId: string; requestId: string; deskId: string; date: string; keepPopoverOpen: boolean; popupDeskId: string; isRoomCancel: boolean }) => {
+    const endpoint = `${API_BASE}/bookings/${bookingId}`;
+    updateCancelDebug({ lastAction: 'CANCEL_REQUEST', bookingId, endpoint, httpStatus: null, errorMessage: '' });
     await runWithAppLoading(async () => {
       await cancelBooking(bookingId, isRoomCancel ? { requestId } : undefined);
     });
+    updateCancelDebug({ lastAction: 'CANCEL_SUCCESS', bookingId, endpoint, httpStatus: 200, errorMessage: '' });
 
     setOccupancy((current) => removeBookingFromOccupancy(current, bookingId));
     setTodayOccupancy((current) => removeBookingFromOccupancy(current, bookingId));
@@ -1310,17 +1350,18 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
     }
     setCancelConfirmContext(null);
 
-    reloadBookings(isRoomCancel ? { requestId, roomId: deskId, date } : undefined).catch((error) => {
-      if (isRoomCancel) {
-        logMutation('ROOM_REFETCH_ERROR', {
-          requestId,
-          err: error instanceof Error ? error.message : toBodySnippet(error)
-        });
-      }
-    });
+    const refreshed = await reloadBookings(isRoomCancel ? { requestId, roomId: deskId, date } : undefined);
+    const refreshedDesk = refreshed?.desks.find((desk) => desk.id === deskId);
+    const refreshedCount = refreshedDesk ? normalizeDeskBookings(refreshedDesk).length : 0;
+    updateCancelDebug({ lastAction: 'REFRESH_DONE', bookingId, endpoint, httpStatus: 200, errorMessage: '' });
+    if (isRoomCancel) {
+      logMutation('ROOM_REFETCH_DONE', { requestId, roomId: deskId, count: refreshedCount });
+    }
   };
 
-  const submitPopupCancel = async () => {
+  const submitPopupCancel = async (event: MouseEvent<HTMLButtonElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
     if (!cancelConfirmDesk || !cancelConfirmContext) return;
     if (cancelConfirmContext.isRecurring) {
       toast.error('Serienbuchungen können aktuell nur im Admin-Modus storniert werden.');
@@ -1346,11 +1387,15 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
         logMutation('ROOM_CANCEL_ERROR', { requestId, err: message });
       }
       setCancelDialogError(message);
+      updateCancelDebug({ lastAction: 'CANCEL_ERROR', bookingId: null, endpoint: '', httpStatus: null, errorMessage: message });
       return;
     }
 
+    const endpoint = `${API_BASE}/bookings/${bookingId}`;
+    updateCancelDebug({ lastAction: 'CANCEL_CLICK', bookingId, endpoint, httpStatus: null, errorMessage: '' });
     setCancelDialogError('');
     setIsCancellingBooking(true);
+    setCancellingBookingId(bookingId);
     logMutation('UI_SET_LOADING', { requestId, value: true });
 
     try {
@@ -1364,16 +1409,19 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
         isRoomCancel
       });
     } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Stornieren fehlgeschlagen';
       if (isRoomCancel) {
         logMutation('ROOM_CANCEL_ERROR', {
           requestId,
           err: error instanceof Error ? error.message : toBodySnippet(error)
         });
       }
-      setCancelDialogError(error instanceof Error ? error.message : 'Stornieren fehlgeschlagen');
+      updateCancelDebug({ lastAction: 'CANCEL_ERROR', bookingId, endpoint, httpStatus: null, errorMessage });
+      setCancelDialogError(`Stornierung fehlgeschlagen: ${errorMessage}`);
     } finally {
       logMutation('UI_SET_LOADING', { requestId, value: false });
       setIsCancellingBooking(false);
+      setCancellingBookingId(null);
     }
   };
 
@@ -1666,21 +1714,27 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
     };
 
     const closeOnEscape = (event: KeyboardEvent) => {
+      if (cancelFlowState === 'CANCEL_CONFIRM_OPEN') return;
       if (event.key === 'Escape') {
         closePopup();
       }
     };
 
-    const closeOnOutsideClick = (event: MouseEvent) => {
+    const closeOnOutsideClick = (event: globalThis.MouseEvent) => {
+      if (cancelFlowState === 'CANCEL_CONFIRM_OPEN') return;
       const target = event.target;
       if (!(target instanceof Node)) return;
       if (popupRef.current?.contains(target)) return;
+      if (cancelDialogRef.current?.contains(target)) return;
       const anchorElement = deskAnchorElementsRef.current.get(deskPopup.deskId);
       if (anchorElement?.contains(target)) return;
       closePopup();
     };
 
-    const closeOnViewportChange = () => closePopup();
+    const closeOnViewportChange = () => {
+      if (cancelFlowState === 'CANCEL_CONFIRM_OPEN') return;
+      closePopup();
+    };
 
     window.addEventListener('keydown', closeOnEscape);
     window.addEventListener('mousedown', closeOnOutsideClick, true);
@@ -1695,7 +1749,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
       window.removeEventListener('wheel', closeOnViewportChange);
       window.removeEventListener('resize', closeOnViewportChange);
     };
-  }, [deskPopup]);
+  }, [cancelFlowState, deskPopup]);
 
 
   if (backendDown) {
@@ -1789,7 +1843,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
                   <h3>{resourceKindLabel(popupDesk.kind)}: {popupDesk.name}</h3>
                   <p className="muted">Buchung anlegen{!isRoomResource(popupDesk) ? ` · ${deskAvailabilityLabel(popupDeskAvailability)}` : ''}</p>
                 </div>
-                <button type="button" className="btn btn-ghost desk-popup-close" aria-label="Popover schließen" onClick={closeBookingFlow}>✕</button>
+                <button type="button" className="btn btn-ghost desk-popup-close" aria-label="Popover schließen" onClick={closeBookingFlow} disabled={isCancellingBooking}>✕</button>
               </div>
               <BookingForm
                 values={bookingFormValues}
@@ -1834,7 +1888,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
                   </p>
                 ))}
                 <div className="inline-end">
-                  <button type="button" className="btn btn-outline" onClick={closeBookingFlow}>Schließen</button>
+                  <button type="button" className="btn btn-outline" onClick={closeBookingFlow} disabled={isCancellingBooking}>Schließen</button>
                   {popupDeskState === 'MINE' && (
                     <button
                       type="button"
@@ -1856,15 +1910,33 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
 
       {cancelFlowState === 'CANCEL_CONFIRM_OPEN' && cancelConfirmDesk && createPortal(
         <div className="overlay" role="presentation">
-          <section className="card dialog stack-sm cancel-booking-dialog" role="alertdialog" aria-modal="true" aria-labelledby="cancel-booking-title">
+          <section
+            ref={cancelDialogRef}
+            className="card dialog stack-sm cancel-booking-dialog"
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby="cancel-booking-title"
+            onMouseDown={(event) => { event.stopPropagation(); }}
+            onClick={(event) => { event.stopPropagation(); }}
+          >
             <h3 id="cancel-booking-title">Buchung stornieren?</h3>
             <p>Möchtest du deine Buchung {cancelConfirmBookingLabel} stornieren?</p>
             <p className="muted cancel-booking-subline">{resourceKindLabel(cancelConfirmDesk.kind)}: {cancelConfirmDesk.name} · {new Date(`${selectedDate}T00:00:00.000Z`).toLocaleDateString('de-DE')}</p>
             {cancelDialogError && <p className="error-banner">{cancelDialogError}</p>}
+            {showRoomDebugInfo && (
+              <div className="muted" style={{ fontSize: 12, border: '1px solid hsl(var(--border))', borderRadius: 8, padding: 8 }}>
+                <strong>Cancel Debug</strong>
+                <div>lastAction: {cancelDebugState.lastAction}</div>
+                <div>bookingId: {cancelDebugState.bookingId ?? '—'}</div>
+                <div>endpoint: {cancelDebugState.endpoint || '—'}</div>
+                <div>httpStatus: {cancelDebugState.httpStatus ?? '—'}</div>
+                <div>errorMessage: {cancelDebugState.errorMessage || '—'}</div>
+              </div>
+            )}
             <div className="inline-end">
-              <button type="button" className="btn btn-outline" onClick={cancelCancelConfirm} disabled={isCancellingBooking} data-state={isCancellingBooking ? 'loading' : 'idle'}>Abbrechen</button>
-              <button type="button" className="btn btn-danger" onClick={() => void submitPopupCancel()} disabled={isCancellingBooking} data-state={isCancellingBooking ? 'loading' : 'idle'}>
-                {isCancellingBooking ? <><span className="btn-spinner" aria-hidden />Stornieren…</> : 'Stornieren'}
+              <button type="button" className="btn btn-outline" onMouseDown={(event) => { event.stopPropagation(); }} onClick={cancelCancelConfirm} disabled={isCancellingBooking} data-state={isCancellingBooking ? 'loading' : 'idle'}>Abbrechen</button>
+              <button type="button" className="btn btn-danger" onMouseDown={(event) => { event.stopPropagation(); }} onClick={(event) => void submitPopupCancel(event)} disabled={isCancellingBooking} data-state={isCancellingBooking ? 'loading' : 'idle'}>
+                {isCancellingBooking && cancellingBookingId === cancelConfirmContext?.bookingIds[0] ? <><span className="btn-spinner" aria-hidden />Stornieren…</> : 'Stornieren'}
               </button>
             </div>
           </section>

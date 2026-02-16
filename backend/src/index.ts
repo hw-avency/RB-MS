@@ -2043,26 +2043,42 @@ app.put('/bookings/:id', async (req, res) => {
 });
 
 app.delete('/bookings/:id', async (req, res) => {
+  const requestId = req.requestId ?? 'unknown';
+  const userId = req.authUser?.id ?? null;
   const id = getRouteId(req.params.id);
+
   if (!id) {
+    console.warn('BOOKING_CANCEL', { requestId, userId, bookingId: null, resourceType: null, status: 400, error: 'id is required' });
     res.status(400).json({ error: 'validation', message: 'id is required' });
     return;
   }
 
-  const existing = await prisma.booking.findUnique({ where: { id } });
-  if (!existing) {
-    res.status(404).json({ error: 'not_found', message: 'Booking not found' });
-    return;
-  }
+  try {
+    const existing = await prisma.booking.findUnique({
+      where: { id },
+      include: { desk: { select: { kind: true } } }
+    });
+    if (!existing) {
+      console.warn('BOOKING_CANCEL', { requestId, userId, bookingId: id, resourceType: null, status: 404, error: 'Booking not found' });
+      res.status(404).json({ error: 'not_found', message: 'Booking not found' });
+      return;
+    }
 
-  const authEmail = req.authUser?.email;
-  if (req.authUser?.role !== 'admin' && existing.userEmail !== authEmail) {
-    res.status(403).json({ error: 'forbidden', message: 'Cannot cancel booking of another user' });
-    return;
-  }
+    const authEmail = req.authUser?.email;
+    if (req.authUser?.role !== 'admin' && existing.userEmail !== authEmail) {
+      console.warn('BOOKING_CANCEL', { requestId, userId, bookingId: id, resourceType: existing.desk?.kind ?? null, status: 403, error: 'Cannot cancel booking of another user' });
+      res.status(403).json({ error: 'forbidden', message: 'Cannot cancel booking of another user' });
+      return;
+    }
 
-  await prisma.booking.delete({ where: { id } });
-  res.status(200).json({ ok: true });
+    await prisma.booking.delete({ where: { id } });
+    console.info('BOOKING_CANCEL', { requestId, userId, bookingId: id, resourceType: existing.desk?.kind ?? null, status: 200, error: null });
+    res.status(200).json({ ok: true });
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : 'Unexpected booking cancel error';
+    console.error('BOOKING_CANCEL', { requestId, userId, bookingId: id, resourceType: null, status: 500, error: errorMessage });
+    res.status(500).json({ error: 'internal_error', message: 'Booking cancel failed' });
+  }
 });
 
 
