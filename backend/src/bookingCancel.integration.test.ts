@@ -8,24 +8,21 @@ type BookingFixture = {
   id: string;
   bookedFor: 'SELF' | 'GUEST';
   userEmail: string | null;
-  createdByUserId: string;
+  createdByUserId: string | null;
+  createdByEmail: string | null;
   desk: { kind: 'RAUM' | 'TISCH' | 'PARKPLATZ' | 'SONSTIGES' };
 };
 
 const bookings = new Map<string, BookingFixture>();
-const usersByEmail = new Map<string, { id: string }>();
-
 beforeEach(() => {
   bookings.clear();
-  usersByEmail.clear();
-
-  usersByEmail.set('user-b@example.com', { id: 'user-b' });
 
   bookings.set('booking-b-self', {
     id: 'booking-b-self',
     bookedFor: 'SELF',
     userEmail: 'user-b@example.com',
     createdByUserId: 'user-b',
+    createdByEmail: 'user-b@example.com',
     desk: { kind: 'RAUM' }
   });
 
@@ -33,12 +30,12 @@ beforeEach(() => {
     id: 'booking-a-guest',
     bookedFor: 'GUEST',
     userEmail: null,
-    createdByUserId: 'user-a',
+    createdByUserId: null,
+    createdByEmail: 'user-a@example.com',
     desk: { kind: 'RAUM' }
   });
 
   (prisma.booking.findUnique as unknown) = async ({ where: { id } }: { where: { id: string } }) => bookings.get(id) ?? null;
-  (prisma.user.findFirst as unknown) = async ({ where }: { where: { email: { equals: string } } }) => usersByEmail.get(where.email.equals.toLowerCase()) ?? null;
   (prisma.booking.delete as unknown) = async ({ where: { id } }: { where: { id: string } }) => {
     const booking = bookings.get(id);
     if (!booking) throw new Error('booking not found');

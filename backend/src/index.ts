@@ -19,7 +19,6 @@ const configuredOrigins = (process.env.FRONTEND_URL ?? process.env.CORS_ORIGIN ?
   .map((origin) => origin.trim())
   .filter((origin) => Boolean(origin));
 const FRONTEND_URL = configuredOrigins[0] ?? '';
-const DEFAULT_USER_PASSWORD = process.env.DEFAULT_USER_PASSWORD ?? 'ChangeMe123!';
 const PASSWORD_SALT_ROUNDS = Number(process.env.PASSWORD_SALT_ROUNDS ?? 12);
 const normalizedNodeEnv = process.env.NODE_ENV?.trim().toLowerCase();
 const isRenderRuntime = process.env.RENDER === 'true' || Boolean(process.env.RENDER_EXTERNAL_URL);
@@ -94,12 +93,13 @@ const normalizeGuestName = (value: unknown): string | null => {
 type EmployeeRole = 'admin' | 'user';
 type SessionRecord = {
   id: string;
-  userId: string;
+  userId?: string;
+  employeeId?: string;
   expiresAt: Date;
   graphAccessToken?: string;
   graphTokenExpiresAt?: Date;
 };
-type AuthUser = { id: string; email: string; displayName: string; role: EmployeeRole; isActive: boolean };
+type AuthUser = { id: string; email: string; displayName: string; role: EmployeeRole; isActive: boolean; source: 'local' | 'entra' };
 
 declare global {
   namespace Express {
@@ -158,14 +158,19 @@ const clearSessionCookies = (res: express.Response) => {
   res.clearCookie(SESSION_COOKIE_NAME, options);
 };
 
-const createSession = async (userId: string, options?: { graphAccessToken?: string; graphTokenExpiresInSeconds?: number }): Promise<SessionRecord> => {
+const createSession = async (identity: { userId?: string; employeeId?: string }, options?: { graphAccessToken?: string; graphTokenExpiresInSeconds?: number }): Promise<SessionRecord> => {
+  if (!identity.userId && !identity.employeeId) {
+    throw new Error('SESSION_IDENTITY_MISSING');
+  }
+
   const now = Date.now();
   const graphTokenExpiresAt = options?.graphTokenExpiresInSeconds
     ? new Date(now + (options.graphTokenExpiresInSeconds * 1000))
     : undefined;
   const session: SessionRecord = {
     id: crypto.randomUUID(),
-    userId,
+    ...(identity.userId ? { userId: identity.userId } : {}),
+    ...(identity.employeeId ? { employeeId: identity.employeeId } : {}),
     expiresAt: new Date(now + SESSION_TTL_MS),
     ...(options?.graphAccessToken ? { graphAccessToken: options.graphAccessToken } : {}),
     ...(graphTokenExpiresAt ? { graphTokenExpiresAt } : {})
@@ -174,6 +179,7 @@ const createSession = async (userId: string, options?: { graphAccessToken?: stri
     data: {
       id: session.id,
       userId: session.userId,
+      employeeId: session.employeeId,
       expiresAt: session.expiresAt,
       graphAccessToken: session.graphAccessToken,
       graphTokenExpiresAt: session.graphTokenExpiresAt
@@ -331,7 +337,8 @@ const attachAuthUser: express.RequestHandler = async (req, _res, next) => {
         email: 'dev@local',
         displayName: 'Dev Admin',
         role: 'admin',
-        isActive: true
+        isActive: true,
+        source: 'local'
       };
       next();
       return;
@@ -347,7 +354,8 @@ const attachAuthUser: express.RequestHandler = async (req, _res, next) => {
         email: devUserEmail,
         displayName: devUserHeader,
         role: devUserRole,
-        isActive: true
+        isActive: true,
+        source: 'local'
       };
       next();
       return;
@@ -370,18 +378,37 @@ const attachAuthUser: express.RequestHandler = async (req, _res, next) => {
     return;
   }
 
-  const user = await prisma.user.findUnique({
-    where: { id: session.userId },
-    select: {
-      id: true,
-      email: true,
-      displayName: true,
-      role: true,
-      isActive: true
-    }
-  });
+  const localUser = session.userId
+    ? await prisma.user.findUnique({
+      where: { id: session.userId },
+      select: {
+        id: true,
+        email: true,
+        displayName: true,
+        role: true,
+        isActive: true
+      }
+    })
+    : null;
+  const employeeUser = !localUser && session.employeeId
+    ? await prisma.employee.findUnique({
+      where: { id: session.employeeId },
+      select: {
+        id: true,
+        email: true,
+        displayName: true,
+        role: true,
+        isActive: true
+      }
+    })
+    : null;
+  const authIdentity = localUser
+    ? { ...localUser, source: 'local' as const }
+    : employeeUser
+      ? { ...employeeUser, source: 'entra' as const }
+      : null;
 
-  if (!user || !user.isActive) {
+  if (!authIdentity || !authIdentity.isActive) {
     await destroySession(sessionId);
     req.authFailureReason = 'USER_MISSING_OR_INACTIVE';
     next();
@@ -395,17 +422,19 @@ const attachAuthUser: express.RequestHandler = async (req, _res, next) => {
   });
   req.authSession = {
     id: session.id,
-    userId: session.userId,
+    userId: session.userId ?? undefined,
+    employeeId: session.employeeId ?? undefined,
     expiresAt: refreshedExpiresAt,
     graphAccessToken: session.graphAccessToken ?? undefined,
     graphTokenExpiresAt: session.graphTokenExpiresAt ?? undefined
   };
   req.authUser = {
-    id: user.id,
-    email: user.email,
-    displayName: user.displayName,
-    role: user.role === 'admin' ? 'admin' : 'user',
-    isActive: user.isActive
+    id: authIdentity.id,
+    email: authIdentity.email,
+    displayName: authIdentity.displayName,
+    role: authIdentity.role === 'admin' ? 'admin' : 'user',
+    isActive: authIdentity.isActive,
+    source: authIdentity.source
   };
 
   next();
@@ -695,8 +724,8 @@ type DbTableMeta = {
 };
 
 type DbDelegate = {
-  findMany: (args: { take: number; skip: number; orderBy: { createdAt: 'desc' } | { id: 'desc' } }) => Promise<unknown[]>;
-  count: () => Promise<number>;
+  findMany: (args: { take: number; skip: number; orderBy: { createdAt: 'desc' } | { id: 'desc' }; where?: Record<string, unknown> }) => Promise<unknown[]>;
+  count: (args?: { where?: Record<string, unknown> }) => Promise<number>;
   create: (args: { data: Record<string, unknown> }) => Promise<unknown>;
   update: (args: { where: { id: string }; data: Record<string, unknown> }) => Promise<unknown>;
   delete: (args: { where: { id: string } }) => Promise<unknown>;
@@ -820,6 +849,7 @@ type CreatorSummary = { id: string; displayName: string; email: string };
 const resolveCreatedBySummary = (params: {
   createdBy: { id: string; displayName: string | null; email: string } | null;
   createdByUserId?: string | null;
+  createdByEmail?: string | null;
   fallbackUser?: CreatorSummary | null;
 }): CreatorSummary => {
   if (params.createdBy) {
@@ -837,7 +867,7 @@ const resolveCreatedBySummary = (params: {
   return {
     id: params.createdByUserId?.trim() || 'legacy-missing-created-by',
     displayName: 'Unbekannt',
-    email: ''
+    email: params.createdByEmail ?? ''
   };
 };
 
@@ -904,6 +934,7 @@ const mapBookingResponse = (booking: BookingWithCreator) => ({
   guestName: booking.guestName,
   createdBy: booking.createdBy,
   createdByUserId: booking.createdByUserId,
+  createdByEmail: booking.createdByEmail,
   date: booking.date,
   daySlot: booking.daySlot,
   slot: booking.slot,
@@ -1108,7 +1139,6 @@ app.use(attachAuthUser);
 app.use(requireAllowedMutationOrigin);
 
 const ensureBreakglassAdmin = async () => {
-  const defaultHash = await hashPassword(DEFAULT_USER_PASSWORD);
   console.log('BREAKGLASS_ENV_PRESENT', { emailSet: Boolean(ADMIN_EMAIL), passwordSet: Boolean(ADMIN_PASSWORD) });
 
   if (ADMIN_EMAIL && ADMIN_PASSWORD) {
@@ -1137,63 +1167,25 @@ const ensureBreakglassAdmin = async () => {
   } else {
     console.warn('Breakglass skipped: ADMIN_EMAIL or ADMIN_PASSWORD missing');
   }
-
-  const employees = await prisma.employee.findMany({
-    select: { email: true, displayName: true, role: true, isActive: true }
-  });
-
-  for (const employee of employees) {
-    await prisma.user.upsert({
-      where: { email: employee.email },
-      update: {
-        displayName: employee.displayName,
-        role: employee.role,
-        isActive: employee.isActive
-      },
-      create: {
-        email: employee.email,
-        displayName: employee.displayName,
-        role: employee.role,
-        isActive: employee.isActive,
-        passwordHash: defaultHash
-      }
-    });
-  }
 };
 
 const backfillLegacyBookingCreators = async () => {
-  const bookingsMissingCreator = await prisma.booking.findMany({
-    where: { createdByUserId: '' },
-    select: { id: true, userEmail: true, bookedFor: true }
+  const bookingsMissingCreatorEmail = await prisma.booking.findMany({
+    where: { createdByEmail: null },
+    select: { id: true, userEmail: true }
   });
 
-  if (bookingsMissingCreator.length === 0) {
-    return;
-  }
-
-  const usersByEmail = new Map((await prisma.user.findMany({
-    where: {
-      email: {
-        in: Array.from(new Set(bookingsMissingCreator.map((booking) => booking.userEmail).filter((email): email is string => Boolean(email)).map((email) => normalizeEmail(email))))
-      }
-    },
-    select: { id: true, email: true }
-  })).map((user) => [normalizeEmail(user.email), user.id]));
+  if (bookingsMissingCreatorEmail.length === 0) return;
 
   let updatedCount = 0;
-  for (const booking of bookingsMissingCreator) {
-    const fallbackCreatorId = booking.userEmail ? usersByEmail.get(normalizeEmail(booking.userEmail)) : undefined;
-    if (!fallbackCreatorId) {
-      console.warn('BOOKING_CREATOR_BACKFILL_SKIPPED', { bookingId: booking.id, bookedFor: booking.bookedFor, reason: 'no matching user' });
-      continue;
-    }
-
-    await prisma.booking.update({ where: { id: booking.id }, data: { createdByUserId: fallbackCreatorId } });
+  for (const booking of bookingsMissingCreatorEmail) {
+    if (!booking.userEmail) continue;
+    await prisma.booking.update({ where: { id: booking.id }, data: { createdByEmail: normalizeEmail(booking.userEmail) } });
     updatedCount += 1;
   }
 
   if (updatedCount > 0) {
-    console.info('BOOKING_CREATOR_BACKFILL_DONE', { total: bookingsMissingCreator.length, updated: updatedCount });
+    console.info('BOOKING_CREATOR_EMAIL_BACKFILL_DONE', { total: bookingsMissingCreatorEmail.length, updated: updatedCount });
   }
 };
 
@@ -1231,30 +1223,6 @@ const upsertEmployeeFromEntraLogin = async (claims: { oid: string; tid: string; 
       });
     }
 
-    const existingUser = await tx.user.findUnique({ where: { email: normalizedEmail } });
-    const fallbackPasswordHash = existingUser?.passwordHash ?? await hashPassword(crypto.randomUUID());
-    const user = await tx.user.upsert({
-      where: { email: normalizedEmail },
-      update: {
-        displayName: claims.name,
-        role: employee.role,
-        isActive: employee.isActive
-      },
-      create: {
-        email: normalizedEmail,
-        displayName: claims.name,
-        role: employee.role,
-        isActive: true,
-        passwordHash: fallbackPasswordHash
-      },
-      select: {
-        id: true,
-        email: true,
-        displayName: true,
-        role: true
-      }
-    });
-
     await tx.employee.update({
       where: { id: employee.id },
       data: {
@@ -1262,7 +1230,13 @@ const upsertEmployeeFromEntraLogin = async (claims: { oid: string; tid: string; 
       }
     });
 
-    return { ...user, employeeId: employee.id };
+    return {
+      id: employee.id,
+      email: employee.email,
+      displayName: employee.displayName,
+      role: employee.role,
+      employeeId: employee.id
+    };
   });
 };
 
@@ -1346,7 +1320,7 @@ app.get('/auth/entra/callback', async (req, res) => {
     } else {
       await syncEmployeePhotoWithAppToken({ id: user.employeeId, entraOid: oid, email });
     }
-    const session = await createSession(user.id, {
+    const session = await createSession({ employeeId: user.employeeId }, {
       graphAccessToken: tokenPayload.access_token,
       graphTokenExpiresInSeconds: tokenPayload.expires_in
     });
@@ -1391,7 +1365,7 @@ app.post('/auth/login', async (req, res) => {
       return;
     }
 
-    const session = await createSession(user.id);
+    const session = await createSession({ userId: user.id });
     applySessionCookies(res, session);
 
     const employee = await prisma.employee.findUnique({
@@ -1538,10 +1512,13 @@ app.get('/admin/db/:table/rows', requireAdmin, async (req, res) => {
   const limit = Number.isNaN(rawLimit) ? 100 : Math.max(1, Math.min(250, rawLimit));
   const offset = Number.isNaN(rawOffset) ? 0 : Math.max(0, rawOffset);
   const orderBy = table.scalarFields.some((field) => field.name === 'createdAt') ? { createdAt: 'desc' as const } : { id: 'desc' as const };
+  const restrictedUserFilter = table.modelName === 'User' && ADMIN_EMAIL
+    ? { email: ADMIN_EMAIL }
+    : undefined;
 
   const [rows, total] = await Promise.all([
-    delegate.findMany({ take: limit, skip: offset, orderBy }),
-    delegate.count()
+    delegate.findMany({ take: limit, skip: offset, orderBy, where: restrictedUserFilter }),
+    delegate.count({ where: restrictedUserFilter })
   ]);
 
   res.json({ rows, total, limit, offset });
@@ -1735,7 +1712,6 @@ app.post('/admin/employees', requireAdmin, async (req, res) => {
   }
 
   try {
-    const passwordHash = await hashPassword(DEFAULT_USER_PASSWORD);
     const employee = await prisma.$transaction(async (tx) => {
       const createdEmployee = await tx.employee.create({
         data: {
@@ -1750,22 +1726,6 @@ app.post('/admin/employees', requireAdmin, async (req, res) => {
       await tx.employee.update({
         where: { id: createdEmployee.id },
         data: { photoUrl: getEmployeePhotoUrl(createdEmployee.id) }
-      });
-
-      await tx.user.upsert({
-        where: { email: normalizedEmail },
-        update: {
-          displayName: normalizedDisplayName,
-          role: role ?? 'user',
-          isActive: true
-        },
-        create: {
-          email: normalizedEmail,
-          displayName: normalizedDisplayName,
-          role: role ?? 'user',
-          isActive: true,
-          passwordHash
-        }
       });
 
       return { id: createdEmployee.id, email: normalizedEmail, entraOid: null };
@@ -1828,7 +1788,7 @@ app.patch('/admin/employees/:id', requireAdmin, async (req, res) => {
   const nextIsActive = typeof isActive === 'boolean' ? isActive : existing.isActive;
 
   if (existing.role === 'admin' && (nextRole !== 'admin' || !nextIsActive)) {
-    const adminCount = await prisma.user.count({ where: { role: 'admin', isActive: true } });
+    const adminCount = await prisma.employee.count({ where: { role: 'admin', isActive: true } });
     if (adminCount <= 1) {
       res.status(409).json({ error: 'conflict', message: 'Mindestens ein Admin muss erhalten bleiben.' });
       return;
@@ -1836,27 +1796,14 @@ app.patch('/admin/employees/:id', requireAdmin, async (req, res) => {
   }
 
   try {
-    const updated = await prisma.$transaction(async (tx) => {
-      const employeeRow = await tx.employee.update({
-        where: { id },
-        data: {
-          ...(typeof trimmedDisplayName === 'string' ? { displayName: trimmedDisplayName } : {}),
-          ...(typeof isActive === 'boolean' ? { isActive } : {}),
-          ...(typeof role === 'string' ? { role } : {})
-        },
-        select: employeeSelect
-      });
-
-      await tx.user.updateMany({
-        where: { email: existing.email },
-        data: {
-          ...(typeof trimmedDisplayName === 'string' ? { displayName: trimmedDisplayName } : {}),
-          ...(typeof isActive === 'boolean' ? { isActive } : {}),
-          ...(typeof role === 'string' ? { role } : {})
-        }
-      });
-
-      return employeeRow;
+    const updated = await prisma.employee.update({
+      where: { id },
+      data: {
+        ...(typeof trimmedDisplayName === 'string' ? { displayName: trimmedDisplayName } : {}),
+        ...(typeof isActive === 'boolean' ? { isActive } : {}),
+        ...(typeof role === 'string' ? { role } : {})
+      },
+      select: employeeSelect
     });
 
     if (req.authUser && req.authUser.email === existing.email) {
@@ -1889,7 +1836,7 @@ app.delete('/admin/employees/:id', requireAdmin, async (req, res) => {
   }
 
   if (employee.role === 'admin' && employee.isActive) {
-    const adminCount = await prisma.user.count({ where: { role: 'admin', isActive: true } });
+    const adminCount = await prisma.employee.count({ where: { role: 'admin', isActive: true } });
     if (adminCount <= 1) {
       res.status(409).json({ error: 'conflict', message: 'Mindestens ein Admin muss erhalten bleiben.' });
       return;
@@ -1897,17 +1844,10 @@ app.delete('/admin/employees/:id', requireAdmin, async (req, res) => {
   }
 
   try {
-    const updated = await prisma.$transaction(async (tx) => {
-      const employeeRow = await tx.employee.update({
-        where: { id },
-        data: { isActive: false },
-        select: employeeSelect
-      });
-      await tx.user.updateMany({
-        where: { email: employeeRow.email },
-        data: { isActive: false }
-      });
-      return employeeRow;
+    const updated = await prisma.employee.update({
+      where: { id },
+      data: { isActive: false },
+      select: employeeSelect
     });
 
     res.status(200).json(updated);
@@ -2094,7 +2034,8 @@ app.post('/bookings', async (req, res) => {
         userEmail: identity?.normalizedEmail ?? null,
         bookedFor: bookingMode,
         guestName: bookingMode === 'GUEST' ? normalizedGuestName : null,
-        createdByUserId: currentUser.id,
+        createdByUserId: currentUser.source === 'local' ? currentUser.id : null,
+        createdByEmail: currentUser.email,
         date: parsedDate,
         daySlot: bookingWindow.mode === 'day' ? bookingWindow.daySlot : null,
         startTime: bookingWindow.mode === 'time' ? new Date(Date.UTC(parsedDate.getUTCFullYear(), parsedDate.getUTCMonth(), parsedDate.getUTCDate(), Math.floor(bookingWindow.startMinute / 60), bookingWindow.startMinute % 60, 0, 0)) : null,
@@ -2141,7 +2082,7 @@ app.put('/bookings/:id', async (req, res) => {
   }
 
   const authEmail = req.authUser?.email;
-  if (req.authUser?.role !== 'admin' && existing.userEmail !== authEmail && existing.createdByUserId !== req.authUser?.id) {
+  if (req.authUser?.role !== 'admin' && existing.userEmail !== authEmail && normalizeEmail(existing.createdByEmail ?? '') !== normalizeEmail(req.authUser?.email ?? '')) {
     res.status(403).json({ error: 'forbidden', message: 'Cannot update booking of another user' });
     return;
   }
@@ -2227,21 +2168,16 @@ app.delete('/bookings/:id', async (req, res) => {
       return;
     }
 
-    const bookingOwner = existing.userEmail
-      ? await prisma.user.findFirst({
-        where: { email: { equals: existing.userEmail, mode: 'insensitive' } },
-        select: { id: true }
-      })
-      : null;
-
     const allowed = canCancelBooking({
       booking: {
         bookedFor: existing.bookedFor,
-        userId: bookingOwner?.id ?? null,
-        createdByUserId: existing.createdByUserId
+        userEmail: existing.userEmail,
+        createdByEmail: existing.createdByEmail ?? null,
+        createdByUserId: existing.createdByUserId ?? null
       },
       actor: {
         userId: req.authUser.id,
+        email: req.authUser.email,
         isAdmin: req.authUser.role === 'admin'
       }
     });
@@ -2250,7 +2186,8 @@ app.delete('/bookings/:id', async (req, res) => {
       requestId,
       bookingId: id,
       bookedFor: existing.bookedFor,
-      bookingUserId: bookingOwner?.id ?? null,
+      bookingUserEmail: existing.userEmail,
+      createdByEmail: existing.createdByEmail,
       createdByUserId: existing.createdByUserId,
       actorUserId: req.authUser.id,
       actorEmail: req.authUser.email,
@@ -2501,7 +2438,7 @@ app.post('/bookings/range', async (req, res) => {
         continue;
       }
 
-      await tx.booking.create({ data: { deskId, userEmail: identity.normalizedEmail, createdByUserId: req.authUser?.id ?? '', bookedFor: 'SELF', guestName: null, date: targetDate } });
+      await tx.booking.create({ data: { deskId, userEmail: identity.normalizedEmail, createdByUserId: req.authUser?.source === 'local' ? req.authUser.id : null, createdByEmail: req.authUser?.email ?? null, bookedFor: 'SELF', guestName: null, date: targetDate } });
       createdCount += 1;
     }
 
@@ -2570,7 +2507,7 @@ app.get('/bookings', async (req, res) => {
   }
 
   if (req.authUser?.role !== 'admin' && req.authUser?.id) {
-    where.createdByUserId = req.authUser.id;
+    where.createdByEmail = req.authUser.email;
   }
 
   const bookings = await prisma.booking.findMany({
@@ -2582,6 +2519,7 @@ app.get('/bookings', async (req, res) => {
       bookedFor: true,
       guestName: true,
       createdByUserId: true,
+      createdByEmail: true,
       date: true,
       daySlot: true,
       startTime: true,
@@ -2966,7 +2904,7 @@ app.post('/recurring-bookings', async (req, res) => {
         continue;
       }
 
-      await tx.booking.create({ data: { deskId, userEmail: identity.normalizedEmail, createdByUserId: req.authUser?.id ?? '', bookedFor: 'SELF', guestName: null, date: targetDate } });
+      await tx.booking.create({ data: { deskId, userEmail: identity.normalizedEmail, createdByUserId: req.authUser?.source === 'local' ? req.authUser.id : null, createdByEmail: req.authUser?.email ?? null, bookedFor: 'SELF', guestName: null, date: targetDate } });
       createdCount += 1;
     }
 
@@ -3125,7 +3063,7 @@ app.post('/recurring-bookings/bulk', async (req, res) => {
         continue;
       }
 
-      await tx.booking.create({ data: { deskId, userEmail: identity.normalizedEmail, createdByUserId: req.authUser?.id ?? '', bookedFor: 'SELF', guestName: null, date: targetDate } });
+      await tx.booking.create({ data: { deskId, userEmail: identity.normalizedEmail, createdByUserId: req.authUser?.source === 'local' ? req.authUser.id : null, createdByEmail: req.authUser?.email ?? null, bookedFor: 'SELF', guestName: null, date: targetDate } });
       createdCount += 1;
     }
 
@@ -3593,7 +3531,7 @@ app.get('/admin/bookings', requireAdmin, async (req, res) => {
       const appUser = normalizedUserEmail ? usersByEmail.get(normalizedUserEmail) : undefined;
       const fallbackUser = booking.userEmail
         ? {
-          id: appUser?.id ?? booking.createdByUserId,
+          id: appUser?.id ?? booking.createdByUserId ?? `legacy-${normalizedUserEmail ?? 'unknown'}`,
           displayName: employee?.displayName ?? appUser?.displayName ?? booking.userEmail,
           email: booking.userEmail
         }
@@ -3601,6 +3539,7 @@ app.get('/admin/bookings', requireAdmin, async (req, res) => {
       const createdBy = resolveCreatedBySummary({
         createdBy: booking.createdBy,
         createdByUserId: booking.createdByUserId,
+        createdByEmail: booking.createdByEmail,
         fallbackUser
       });
 
@@ -3801,7 +3740,7 @@ app.patch('/admin/bookings/:id', requireAdmin, async (req, res) => {
   const appUser = updated.userEmail ? await prisma.user.findUnique({ where: { email: normalizeEmail(updated.userEmail) }, select: { id: true, displayName: true, email: true } }) : null;
   const fallbackUser = updated.userEmail
     ? {
-      id: appUser?.id ?? updated.createdByUserId,
+      id: appUser?.id ?? updated.createdByUserId ?? `legacy-${normalizeEmail(updated.userEmail)}`,
       displayName: employee?.displayName ?? appUser?.displayName ?? updated.userEmail,
       email: updated.userEmail
     }
@@ -3809,6 +3748,7 @@ app.patch('/admin/bookings/:id', requireAdmin, async (req, res) => {
   const createdBy = resolveCreatedBySummary({
     createdBy: updated.createdBy,
     createdByUserId: updated.createdByUserId,
+    createdByEmail: updated.createdByEmail,
     fallbackUser
   });
 
