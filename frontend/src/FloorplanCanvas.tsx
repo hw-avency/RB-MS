@@ -1,4 +1,4 @@
-import { MouseEvent, RefObject, memo, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { CSSProperties, MouseEvent, RefObject, memo, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { normalizeDaySlotBookings } from './daySlotBookings';
 import { resourceKindLabel } from './resourceKinds';
@@ -130,6 +130,7 @@ type FloorplanCanvasProps = {
   onDeskDoubleClick?: (deskId: string) => void;
   onDeskAnchorChange?: (deskId: string, element: HTMLElement | null) => void;
   disablePulseAnimation?: boolean;
+  style?: CSSProperties;
 };
 
 const FloorplanImage = memo(function FloorplanImage({ imageUrl, imageAlt, imgRef, onLoad }: { imageUrl: string; imageAlt: string; imgRef: RefObject<HTMLImageElement>; onLoad: () => void }) {
@@ -306,16 +307,20 @@ const DeskOverlay = memo(function DeskOverlay({ desks, selectedDeskId, hoveredDe
   );
 });
 
-export function FloorplanCanvas({ imageUrl, imageAlt, desks, selectedDeskId, hoveredDeskId, selectedDate, bookingVersion, onHoverDesk, onSelectDesk, onCanvasClick, onDeskDoubleClick, onDeskAnchorChange, disablePulseAnimation = false }: FloorplanCanvasProps) {
+export function FloorplanCanvas({ imageUrl, imageAlt, desks, selectedDeskId, hoveredDeskId, selectedDate, bookingVersion, onHoverDesk, onSelectDesk, onCanvasClick, onDeskDoubleClick, onDeskAnchorChange, disablePulseAnimation = false, style }: FloorplanCanvasProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const imgRef = useRef<HTMLImageElement | null>(null);
   const [overlayRect, setOverlayRect] = useState<OverlayRect>({ left: 0, top: 0, width: 1, height: 1 });
 
   const sync = () => {
     if (!containerRef.current || !imgRef.current) return;
-    const c = containerRef.current.getBoundingClientRect();
-    const i = imgRef.current.getBoundingClientRect();
-    setOverlayRect({ left: i.left - c.left, top: i.top - c.top, width: i.width, height: i.height });
+    const imageElement = imgRef.current;
+    setOverlayRect({
+      left: imageElement.offsetLeft,
+      top: imageElement.offsetTop,
+      width: imageElement.clientWidth || imageElement.naturalWidth || 1,
+      height: imageElement.clientHeight || imageElement.naturalHeight || 1,
+    });
   };
 
   useLayoutEffect(sync, [imageUrl]);
@@ -335,7 +340,7 @@ export function FloorplanCanvas({ imageUrl, imageAlt, desks, selectedDeskId, hov
   };
 
   return (
-    <div ref={containerRef} className="floorplan-canvas" role="presentation" onClick={handleCanvasClick}>
+    <div ref={containerRef} className="floorplan-canvas" role="presentation" onClick={handleCanvasClick} style={style}>
       <FloorplanImage imageUrl={imageUrl} imageAlt={imageAlt} imgRef={imgRef} onLoad={sync} />
       <DeskOverlay desks={desks} selectedDeskId={selectedDeskId} hoveredDeskId={hoveredDeskId} selectedDate={selectedDate} bookingVersion={bookingVersion} overlayRect={overlayRect} onHoverDesk={onHoverDesk} onSelectDesk={onSelectDesk} onDeskDoubleClick={onDeskDoubleClick} onDeskAnchorChange={onDeskAnchorChange} disablePulseAnimation={disablePulseAnimation} />
     </div>
