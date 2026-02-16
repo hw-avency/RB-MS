@@ -1617,7 +1617,17 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
     }
 
     if (payload.type === 'single') {
-      await runWithAppLoading(() => post('/bookings', { deskId, userEmail: selectedEmployeeEmail, date: payload.date, daySlot: payload.slot === 'FULL_DAY' ? 'FULL' : payload.slot === 'MORNING' ? 'AM' : payload.slot === 'AFTERNOON' ? 'PM' : undefined, startTime: payload.startTime, endTime: payload.endTime, overwrite }));
+      await runWithAppLoading(() => post('/bookings', {
+        deskId,
+        userEmail: selectedEmployeeEmail,
+        bookedFor: payload.bookedFor,
+        guestName: payload.bookedFor === 'GUEST' ? payload.guestName : undefined,
+        date: payload.date,
+        daySlot: payload.slot === 'FULL_DAY' ? 'FULL' : payload.slot === 'MORNING' ? 'AM' : payload.slot === 'AFTERNOON' ? 'PM' : undefined,
+        startTime: payload.startTime,
+        endTime: payload.endTime,
+        overwrite
+      }));
       toast.success(overwrite ? 'Umbuchung durchgeführt.' : 'Gebucht', { deskId });
       return;
     }
@@ -1651,7 +1661,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
         daySlot: manageTargetSlot === 'FULL_DAY' ? 'FULL' : manageTargetSlot === 'MORNING' ? 'AM' : 'PM',
         slot: manageTargetSlot
       }));
-      await submitPopupBooking(popupDesk.id, { type: 'single', date: selectedDate, slot: manageTargetSlot }, true);
+      await submitPopupBooking(popupDesk.id, { type: 'single', date: selectedDate, slot: manageTargetSlot, bookedFor: 'SELF' }, true);
       await reloadBookings();
       setBookingVersion((value) => value + 1);
       setIsManageEditOpen(false);
@@ -1701,6 +1711,8 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
         const body = {
           deskId: popupDesk.id,
           userEmail: selectedEmployeeEmail,
+          bookedFor: payload.bookedFor,
+          guestName: payload.bookedFor === 'GUEST' ? payload.guestName : undefined,
           date: payload.date,
           startTime: payload.startTime,
           endTime: payload.endTime,

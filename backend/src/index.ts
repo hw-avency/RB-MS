@@ -2,7 +2,7 @@ import cors from 'cors';
 import express from 'express';
 import crypto from 'crypto';
 import bcrypt from 'bcryptjs';
-import { BookingSlot, DaySlot, Prisma, ResourceKind } from '@prisma/client';
+import { BookedFor, BookingSlot, DaySlot, Prisma, ResourceKind } from '@prisma/client';
 import { prisma } from './prisma';
 
 const app = express();
@@ -70,11 +70,24 @@ app.use((req, res, next) => {
 
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const RESOURCE_KINDS = new Set<ResourceKind>(['TISCH', 'PARKPLATZ', 'RAUM', 'SONSTIGES']);
+const BOOKED_FOR_VALUES = new Set<BookedFor>(['SELF', 'GUEST']);
 
 const parseResourceKind = (value: unknown): ResourceKind | null => {
   if (typeof value !== 'string') return null;
   const normalized = value.trim().toUpperCase() as ResourceKind;
   return RESOURCE_KINDS.has(normalized) ? normalized : null;
+};
+
+const parseBookedFor = (value: unknown): BookedFor => {
+  if (typeof value !== 'string') return 'SELF';
+  const normalized = value.trim().toUpperCase() as BookedFor;
+  return BOOKED_FOR_VALUES.has(normalized) ? normalized : 'SELF';
+};
+
+const normalizeGuestName = (value: unknown): string | null => {
+  if (typeof value !== 'string') return null;
+  const normalized = value.trim();
+  return normalized.length > 0 ? normalized : null;
 };
 
 type EmployeeRole = 'admin' | 'user';
@@ -784,6 +797,7 @@ const hashPassword = async (value: string): Promise<string> => bcrypt.hash(value
 type BookingTx = Prisma.TransactionClient;
 type BookingIdentity = { normalizedEmail: string; userKey: string; entraOid: string | null; emailAliases: string[] };
 type BookingWithDeskContext = Prisma.BookingGetPayload<{ include: { desk: { select: { name: true; kind: true } } } }>;
+type BookingWithCreator = Prisma.BookingGetPayload<{ include: { createdBy: { select: { id: true; displayName: true; email: true } } } }>;
 
 const bookingUserKeyForDate = (userKey: string, date: Date): string => `booking:user:${userKey}:date:${toISODateOnly(date)}`;
 const bookingDeskKeyForDate = (deskId: string, date: Date): string => `booking:desk:${deskId}:date:${toISODateOnly(date)}`;
@@ -830,14 +844,31 @@ const findOverlappingBooking = async (tx: BookingTx, params: {
   }) ?? null;
 };
 
-const findDuplicateUserDateGroups = (bookings: Array<{ id: string; userEmail: string; date: Date; desk: { kind: ResourceKind } }>) => {
+const findDuplicateUserDateGroups = (bookings: Array<{ id: string; userEmail: string | null; date: Date; desk: { kind: ResourceKind } }>) => {
   const counts = new Map<string, number>();
   for (const booking of bookings) {
+    if (!booking.userEmail) continue;
     const key = `${normalizeEmail(booking.userEmail)}|${toISODateOnly(booking.date)}|${booking.desk.kind}`;
     counts.set(key, (counts.get(key) ?? 0) + 1);
   }
   return Array.from(counts.entries()).filter(([, count]) => count > 1);
 };
+
+const mapBookingResponse = (booking: BookingWithCreator) => ({
+  id: booking.id,
+  deskId: booking.deskId,
+  userEmail: booking.userEmail,
+  bookedFor: booking.bookedFor,
+  guestName: booking.guestName,
+  createdBy: booking.createdBy,
+  createdByUserId: booking.createdByUserId,
+  date: booking.date,
+  daySlot: booking.daySlot,
+  slot: booking.slot,
+  startTime: minuteToHHMM(booking.startMinute ?? (booking.startTime ? booking.startTime.getUTCHours() * 60 + booking.startTime.getUTCMinutes() : null)) ?? null,
+  endTime: minuteToHHMM(booking.endMinute ?? (booking.endTime ? booking.endTime.getUTCHours() * 60 + booking.endTime.getUTCMinutes() : null)) ?? null,
+  createdAt: booking.createdAt
+});
 
 const getEmployeePhotoUrl = (employeeId: string): string => `/employees/${employeeId}/photo`;
 
@@ -1859,10 +1890,45 @@ app.get('/floorplans/:id/desks', async (req, res) => {
 });
 
 app.post('/bookings', async (req, res) => {
-  const { deskId, userEmail, date, replaceExisting, overwrite, daySlot, slot, startTime, endTime } = req.body as { deskId?: string; userEmail?: string; date?: string; replaceExisting?: boolean; overwrite?: boolean; daySlot?: string; slot?: string; startTime?: string; endTime?: string };
+  const { deskId, userEmail, date, replaceExisting, overwrite, daySlot, slot, startTime, endTime, bookedFor, guestName } = req.body as {
+    deskId?: string;
+    userEmail?: string;
+    date?: string;
+    replaceExisting?: boolean;
+    overwrite?: boolean;
+    daySlot?: string;
+    slot?: string;
+    startTime?: string;
+    endTime?: string;
+    bookedFor?: string;
+    guestName?: string;
+  };
 
-  if (!deskId || !userEmail || !date) {
-    res.status(400).json({ error: 'validation', message: 'deskId, userEmail and date are required' });
+  if (!deskId || !date) {
+    res.status(400).json({ error: 'validation', message: 'deskId and date are required' });
+    return;
+  }
+
+  const currentUser = req.authUser;
+  if (!currentUser) {
+    res.status(401).json({ error: 'unauthorized', message: 'Authentication required' });
+    return;
+  }
+
+  const bookingMode = parseBookedFor(bookedFor);
+  const normalizedGuestName = normalizeGuestName(guestName);
+  if (bookingMode === 'GUEST') {
+    if (!normalizedGuestName || normalizedGuestName.length < 2) {
+      res.status(400).json({ error: 'validation', message: 'guestName muss mindestens 2 Zeichen haben.' });
+      return;
+    }
+  } else if (normalizedGuestName) {
+    res.status(400).json({ error: 'validation', message: 'guestName is only allowed for guest bookings' });
+    return;
+  }
+
+  if (bookingMode === 'SELF' && !userEmail) {
+    res.status(400).json({ error: 'validation', message: 'userEmail is required for SELF bookings' });
     return;
   }
 
@@ -1885,30 +1951,33 @@ app.post('/bookings', async (req, res) => {
   }
 
   const bookingWindow = bookingWindowResult.value;
-  const identity = await findBookingIdentity(userEmail);
   const shouldReplaceExisting = overwrite ?? replaceExisting ?? false;
+  const identity = bookingMode === 'SELF' ? await findBookingIdentity(userEmail ?? '') : null;
 
   const result = await prisma.$transaction(async (tx) => {
-    await acquireBookingLock(tx, bookingUserKeyForDate(identity.userKey, parsedDate));
+    if (identity) {
+      await acquireBookingLock(tx, bookingUserKeyForDate(identity.userKey, parsedDate));
+    }
     await acquireBookingLock(tx, bookingDeskKeyForDate(deskId, parsedDate));
 
-    const userKindBookings = await tx.booking.findMany({
-      where: {
-        date: parsedDate,
-        userEmail: { in: identity.emailAliases },
-        desk: { kind: desk.kind }
-      },
-      include: { desk: { select: { name: true, kind: true } } },
-      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }]
-    });
+    const conflictingUserBookings = identity
+      ? (await tx.booking.findMany({
+        where: {
+          date: parsedDate,
+          bookedFor: 'SELF',
+          userEmail: { in: identity.emailAliases },
+          desk: { kind: desk.kind }
+        },
+        include: { desk: { select: { name: true, kind: true } } },
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }]
+      })).filter((booking) => {
+        const candidateWindow = bookingToWindow(booking);
+        return candidateWindow ? windowsOverlap(bookingWindow, candidateWindow) : false;
+      })
+      : [];
 
-    const conflictingUserBookings = userKindBookings.filter((booking) => {
-      const candidateWindow = bookingToWindow(booking);
-      return candidateWindow ? windowsOverlap(bookingWindow, candidateWindow) : false;
-    });
     const existingUserBooking = conflictingUserBookings[0] ?? null;
-
-    if (existingUserBooking && existingUserBooking.deskId !== deskId && !shouldReplaceExisting) {
+    if (identity && existingUserBooking && existingUserBooking.deskId !== deskId && !shouldReplaceExisting) {
       return {
         kind: 'conflict' as const,
         message: 'User already has a booking for this date and resource kind',
@@ -1920,31 +1989,6 @@ app.post('/bookings', async (req, res) => {
             deskName: existingUserBooking.desk?.name ?? existingUserBooking.deskId,
             daySlot: existingUserBooking.daySlot ?? bookingSlotToDaySlot(existingUserBooking.slot)
           },
-          requestedDesk: {
-            id: deskId,
-            name: desk.name
-          },
-          date
-        }
-      };
-    }
-
-    if (bookingWindow.mode === 'day' && conflictingUserBookings.some((booking) => booking.deskId === deskId) && !shouldReplaceExisting) {
-      return { kind: 'ok' as const, status: 200, booking: conflictingUserBookings.find((booking) => booking.deskId === deskId)! };
-    }
-
-    if (bookingWindow.mode === 'day' && conflictingUserBookings.length > 0 && !shouldReplaceExisting) {
-      return {
-        kind: 'conflict' as const,
-        message: 'User already has a booking for this date and resource kind',
-        details: {
-          conflictKind: desk.kind,
-          existingBooking: {
-            id: existingUserBooking?.id,
-            deskId: existingUserBooking?.deskId,
-            deskName: existingUserBooking?.desk?.name ?? existingUserBooking?.deskId,
-            daySlot: existingUserBooking?.daySlot ?? bookingSlotToDaySlot(existingUserBooking?.slot)
-          },
           requestedDesk: { id: deskId, name: desk.name },
           date
         }
@@ -1955,46 +1999,24 @@ app.post('/bookings', async (req, res) => {
     const deskBookings = await tx.booking.findMany({ where: { deskId, date: parsedDate }, orderBy: [{ createdAt: 'desc' }] });
     const targetDeskBooking = deskBookings.find((candidate) => {
       const candidateWindow = bookingToWindow(candidate);
-      return candidateWindow
-        ? windowsOverlap(bookingWindow, candidateWindow) && !ignoredBookingIds.has(candidate.id)
-        : false;
+      return candidateWindow ? windowsOverlap(bookingWindow, candidateWindow) && !ignoredBookingIds.has(candidate.id) : false;
     });
 
     if (targetDeskBooking) {
-      return {
-        kind: 'conflict' as const,
-        message: 'Desk is already booked for this Zeitraum',
-        details: { deskId, date, bookingId: targetDeskBooking.id }
-      };
+      return { kind: 'conflict' as const, message: 'Desk is already booked for this Zeitraum', details: { deskId, date, bookingId: targetDeskBooking.id } };
     }
 
-    if (bookingWindow.mode === 'day' && shouldReplaceExisting && conflictingUserBookings.length > 0) {
+    if (identity && bookingWindow.mode === 'day' && shouldReplaceExisting && conflictingUserBookings.length > 0) {
       await tx.booking.deleteMany({ where: { id: { in: conflictingUserBookings.map((booking) => booking.id) } } });
-    } else if (existingUserBooking && bookingWindow.mode === 'time') {
-      if (existingUserBooking.deskId === deskId && existingUserBooking.userEmail === identity.normalizedEmail) {
-        return { kind: 'ok' as const, status: 200, booking: existingUserBooking };
-      }
-
-      const updated = await tx.booking.update({
-        where: { id: existingUserBooking.id },
-        data: {
-          deskId,
-          userEmail: identity.normalizedEmail,
-          daySlot: null,
-          startTime: new Date(Date.UTC(parsedDate.getUTCFullYear(), parsedDate.getUTCMonth(), parsedDate.getUTCDate(), Math.floor(bookingWindow.startMinute / 60), bookingWindow.startMinute % 60, 0, 0)),
-          endTime: new Date(Date.UTC(parsedDate.getUTCFullYear(), parsedDate.getUTCMonth(), parsedDate.getUTCDate(), Math.floor(bookingWindow.endMinute / 60), bookingWindow.endMinute % 60, 0, 0)),
-          slot: 'CUSTOM',
-          startMinute: bookingWindow.startMinute,
-          endMinute: bookingWindow.endMinute
-        }
-      });
-      return { kind: 'ok' as const, status: 200, booking: updated };
     }
 
     const created = await tx.booking.create({
       data: {
         deskId,
-        userEmail: identity.normalizedEmail,
+        userEmail: identity?.normalizedEmail ?? null,
+        bookedFor: bookingMode,
+        guestName: bookingMode === 'GUEST' ? normalizedGuestName : null,
+        createdByUserId: currentUser.id,
         date: parsedDate,
         daySlot: bookingWindow.mode === 'day' ? bookingWindow.daySlot : null,
         startTime: bookingWindow.mode === 'time' ? new Date(Date.UTC(parsedDate.getUTCFullYear(), parsedDate.getUTCMonth(), parsedDate.getUTCDate(), Math.floor(bookingWindow.startMinute / 60), bookingWindow.startMinute % 60, 0, 0)) : null,
@@ -2002,7 +2024,8 @@ app.post('/bookings', async (req, res) => {
         slot: bookingWindow.mode === 'day' ? (bookingWindow.daySlot === 'FULL' ? 'FULL_DAY' : bookingWindow.daySlot === 'AM' ? 'MORNING' : 'AFTERNOON') : 'CUSTOM',
         startMinute: bookingWindow.mode === 'time' ? bookingWindow.startMinute : null,
         endMinute: bookingWindow.mode === 'time' ? bookingWindow.endMinute : null
-      }
+      },
+      include: { createdBy: { select: { id: true, displayName: true, email: true } } }
     });
 
     return { kind: 'ok' as const, status: 201, booking: created };
@@ -2013,12 +2036,13 @@ app.post('/bookings', async (req, res) => {
     return;
   }
 
-  res.status(result.status).json(result.booking);
+  res.status(result.status).json(mapBookingResponse(result.booking));
 });
+
 
 app.put('/bookings/:id', async (req, res) => {
   const id = getRouteId(req.params.id);
-  const { deskId, date } = req.body as { deskId?: string; date?: string };
+  const { deskId, date, daySlot, slot, startTime, endTime, guestName } = req.body as { deskId?: string; date?: string; daySlot?: string; slot?: string; startTime?: string; endTime?: string; guestName?: string };
   if (!id || !deskId) {
     res.status(400).json({ error: 'validation', message: 'id and deskId are required' });
     return;
@@ -2039,7 +2063,7 @@ app.put('/bookings/:id', async (req, res) => {
   }
 
   const authEmail = req.authUser?.email;
-  if (req.authUser?.role !== 'admin' && existing.userEmail !== authEmail) {
+  if (req.authUser?.role !== 'admin' && existing.userEmail !== authEmail && existing.createdByUserId !== req.authUser?.id) {
     res.status(403).json({ error: 'forbidden', message: 'Cannot update booking of another user' });
     return;
   }
@@ -2057,14 +2081,44 @@ app.put('/bookings/:id', async (req, res) => {
     return;
   }
 
-  const conflict = await prisma.booking.findFirst({ where: { deskId, date: bookingDate, slot: existing.slot } });
-  if (conflict && conflict.id !== existing.id) {
+  const bookingWindowResult = resolveBookingWindow({ deskKind: nextDesk.kind, daySlot: typeof daySlot === 'undefined' ? (existing.daySlot ?? bookingSlotToDaySlot(existing.slot)) : daySlot, slot: typeof slot === 'undefined' ? existing.slot : slot, startTime: typeof startTime === 'undefined' ? minuteToHHMM(existing.startMinute) : startTime, endTime: typeof endTime === 'undefined' ? minuteToHHMM(existing.endMinute) : endTime });
+  if (!bookingWindowResult.ok) {
+    res.status(400).json({ error: 'validation', message: bookingWindowResult.message });
+    return;
+  }
+
+  const nextGuestName = existing.bookedFor === 'GUEST' ? normalizeGuestName(typeof guestName === 'undefined' ? existing.guestName : guestName) : null;
+  if (existing.bookedFor === 'GUEST' && (!nextGuestName || nextGuestName.length < 2)) {
+    res.status(400).json({ error: 'validation', message: 'guestName muss mindestens 2 Zeichen haben.' });
+    return;
+  }
+
+  const nextWindow = bookingWindowResult.value;
+  const conflicts = await prisma.booking.findMany({ where: { deskId, date: bookingDate, id: { not: existing.id } }, orderBy: [{ createdAt: 'desc' }] });
+  const conflict = conflicts.find((candidate) => {
+    const candidateWindow = bookingToWindow(candidate);
+    return candidateWindow ? windowsOverlap(nextWindow, candidateWindow) : false;
+  });
+  if (conflict) {
     sendConflict(res, 'Desk is already booked for this date', { deskId, date: toISODateOnly(bookingDate), bookingId: conflict.id });
     return;
   }
 
-  const updated = await prisma.booking.update({ where: { id }, data: { deskId } });
-  res.status(200).json(updated);
+  const updated = await prisma.booking.update({
+    where: { id },
+    data: {
+      deskId,
+      guestName: nextGuestName,
+      daySlot: nextWindow.mode === 'day' ? nextWindow.daySlot : null,
+      startMinute: nextWindow.mode === 'time' ? nextWindow.startMinute : null,
+      endMinute: nextWindow.mode === 'time' ? nextWindow.endMinute : null,
+      startTime: nextWindow.mode === 'time' ? new Date(Date.UTC(bookingDate.getUTCFullYear(), bookingDate.getUTCMonth(), bookingDate.getUTCDate(), Math.floor(nextWindow.startMinute / 60), nextWindow.startMinute % 60, 0, 0)) : null,
+      endTime: nextWindow.mode === 'time' ? new Date(Date.UTC(bookingDate.getUTCFullYear(), bookingDate.getUTCMonth(), bookingDate.getUTCDate(), Math.floor(nextWindow.endMinute / 60), nextWindow.endMinute % 60, 0, 0)) : null,
+      slot: nextWindow.mode === 'day' ? (nextWindow.daySlot === 'FULL' ? 'FULL_DAY' : nextWindow.daySlot === 'AM' ? 'MORNING' : 'AFTERNOON') : 'CUSTOM'
+    },
+    include: { createdBy: { select: { id: true, displayName: true, email: true } } }
+  });
+  res.status(200).json(mapBookingResponse(updated));
 });
 
 app.delete('/bookings/:id', async (req, res) => {
@@ -2090,7 +2144,7 @@ app.delete('/bookings/:id', async (req, res) => {
     }
 
     const authEmail = req.authUser?.email;
-    if (req.authUser?.role !== 'admin' && existing.userEmail !== authEmail) {
+    if (req.authUser?.role !== 'admin' && existing.userEmail !== authEmail && existing.createdByUserId !== req.authUser?.id) {
       console.warn('BOOKING_CANCEL', { requestId, userId, bookingId: id, resourceType: existing.desk?.kind ?? null, status: 403, error: 'Cannot cancel booking of another user' });
       res.status(403).json({ error: 'forbidden', message: 'Cannot cancel booking of another user' });
       return;
@@ -2333,7 +2387,7 @@ app.post('/bookings/range', async (req, res) => {
         continue;
       }
 
-      await tx.booking.create({ data: { deskId, userEmail: identity.normalizedEmail, date: targetDate } });
+      await tx.booking.create({ data: { deskId, userEmail: identity.normalizedEmail, createdByUserId: req.authUser?.id ?? '', bookedFor: 'SELF', guestName: null, date: targetDate } });
       createdCount += 1;
     }
 
@@ -2401,8 +2455,8 @@ app.get('/bookings', async (req, res) => {
     where.desk = { floorplanId };
   }
 
-  if (req.authUser?.role !== 'admin') {
-    where.userEmail = req.authUser?.email;
+  if (req.authUser?.role !== 'admin' && req.authUser?.id) {
+    where.createdByUserId = req.authUser.id;
   }
 
   const bookings = await prisma.booking.findMany({
@@ -2411,6 +2465,9 @@ app.get('/bookings', async (req, res) => {
       id: true,
       deskId: true,
       userEmail: true,
+      bookedFor: true,
+      guestName: true,
+      createdByUserId: true,
       date: true,
       daySlot: true,
       startTime: true,
@@ -2419,6 +2476,7 @@ app.get('/bookings', async (req, res) => {
       startMinute: true,
       endMinute: true,
       createdAt: true,
+      createdBy: { select: { id: true, displayName: true, email: true } },
       desk: { select: { kind: true } }
     },
     orderBy: [{ date: 'asc' }, { createdAt: 'asc' }]
@@ -2431,20 +2489,24 @@ app.get('/bookings', async (req, res) => {
     }
   }
 
-  const employeesByEmail = await getActiveEmployeesByEmail(bookings.map((booking) => booking.userEmail));
+  const employeesByEmail = await getActiveEmployeesByEmail(bookings.map((booking) => booking.userEmail).filter((email): email is string => Boolean(email)));
   const enrichedBookings = bookings.map((booking) => ({
     id: booking.id,
     deskId: booking.deskId,
     userEmail: booking.userEmail,
+    bookedFor: booking.bookedFor,
+    guestName: booking.guestName,
+    createdByUserId: booking.createdByUserId,
+    createdBy: booking.createdBy,
     date: booking.date,
     createdAt: booking.createdAt,
     daySlot: booking.daySlot ?? bookingSlotToDaySlot(booking.slot),
     slot: booking.slot,
     startTime: minuteToHHMM(booking.startMinute ?? (booking.startTime ? booking.startTime.getUTCHours() * 60 + booking.startTime.getUTCMinutes() : null)),
     endTime: minuteToHHMM(booking.endMinute ?? (booking.endTime ? booking.endTime.getUTCHours() * 60 + booking.endTime.getUTCMinutes() : null)),
-    employeeId: employeesByEmail.get(normalizeEmail(booking.userEmail))?.id,
-    userDisplayName: employeesByEmail.get(normalizeEmail(booking.userEmail))?.displayName,
-    userPhotoUrl: employeesByEmail.get(normalizeEmail(booking.userEmail))?.photoUrl ?? undefined
+    employeeId: booking.userEmail ? employeesByEmail.get(normalizeEmail(booking.userEmail))?.id : undefined,
+    userDisplayName: booking.userEmail ? employeesByEmail.get(normalizeEmail(booking.userEmail))?.displayName : undefined,
+    userPhotoUrl: booking.userEmail ? (employeesByEmail.get(normalizeEmail(booking.userEmail))?.photoUrl ?? undefined) : undefined
   }));
 
   res.status(200).json(enrichedBookings);
@@ -2477,10 +2539,13 @@ app.get('/occupancy', async (req, res) => {
       date: parsedDate,
       deskId: { in: deskIds }
     },
+    include: {
+      createdBy: { select: { id: true, displayName: true, email: true } }
+    },
     orderBy: [{ createdAt: 'asc' }]
   });
 
-  const employeesByEmail = await getActiveEmployeesByEmail(singleBookings.map((booking) => booking.userEmail));
+  const employeesByEmail = await getActiveEmployeesByEmail(singleBookings.map((booking) => booking.userEmail).filter((email): email is string => Boolean(email)));
   const bookingsByDeskId = new Map<string, typeof singleBookings>();
   for (const booking of singleBookings) {
     bookingsByDeskId.set(booking.deskId, [...(bookingsByDeskId.get(booking.deskId) ?? []), booking]);
@@ -2491,9 +2556,13 @@ app.get('/occupancy', async (req, res) => {
     const normalizedBookings = deskBookings.map((booking) => ({
       id: booking.id,
       userEmail: booking.userEmail,
-      employeeId: employeesByEmail.get(normalizeEmail(booking.userEmail))?.id,
-      userDisplayName: employeesByEmail.get(normalizeEmail(booking.userEmail))?.displayName,
-      userPhotoUrl: employeesByEmail.get(normalizeEmail(booking.userEmail))?.photoUrl ?? undefined,
+      bookedFor: booking.bookedFor,
+      guestName: booking.guestName,
+      createdBy: booking.createdBy,
+      createdByUserId: booking.createdByUserId,
+      employeeId: booking.userEmail ? employeesByEmail.get(normalizeEmail(booking.userEmail))?.id : undefined,
+      userDisplayName: booking.userEmail ? employeesByEmail.get(normalizeEmail(booking.userEmail))?.displayName : undefined,
+      userPhotoUrl: booking.userEmail ? (employeesByEmail.get(normalizeEmail(booking.userEmail))?.photoUrl ?? undefined) : undefined,
       deskName: desk.name,
       deskId: desk.id,
       type: 'single' as const,
@@ -2522,6 +2591,9 @@ app.get('/occupancy', async (req, res) => {
   const uniquePeopleByEmail = new Map<string, { email: string; userEmail: string; displayName?: string; photoUrl?: string; deskName?: string; deskId?: string }>();
   occupancyDesks.forEach((desk) => {
     for (const booking of desk.bookings ?? []) {
+      if (booking.bookedFor !== 'SELF') {
+        continue;
+      }
       const userEmail = booking.userEmail ?? '';
       const normalizedEmail = normalizeEmail(userEmail);
       if (!userEmail || uniquePeopleByEmail.has(normalizedEmail)) {
@@ -2589,6 +2661,7 @@ app.get('/resources/:resourceId/availability', async (req, res) => {
       startTime: { lt: dayEndUtc },
       endTime: { gt: dayStartUtc }
     },
+    include: { createdBy: { select: { id: true, displayName: true, email: true } } },
     orderBy: [{ startTime: 'asc' }, { createdAt: 'asc' }]
   });
 
@@ -2601,7 +2674,7 @@ app.get('/resources/:resourceId/availability', async (req, res) => {
     bookingsCount: bookings.length
   });
 
-  const employeesByEmail = await getActiveEmployeesByEmail(bookings.map((booking) => booking.userEmail));
+  const employeesByEmail = await getActiveEmployeesByEmail(bookings.map((booking) => booking.userEmail).filter((email): email is string => Boolean(email)));
   const mappedBookings = bookings.map((booking) => ({
     id: booking.id,
     resourceId,
@@ -2610,10 +2683,14 @@ app.get('/resources/:resourceId/availability', async (req, res) => {
     end: booking.endTime?.toISOString() ?? null,
     startTime: minuteToHHMM(booking.startMinute ?? (booking.startTime ? booking.startTime.getUTCHours() * 60 + booking.startTime.getUTCMinutes() : null)),
     endTime: minuteToHHMM(booking.endMinute ?? (booking.endTime ? booking.endTime.getUTCHours() * 60 + booking.endTime.getUTCMinutes() : null)),
-    createdBy: booking.userEmail,
+    bookedFor: booking.bookedFor,
+    guestName: booking.guestName,
+    createdBy: booking.createdBy,
     user: {
       email: booking.userEmail,
-      name: employeesByEmail.get(normalizeEmail(booking.userEmail))?.displayName ?? booking.userEmail
+      name: booking.bookedFor === 'GUEST'
+        ? `Gast: ${booking.guestName ?? 'Unbekannt'}`
+        : (booking.userEmail ? (employeesByEmail.get(normalizeEmail(booking.userEmail))?.displayName ?? booking.userEmail) : 'Unbekannt')
     }
   }));
 
@@ -2736,7 +2813,7 @@ app.post('/recurring-bookings', async (req, res) => {
         continue;
       }
 
-      await tx.booking.create({ data: { deskId, userEmail: identity.normalizedEmail, date: targetDate } });
+      await tx.booking.create({ data: { deskId, userEmail: identity.normalizedEmail, createdByUserId: req.authUser?.id ?? '', bookedFor: 'SELF', guestName: null, date: targetDate } });
       createdCount += 1;
     }
 
@@ -2895,7 +2972,7 @@ app.post('/recurring-bookings/bulk', async (req, res) => {
         continue;
       }
 
-      await tx.booking.create({ data: { deskId, userEmail: identity.normalizedEmail, date: targetDate } });
+      await tx.booking.create({ data: { deskId, userEmail: identity.normalizedEmail, createdByUserId: req.authUser?.id ?? '', bookedFor: 'SELF', guestName: null, date: targetDate } });
       createdCount += 1;
     }
 
@@ -3343,7 +3420,7 @@ app.get('/admin/bookings', requireAdmin, async (req, res) => {
     }
   }
 
-  const employeesByEmail = await getActiveEmployeesByEmail(bookings.map((booking) => booking.userEmail));
+  const employeesByEmail = await getActiveEmployeesByEmail(bookings.map((booking) => booking.userEmail).filter((email): email is string => Boolean(email)));
   const enrichedBookings = bookings.map((booking) => ({
     id: booking.id,
     deskId: booking.deskId,
@@ -3354,8 +3431,8 @@ app.get('/admin/bookings', requireAdmin, async (req, res) => {
     slot: booking.slot,
     startTime: minuteToHHMM(booking.startMinute ?? (booking.startTime ? booking.startTime.getUTCHours() * 60 + booking.startTime.getUTCMinutes() : null)),
     endTime: minuteToHHMM(booking.endMinute ?? (booking.endTime ? booking.endTime.getUTCHours() * 60 + booking.endTime.getUTCMinutes() : null)),
-    employeeId: employeesByEmail.get(normalizeEmail(booking.userEmail))?.id,
-    userDisplayName: employeesByEmail.get(normalizeEmail(booking.userEmail))?.displayName
+    employeeId: booking.userEmail ? employeesByEmail.get(normalizeEmail(booking.userEmail))?.id : undefined,
+    userDisplayName: booking.userEmail ? employeesByEmail.get(normalizeEmail(booking.userEmail))?.displayName : undefined
   }));
 
   res.status(200).json(enrichedBookings);
@@ -3379,7 +3456,7 @@ app.post('/admin/bookings/cleanup-duplicates', requireAdmin, async (_req, res) =
       orderBy: [{ date: 'asc' }, { createdAt: 'desc' }, { id: 'desc' }]
     });
 
-    const emails = Array.from(new Set(bookings.map((booking) => normalizeEmail(booking.userEmail))));
+    const emails = Array.from(new Set(bookings.map((booking) => booking.userEmail).filter((email): email is string => Boolean(email)).map((email) => normalizeEmail(email))));
     const employees = emails.length > 0
       ? await tx.employee.findMany({ where: { email: { in: emails } }, select: { email: true, entraOid: true } })
       : [];
@@ -3389,6 +3466,7 @@ app.post('/admin/bookings/cleanup-duplicates', requireAdmin, async (_req, res) =
     const duplicatesToDelete: string[] = [];
 
     for (const booking of bookings) {
+      if (!booking.userEmail) continue;
       const normalizedEmail = normalizeEmail(booking.userEmail);
       const key = `${entraByEmail.get(normalizedEmail) ?? normalizedEmail}|${toISODateOnly(booking.date)}|${booking.desk.kind}`;
       if (!keepByKey.has(key)) {

@@ -16,10 +16,12 @@ export type BookingFormValues = {
   slot: BookingSlot;
   startTime: string;
   endTime: string;
+  bookedFor: 'SELF' | 'GUEST';
+  guestName: string;
 };
 
 export type BookingFormSubmitPayload =
-  | { type: 'single'; date: string; slot?: BookingSlot; startTime?: string; endTime?: string }
+  | { type: 'single'; date: string; slot?: BookingSlot; startTime?: string; endTime?: string; bookedFor: 'SELF' | 'GUEST'; guestName?: string }
   | { type: 'recurring'; dateFrom: string; dateTo: string; weekdays: number[] };
 
 export const createDefaultBookingFormValues = (selectedDate: string): BookingFormValues => {
@@ -32,7 +34,9 @@ export const createDefaultBookingFormValues = (selectedDate: string): BookingFor
     weekdays: [defaultWeekday],
     slot: 'FULL_DAY',
     startTime: '09:00',
-    endTime: '10:00'
+    endTime: '10:00',
+    bookedFor: 'SELF',
+    guestName: ''
   };
 };
 
@@ -80,13 +84,16 @@ export function BookingForm({ values, onChange, onSubmit, onCancel, isSubmitting
   }, [allowRecurring, isRoom, onChange, values]);
 
   const fieldErrors = useMemo(() => {
-    const nextErrors: { date?: string; dateFrom?: string; dateTo?: string; weekdays?: string; startTime?: string; endTime?: string } = {};
+    const nextErrors: { date?: string; dateFrom?: string; dateTo?: string; weekdays?: string; startTime?: string; endTime?: string; guestName?: string } = {};
 
     if (values.type === 'single' && !values.date) nextErrors.date = 'Datum ist erforderlich.';
     if (values.type === 'single' && isRoom) {
       if (!values.startTime) nextErrors.startTime = 'Startzeit ist erforderlich.';
       if (!values.endTime) nextErrors.endTime = 'Endzeit ist erforderlich.';
       if (values.startTime && values.endTime && values.startTime >= values.endTime) nextErrors.endTime = 'Endzeit muss nach Startzeit liegen.';
+    }
+    if (values.type === 'single' && values.bookedFor === 'GUEST' && values.guestName.trim().length < 2) {
+      nextErrors.guestName = 'Gastname ist erforderlich (mind. 2 Zeichen).';
     }
 
     if (values.type === 'recurring') {
@@ -121,8 +128,8 @@ export function BookingForm({ values, onChange, onSubmit, onCancel, isSubmitting
 
     const payload: BookingFormSubmitPayload = values.type === 'single'
       ? (isRoom
-        ? { type: 'single', date: values.date, startTime: values.startTime, endTime: values.endTime }
-        : { type: 'single', date: values.date, slot: values.slot })
+        ? { type: 'single', date: values.date, startTime: values.startTime, endTime: values.endTime, bookedFor: values.bookedFor, guestName: values.bookedFor === 'GUEST' ? values.guestName.trim() : undefined }
+        : { type: 'single', date: values.date, slot: values.slot, bookedFor: values.bookedFor, guestName: values.bookedFor === 'GUEST' ? values.guestName.trim() : undefined })
       : { type: 'recurring', dateFrom: values.dateFrom, dateTo: values.dateTo, weekdays: values.weekdays };
 
     await onSubmit(payload);
@@ -137,6 +144,21 @@ export function BookingForm({ values, onChange, onSubmit, onCancel, isSubmitting
 
   return (
     <form className="desk-booking-form" onSubmit={handleSubmit} onKeyDown={handleKeyDown}>
+      <div className="stack-xs">
+        <label>Buchung für</label>
+        <div className="weekday-toggle-group" role="group" aria-label="Buchung für">
+          <button type="button" className={`weekday-toggle ${values.bookedFor === 'SELF' ? 'active' : ''}`} disabled={disabled} onClick={() => onChange({ ...values, bookedFor: 'SELF', guestName: '' })}>Mich</button>
+          <button type="button" className={`weekday-toggle ${values.bookedFor === 'GUEST' ? 'active' : ''}`} disabled={disabled} onClick={() => onChange({ ...values, bookedFor: 'GUEST' })}>Gast</button>
+        </div>
+      </div>
+
+      {values.bookedFor === 'GUEST' && (
+        <div className="stack-xs">
+          <label htmlFor="guest-name">Name des Gastes</label>
+          <input id="guest-name" type="text" value={values.guestName} disabled={disabled} onChange={(event) => onChange({ ...values, guestName: event.target.value })} />
+          {fieldErrors.guestName && <p className="field-error" role="alert">{fieldErrors.guestName}</p>}
+        </div>
+      )}
       {!isRoom && (
         <div className="stack-xs">
           <label htmlFor="booking-type">Typ</label>

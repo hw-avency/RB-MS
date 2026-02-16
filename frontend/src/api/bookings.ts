@@ -11,6 +11,8 @@ type BookingMutationMeta = {
 type RoomCreatePayload = {
   deskId: string;
   userEmail: string;
+  bookedFor?: 'SELF' | 'GUEST';
+  guestName?: string;
   date: string;
   startTime?: string;
   endTime?: string;
