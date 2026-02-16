@@ -695,8 +695,8 @@ type DbTableMeta = {
 };
 
 type DbDelegate = {
-  findMany: (args: { take: number; skip: number; orderBy: { createdAt: 'desc' } | { id: 'desc' } }) => Promise<unknown[]>;
-  count: () => Promise<number>;
+  findMany: (args: { take: number; skip: number; orderBy: { createdAt: 'desc' } | { id: 'desc' }; where?: Record<string, unknown> }) => Promise<unknown[]>;
+  count: (args?: { where?: Record<string, unknown> }) => Promise<number>;
   create: (args: { data: Record<string, unknown> }) => Promise<unknown>;
   update: (args: { where: { id: string }; data: Record<string, unknown> }) => Promise<unknown>;
   delete: (args: { where: { id: string } }) => Promise<unknown>;
@@ -1538,10 +1538,13 @@ app.get('/admin/db/:table/rows', requireAdmin, async (req, res) => {
   const limit = Number.isNaN(rawLimit) ? 100 : Math.max(1, Math.min(250, rawLimit));
   const offset = Number.isNaN(rawOffset) ? 0 : Math.max(0, rawOffset);
   const orderBy = table.scalarFields.some((field) => field.name === 'createdAt') ? { createdAt: 'desc' as const } : { id: 'desc' as const };
+  const restrictedUserFilter = table.modelName === 'User' && ADMIN_EMAIL
+    ? { email: ADMIN_EMAIL }
+    : undefined;
 
   const [rows, total] = await Promise.all([
-    delegate.findMany({ take: limit, skip: offset, orderBy }),
-    delegate.count()
+    delegate.findMany({ take: limit, skip: offset, orderBy, where: restrictedUserFilter }),
+    delegate.count({ where: restrictedUserFilter })
   ]);
 
   res.json({ rows, total, limit, offset });

@@ -255,6 +255,9 @@ const DeskOverlay = memo(function DeskOverlay({ desks, selectedDeskId, hoveredDe
               }}
               onClick={(event) => {
                 event.stopPropagation();
+                if (!isClickable) {
+                  return;
+                }
                 onSelectDesk(desk.id, event.currentTarget);
               }}
               onPointerDown={(event) => {
@@ -265,6 +268,7 @@ const DeskOverlay = memo(function DeskOverlay({ desks, selectedDeskId, hoveredDe
                 onDeskDoubleClick?.(desk.id);
               }}
               tabIndex={0}
+              aria-disabled={!isClickable}
               title={bookings.length === 2 && !fullBooking ? '2 Buchungen' : undefined}
               data-debug-state={debugEnabled ? JSON.stringify({
                 resourceId: desk.id,
@@ -339,11 +343,11 @@ const DeskOverlay = memo(function DeskOverlay({ desks, selectedDeskId, hoveredDe
               return (
                 <>
                   {full ? (
-                    <span>Ganztägig: {getBookingPersonLabel(full)}</span>
+                    <span>Ganztägig: {getBookingPersonLabel(full)}{full.bookedFor === 'GUEST' ? ` · gebucht von ${full.createdBy?.displayName ?? full.createdBy?.name ?? 'Unbekannt'}` : ''}</span>
                   ) : (
                     <>
-                      {am && <span>Vormittag: {getBookingPersonLabel(am)}</span>}
-                      {pm && <span>Nachmittag: {getBookingPersonLabel(pm)}</span>}
+                      {am && <span>Vormittag: {getBookingPersonLabel(am)}{am.bookedFor === 'GUEST' ? ` · gebucht von ${am.createdBy?.displayName ?? am.createdBy?.name ?? 'Unbekannt'}` : ''}</span>}
+                      {pm && <span>Nachmittag: {getBookingPersonLabel(pm)}{pm.bookedFor === 'GUEST' ? ` · gebucht von ${pm.createdBy?.displayName ?? pm.createdBy?.name ?? 'Unbekannt'}` : ''}</span>}
                     </>
                   )}
                 </>
