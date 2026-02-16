@@ -8,8 +8,7 @@ type BookingFixture = {
   id: string;
   bookedFor: 'SELF' | 'GUEST';
   userEmail: string | null;
-  createdByUserId: string | null;
-  createdByEmail: string | null;
+  createdByEmployeeId: string;
   desk: { kind: 'RAUM' | 'TISCH' | 'PARKPLATZ' | 'SONSTIGES' };
 };
 
@@ -21,8 +20,7 @@ beforeEach(() => {
     id: 'booking-b-self',
     bookedFor: 'SELF',
     userEmail: 'user-b@example.com',
-    createdByUserId: 'user-b',
-    createdByEmail: 'user-b@example.com',
+    createdByEmployeeId: 'user-b',
     desk: { kind: 'RAUM' }
   });
 
@@ -30,8 +28,7 @@ beforeEach(() => {
     id: 'booking-a-guest',
     bookedFor: 'GUEST',
     userEmail: null,
-    createdByUserId: null,
-    createdByEmail: 'user-a@example.com',
+    createdByEmployeeId: 'user-a',
     desk: { kind: 'RAUM' }
   });
 
