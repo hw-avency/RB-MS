@@ -3,8 +3,10 @@ import { createPortal } from 'react-dom';
 import { normalizeDaySlotBookings } from './daySlotBookings';
 import { resourceKindLabel } from './resourceKinds';
 import { BOOKABLE_END, BOOKABLE_START, ROOM_WINDOW_TOTAL_MINUTES } from './lib/bookingWindows';
+import { formatMinutes } from './lib/bookingWindows';
 import { computeRoomOccupancy } from './lib/roomOccupancy';
 import { FloorplanFlatRenderer, FloorplanRect, ResolvedFlatResource } from './FloorplanFlatRenderer';
+import { RoomBusinessDayRing } from './components/RoomBusinessDayRing';
 
 type FloorplanBooking = {
   id?: string;
@@ -51,8 +53,7 @@ const PIN_VISUAL_SIZE = 36;
 const RING_RADIUS = 14.5;
 const RING_WIDTH = 5;
 const CENTER_SIZE = 28;
-const ROOM_RING_RADIUS = 19;
-const ROOM_RING_WIDTH = 4;
+const ROOM_RING_WIDTH = 8;
 const START_ANGLE = -90;
 const MAX_ROOM_MARKER_LABEL_LENGTH = 4;
 
@@ -110,19 +111,6 @@ const angleToPoint = (deg: number, radius: number): { x: number; y: number } => 
 const arcPath = (startDeg: number, endDeg: number, radius: number): string => {
   const start = angleToPoint(startDeg, radius);
   const end = angleToPoint(endDeg, radius);
-  const sweep = endDeg - startDeg;
-  const largeArc = Math.abs(sweep) > 180 ? 1 : 0;
-  return `M ${start.x} ${start.y} A ${radius} ${radius} 0 ${largeArc} 1 ${end.x} ${end.y}`;
-};
-
-const arcPathForSize = (size: number, startDeg: number, endDeg: number, radius: number): string => {
-  const toPoint = (deg: number): { x: number; y: number } => {
-    const radians = (deg * Math.PI) / 180;
-    return { x: size / 2 + radius * Math.cos(radians), y: size / 2 + radius * Math.sin(radians) };
-  };
-
-  const start = toPoint(startDeg);
-  const end = toPoint(endDeg);
   const sweep = endDeg - startDeg;
   const largeArc = Math.abs(sweep) > 180 ? 1 : 0;
   return `M ${start.x} ${start.y} A ${radius} ${radius} 0 ${largeArc} 1 ${end.x} ${end.y}`;
@@ -197,6 +185,13 @@ const DeskOverlay = memo(function DeskOverlay({ markers, selectedDeskId, hovered
           const roomSegments = roomOccupancy?.segments ?? [];
           const roomCoverage = roomOccupancy?.occupiedMinutes ?? 0;
           const isRoomFullyBooked = roomCoverage >= ROOM_WINDOW_TOTAL_MINUTES - 1;
+          const roomRingDebugTitle = debugEnabled && roomOccupancy
+            ? [
+                `business minutes booked: ${roomOccupancy.occupiedMinutes}`,
+                `segments: ${roomOccupancy.intervals.length > 0 ? roomOccupancy.intervals.map((interval) => `${formatMinutes(interval.startMin)}–${formatMinutes(interval.endMin)}`).join(', ') : '—'}`,
+                `percent booked: ${(roomOccupancy.occupiedRatio * 100).toFixed(1)}%`
+              ].join('\n')
+            : undefined;
           const amColor = slotColor(amBooking);
           const pmColor = slotColor(pmBooking);
           const hasUniformHalfDayColor = amColor === pmColor;
@@ -251,17 +246,12 @@ const DeskOverlay = memo(function DeskOverlay({ markers, selectedDeskId, hovered
               {shouldShowPulse && <div className="pulseHalo" aria-hidden="true" />}
               {isRoom ? (
                 <>
-                  <svg className="room-marker-ring" viewBox={`0 0 ${PIN_HITBOX_SIZE} ${PIN_HITBOX_SIZE}`} shapeRendering="geometricPrecision" aria-hidden="true">
-                    <circle cx={PIN_HITBOX_SIZE / 2} cy={PIN_HITBOX_SIZE / 2} r={ROOM_RING_RADIUS} className="pin-ring-track" style={{ strokeWidth: ROOM_RING_WIDTH }} />
-                    {roomSegments.map((segment) => (
-                      <path
-                        key={`${desk.id}-${segment.p0.toFixed(3)}-${segment.p1.toFixed(3)}`}
-                        d={arcPathForSize(PIN_HITBOX_SIZE, START_ANGLE + segment.p0 * 360, START_ANGLE + segment.p1 * 360, ROOM_RING_RADIUS)}
-                        className="pin-ring-arc"
-                        style={{ stroke: 'var(--resource-busy)', strokeWidth: ROOM_RING_WIDTH, strokeLinecap: 'round' }}
-                      />
-                    ))}
-                  </svg>
+                  <RoomBusinessDayRing
+                    segments={roomSegments}
+                    className="room-marker-ring"
+                    strokeWidth={ROOM_RING_WIDTH}
+                    debugTitle={roomRingDebugTitle}
+                  />
                 </>
               ) : (
                 <svg className="pin-ring-svg" viewBox={`0 0 ${PIN_VISUAL_SIZE} ${PIN_VISUAL_SIZE}`} shapeRendering="geometricPrecision" aria-hidden="true">

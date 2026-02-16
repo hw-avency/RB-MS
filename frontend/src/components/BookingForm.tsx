@@ -1,6 +1,6 @@
 import { FormEvent, KeyboardEvent, MouseEvent, useEffect, useMemo, useRef, useState } from 'react';
 import type { RingSegment } from '../lib/bookingWindows';
-import { OccupancyRing } from './OccupancyRing';
+import { RoomBusinessDayRing } from './RoomBusinessDayRing';
 
 type BookingType = 'single' | 'recurring';
 type BookingSlot = 'FULL_DAY' | 'MORNING' | 'AFTERNOON';
@@ -67,6 +67,7 @@ export function BookingForm({ values, onChange, onSubmit, onCancel, isSubmitting
     isFullyBooked?: boolean;
     conflictMessage?: string;
     debugInfo?: string[];
+    ringDebugTitle?: string;
     onSelectFreeSlot: (startTime: string, endTime: string) => void;
     onBookingClick?: (event: MouseEvent<HTMLButtonElement>, bookingId: string) => void;
   };
@@ -184,7 +185,12 @@ export function BookingForm({ values, onChange, onSubmit, onCancel, isSubmitting
               <section className="room-schedule-block stack-xs">
                 <div className="room-schedule-header">
                   <strong className="room-schedule-title">Heute belegt</strong>
-                  <OccupancyRing segments={roomSchedule?.occupiedSegments ?? []} />
+                  <RoomBusinessDayRing
+                    segments={roomSchedule?.occupiedSegments ?? []}
+                    className="room-schedule-ring"
+                    strokeWidth={12}
+                    debugTitle={roomSchedule?.ringDebugTitle}
+                  />
                 </div>
                 {hasCancelableRoomBooking && <p className="room-booking-hint">Tipp: Deine Buchungen kannst du anklicken, um sie zu stornieren.</p>}
                 {roomSchedule && roomSchedule.bookings.length > 0 ? (
