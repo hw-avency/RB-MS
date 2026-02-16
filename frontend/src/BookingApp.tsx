@@ -1,4 +1,4 @@
-import { MouseEvent, ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { MouseEvent, PointerEvent, ReactNode, WheelEvent, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { API_BASE, ApiError, checkBackendHealth, get, markBackendAvailable, post, put, resolveApiUrl } from './api';
 import { cancelBooking, createRoomBooking } from './api/bookings';
@@ -113,6 +113,9 @@ const FLOORPLAN_FIT_PADDING = 24;
 const FLOORPLAN_MIN_SCALE = 0.6;
 const FLOORPLAN_MAX_SCALE = 2.4;
 const FLOORPLAN_ZOOM_STEP = 1.1;
+const FLOORPLAN_DRAG_EPSILON = 0.001;
+
+const getFloorplanMinScale = (fitScale: number): number => Math.min(FLOORPLAN_MIN_SCALE, fitScale);
 
 const getCandidatePosition = (placement: PopupPlacement, anchorRect: DOMRect, popupWidth: number, popupHeight: number): { left: number; top: number } => {
   const anchorCenterX = anchorRect.left + anchorRect.width / 2;
@@ -504,7 +507,7 @@ function IconPlus() {
 }
 
 function IconReset() {
-  return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4a8 8 0 1 0 7.5 10.8" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" /><path d="M14 4h6v6" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>;
+  return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" /><path d="M3 4v5h5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>;
 }
 
 export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogout, currentUser }: { onOpenAdmin: () => void; canOpenAdmin: boolean; currentUserEmail?: string; onLogout: () => Promise<void>; currentUser: AuthUser }) {
@@ -528,6 +531,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
   const [floorplanImageSize, setFloorplanImageSize] = useState<FloorplanImageSize | null>(null);
   const [floorplanViewportSize, setFloorplanViewportSize] = useState<{ width: number; height: number }>({ width: 1, height: 1 });
   const [bookingVersion, setBookingVersion] = useState(0);
+  const [isFloorplanDragging, setIsFloorplanDragging] = useState(false);
 
   const [isBootstrapping, setIsBootstrapping] = useState(true);
   const [isUpdatingOccupancy, setIsUpdatingOccupancy] = useState(false);
@@ -576,6 +580,8 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
   const cancelDialogRef = useRef<HTMLElement | null>(null);
   const floorplanViewportRef = useRef<HTMLDivElement | null>(null);
   const hasFloorplanManualTransformRef = useRef(false);
+  const floorplanDragRef = useRef<{ pointerId: number; startX: number; startY: number; startTranslateX: number; startTranslateY: number; moved: boolean } | null>(null);
+  const floorplanSuppressClickRef = useRef(false);
   const availabilityCacheRef = useRef<Map<string, Map<string, DayAvailabilityTone>>>(new Map());
   const deskAnchorElementsRef = useRef<Map<string, HTMLElement>>(new Map());
 
@@ -644,7 +650,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
     if (!floorplanImageSize) return;
     const availableWidth = Math.max(1, floorplanViewportSize.width - FLOORPLAN_FIT_PADDING * 2);
     const availableHeight = Math.max(1, floorplanViewportSize.height - FLOORPLAN_FIT_PADDING * 2);
-    const fitScale = clamp(Math.min(availableWidth / floorplanImageSize.width, availableHeight / floorplanImageSize.height), FLOORPLAN_MIN_SCALE, FLOORPLAN_MAX_SCALE);
+    const fitScale = Math.min(Math.min(availableWidth / floorplanImageSize.width, availableHeight / floorplanImageSize.height), FLOORPLAN_MAX_SCALE);
     const fitTransform = {
       scale: fitScale,
       translateX: (floorplanViewportSize.width - floorplanImageSize.width * fitScale) / 2,
@@ -654,10 +660,12 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
     if (!hasFloorplanManualTransformRef.current) setFloorplanTransform(fitTransform);
   }, [floorplanImageSize, floorplanViewportSize.height, floorplanViewportSize.width]);
 
+  const floorplanMinScale = getFloorplanMinScale(floorplanInitialTransform.scale);
+
   const applyFloorplanZoom = useCallback((zoomDirection: 'in' | 'out') => {
     const factor = zoomDirection === 'in' ? FLOORPLAN_ZOOM_STEP : 1 / FLOORPLAN_ZOOM_STEP;
     setFloorplanTransform((current) => {
-      const nextScale = clamp(current.scale * factor, FLOORPLAN_MIN_SCALE, FLOORPLAN_MAX_SCALE);
+      const nextScale = clamp(current.scale * factor, floorplanMinScale, FLOORPLAN_MAX_SCALE);
       if (nextScale === current.scale) return current;
       const centerX = floorplanViewportSize.width / 2;
       const centerY = floorplanViewportSize.height / 2;
@@ -670,13 +678,96 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
         translateY: centerY - worldY * nextScale,
       };
     });
-  }, [floorplanViewportSize.height, floorplanViewportSize.width]);
+  }, [floorplanMinScale, floorplanViewportSize.height, floorplanViewportSize.width]);
+
+  const applyFloorplanZoomAtPoint = useCallback((factor: number, focalX: number, focalY: number) => {
+    setFloorplanTransform((current) => {
+      const nextScale = clamp(current.scale * factor, floorplanMinScale, FLOORPLAN_MAX_SCALE);
+      if (nextScale === current.scale) return current;
+      const worldX = (focalX - current.translateX) / current.scale;
+      const worldY = (focalY - current.translateY) / current.scale;
+      hasFloorplanManualTransformRef.current = true;
+      return {
+        scale: nextScale,
+        translateX: focalX - worldX * nextScale,
+        translateY: focalY - worldY * nextScale,
+      };
+    });
+  }, [floorplanMinScale]);
+
+  const canPanFloorplan = floorplanTransform.scale > floorplanInitialTransform.scale + FLOORPLAN_DRAG_EPSILON;
+
+  const stopFloorplanDragging = useCallback((pointerId?: number) => {
+    if (!floorplanDragRef.current) return;
+    if (typeof pointerId === 'number' && floorplanDragRef.current.pointerId !== pointerId) return;
+    if (floorplanViewportRef.current?.hasPointerCapture(floorplanDragRef.current.pointerId)) floorplanViewportRef.current.releasePointerCapture(floorplanDragRef.current.pointerId);
+    floorplanDragRef.current = null;
+    setIsFloorplanDragging(false);
+  }, []);
+
+  const handleFloorplanPointerDown = useCallback((event: PointerEvent<HTMLDivElement>) => {
+    if (!canPanFloorplan || event.button !== 0 || !floorplanViewportRef.current) return;
+    floorplanSuppressClickRef.current = false;
+    floorplanDragRef.current = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      startTranslateX: floorplanTransform.translateX,
+      startTranslateY: floorplanTransform.translateY,
+      moved: false,
+    };
+    floorplanViewportRef.current.setPointerCapture(event.pointerId);
+    setIsFloorplanDragging(true);
+  }, [canPanFloorplan, floorplanTransform.translateX, floorplanTransform.translateY]);
+
+  const handleFloorplanPointerMove = useCallback((event: PointerEvent<HTMLDivElement>) => {
+    if (!floorplanDragRef.current || floorplanDragRef.current.pointerId !== event.pointerId) return;
+    const drag = floorplanDragRef.current;
+    const deltaX = event.clientX - drag.startX;
+    const deltaY = event.clientY - drag.startY;
+    if (Math.abs(deltaX) + Math.abs(deltaY) > 3) {
+      drag.moved = true;
+      floorplanSuppressClickRef.current = true;
+    }
+    hasFloorplanManualTransformRef.current = true;
+    setFloorplanTransform((current) => ({
+      ...current,
+      translateX: drag.startTranslateX + deltaX,
+      translateY: drag.startTranslateY + deltaY,
+    }));
+  }, []);
+
+  const handleFloorplanPointerUp = useCallback((event: PointerEvent<HTMLDivElement>) => {
+    stopFloorplanDragging(event.pointerId);
+  }, [stopFloorplanDragging]);
+
+  const handleFloorplanPointerCancel = useCallback((event: PointerEvent<HTMLDivElement>) => {
+    stopFloorplanDragging(event.pointerId);
+  }, [stopFloorplanDragging]);
+
+
+  const handleFloorplanClickCapture = useCallback((event: MouseEvent<HTMLDivElement>) => {
+    if (!floorplanSuppressClickRef.current) return;
+    floorplanSuppressClickRef.current = false;
+    event.preventDefault();
+    event.stopPropagation();
+  }, []);
+
+  const handleFloorplanWheel = useCallback((event: WheelEvent<HTMLDivElement>) => {
+    if (!floorplanViewportRef.current) return;
+    event.preventDefault();
+    const viewportRect = floorplanViewportRef.current.getBoundingClientRect();
+    const focalX = event.clientX - viewportRect.left;
+    const focalY = event.clientY - viewportRect.top;
+    const factor = event.deltaY < 0 ? FLOORPLAN_ZOOM_STEP : 1 / FLOORPLAN_ZOOM_STEP;
+    applyFloorplanZoomAtPoint(factor, focalX, focalY);
+  }, [applyFloorplanZoomAtPoint]);
 
   const resetFloorplanView = useCallback(() => {
+    stopFloorplanDragging();
     hasFloorplanManualTransformRef.current = false;
     setFloorplanTransform(floorplanInitialTransform);
-    floorplanViewportRef.current?.scrollTo({ left: 0, top: 0, behavior: 'auto' });
-  }, [floorplanInitialTransform]);
+  }, [floorplanInitialTransform, stopFloorplanDragging]);
   const employeesByEmail = useMemo(() => new Map(employees.map((employee) => [employee.email.toLowerCase(), employee])), [employees]);
   const employeesById = useMemo(() => new Map(employees.map((employee) => [employee.id, employee])), [employees]);
   const desks = useMemo(() => enrichDeskBookings({
@@ -1919,7 +2010,16 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
               {isBootstrapping ? (
                 <div className="skeleton h-420" />
               ) : selectedFloorplan ? (
-                <div ref={floorplanViewportRef} className="floorplan-viewport">
+                <div
+                  ref={floorplanViewportRef}
+                  className={`floorplan-viewport ${canPanFloorplan ? (isFloorplanDragging ? 'is-grabbing' : 'is-grabbable') : ''}`}
+                  onPointerDown={handleFloorplanPointerDown}
+                  onPointerMove={handleFloorplanPointerMove}
+                  onPointerUp={handleFloorplanPointerUp}
+                  onPointerCancel={handleFloorplanPointerCancel}
+                  onWheel={handleFloorplanWheel}
+                  onClickCapture={handleFloorplanClickCapture}
+                >
                   <div
                     className="floorplan-transform-layer"
                     style={{
@@ -1945,7 +2045,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
                   </div>
 
                   <div className="floorplan-zoom-controls" role="group" aria-label="Floorplan Zoomsteuerung">
-                    <ZoomIconButton label="Rauszoomen" disabled={floorplanTransform.scale <= FLOORPLAN_MIN_SCALE + 0.001} onClick={() => applyFloorplanZoom('out')}>
+                    <ZoomIconButton label="Rauszoomen" disabled={floorplanTransform.scale <= floorplanMinScale + 0.001} onClick={() => applyFloorplanZoom('out')}>
                       <IconMinus />
                     </ZoomIconButton>
                     <ZoomIconButton label="Ansicht zurücksetzen" onClick={resetFloorplanView}>
@@ -1958,7 +2058,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
 
                   {showRoomDebugInfo && (
                     <div className="floorplan-debug" aria-live="polite">
-                      scale={floorplanTransform.scale.toFixed(3)} · x={Math.round(floorplanTransform.translateX)} · y={Math.round(floorplanTransform.translateY)} · initial={floorplanInitialTransform.scale.toFixed(3)}
+                      img={Math.round(floorplanImageSize?.width ?? 0)}×{Math.round(floorplanImageSize?.height ?? 0)} · viewport={Math.round(floorplanViewportSize.width)}×{Math.round(floorplanViewportSize.height)} · fit={floorplanInitialTransform.scale.toFixed(3)} · scale={floorplanTransform.scale.toFixed(3)} · tx={Math.round(floorplanTransform.translateX)} · ty={Math.round(floorplanTransform.translateY)}
                     </div>
                   )}
                 </div>

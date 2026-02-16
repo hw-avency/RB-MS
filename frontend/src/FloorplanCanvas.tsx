@@ -1,4 +1,4 @@
-import { CSSProperties, MouseEvent, RefObject, memo, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { CSSProperties, MouseEvent, RefObject, memo, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { normalizeDaySlotBookings } from './daySlotBookings';
 import { resourceKindLabel } from './resourceKinds';
@@ -33,7 +33,6 @@ type FloorplanDesk = {
   isSelected?: boolean;
 };
 
-type OverlayRect = { left: number; top: number; width: number; height: number };
 type PixelPoint = { x: number; y: number };
 type SlotKey = 'AM' | 'PM';
 
@@ -50,16 +49,10 @@ const ROOM_WINDOW_END_MINUTES = toMinutes(ROOM_WINDOW_END);
 const ROOM_WINDOW_TOTAL_MINUTES = ROOM_WINDOW_END_MINUTES - ROOM_WINDOW_START_MINUTES;
 
 const clamp01 = (value: number): number => Math.min(1, Math.max(0, value));
-const toNormalized = (raw: number, size: number): number => {
-  if (!Number.isFinite(raw)) return 0;
-  if (raw <= 1) return clamp01(raw);
-  if (raw <= 100) return clamp01(raw / 100);
-  return clamp01(raw / Math.max(size, 1));
-};
 
-const toPixelPoint = (desk: Pick<FloorplanDesk, 'x' | 'y'>, overlayRect: OverlayRect): PixelPoint => ({
-  x: toNormalized(desk.x, overlayRect.width) * overlayRect.width,
-  y: toNormalized(desk.y, overlayRect.height) * overlayRect.height,
+const toPixelPoint = (desk: Pick<FloorplanDesk, 'x' | 'y'>): PixelPoint => ({
+  x: Number.isFinite(desk.x) ? desk.x : 0,
+  y: Number.isFinite(desk.y) ? desk.y : 0,
 });
 
 const getInitials = (name?: string, email?: string): string => {
@@ -133,11 +126,11 @@ type FloorplanCanvasProps = {
   style?: CSSProperties;
 };
 
-const FloorplanImage = memo(function FloorplanImage({ imageUrl, imageAlt, imgRef, onLoad }: { imageUrl: string; imageAlt: string; imgRef: RefObject<HTMLImageElement>; onLoad: () => void }) {
-  return <img ref={imgRef} src={imageUrl} alt={imageAlt} className="floorplan-image" onLoad={onLoad} />;
+const FloorplanImage = memo(function FloorplanImage({ imageUrl, imageAlt, imgRef }: { imageUrl: string; imageAlt: string; imgRef: RefObject<HTMLImageElement> }) {
+  return <img ref={imgRef} src={imageUrl} alt={imageAlt} className="floorplan-image" />;
 });
 
-const DeskOverlay = memo(function DeskOverlay({ desks, selectedDeskId, hoveredDeskId, selectedDate, bookingVersion, overlayRect, onHoverDesk, onSelectDesk, onDeskDoubleClick, onDeskAnchorChange, disablePulseAnimation = false }: { desks: FloorplanDesk[]; selectedDeskId: string; hoveredDeskId: string; selectedDate?: string; bookingVersion?: number; overlayRect: OverlayRect; onHoverDesk: (deskId: string) => void; onSelectDesk: (deskId: string, anchorEl?: HTMLElement) => void; onDeskDoubleClick?: (deskId: string) => void; onDeskAnchorChange?: (deskId: string, element: HTMLElement | null) => void; disablePulseAnimation?: boolean; }) {
+const DeskOverlay = memo(function DeskOverlay({ desks, selectedDeskId, hoveredDeskId, selectedDate, bookingVersion, onHoverDesk, onSelectDesk, onDeskDoubleClick, onDeskAnchorChange, disablePulseAnimation = false }: { desks: FloorplanDesk[]; selectedDeskId: string; hoveredDeskId: string; selectedDate?: string; bookingVersion?: number; onHoverDesk: (deskId: string) => void; onSelectDesk: (deskId: string, anchorEl?: HTMLElement) => void; onDeskDoubleClick?: (deskId: string) => void; onDeskAnchorChange?: (deskId: string, element: HTMLElement | null) => void; disablePulseAnimation?: boolean; }) {
   const [imageStates, setImageStates] = useState<Record<string, boolean>>({});
   const [tooltip, setTooltip] = useState<{ deskId: string; left: number; top: number } | null>(null);
 
@@ -156,9 +149,9 @@ const DeskOverlay = memo(function DeskOverlay({ desks, selectedDeskId, hoveredDe
 
   return (
     <>
-      <div className="desk-overlay" style={{ left: overlayRect.left, top: overlayRect.top, width: overlayRect.width, height: overlayRect.height }} data-version={bookingVersion}>
+      <div className="desk-overlay" data-version={bookingVersion}>
         {desks.map((desk) => {
-          const point = toPixelPoint(desk, overlayRect);
+          const point = toPixelPoint(desk);
           const bookings = normalizeBookings(desk);
           const isRoom = desk.kind === 'RAUM';
           const roomMarkerLabel = isRoom ? getRoomMarkerLabel(desk) : null;
@@ -308,26 +301,7 @@ const DeskOverlay = memo(function DeskOverlay({ desks, selectedDeskId, hoveredDe
 });
 
 export function FloorplanCanvas({ imageUrl, imageAlt, desks, selectedDeskId, hoveredDeskId, selectedDate, bookingVersion, onHoverDesk, onSelectDesk, onCanvasClick, onDeskDoubleClick, onDeskAnchorChange, disablePulseAnimation = false, style }: FloorplanCanvasProps) {
-  const containerRef = useRef<HTMLDivElement | null>(null);
   const imgRef = useRef<HTMLImageElement | null>(null);
-  const [overlayRect, setOverlayRect] = useState<OverlayRect>({ left: 0, top: 0, width: 1, height: 1 });
-
-  const sync = () => {
-    if (!containerRef.current || !imgRef.current) return;
-    const imageElement = imgRef.current;
-    setOverlayRect({
-      left: imageElement.offsetLeft,
-      top: imageElement.offsetTop,
-      width: imageElement.clientWidth || imageElement.naturalWidth || 1,
-      height: imageElement.clientHeight || imageElement.naturalHeight || 1,
-    });
-  };
-
-  useLayoutEffect(sync, [imageUrl]);
-  useEffect(() => {
-    window.addEventListener('resize', sync);
-    return () => window.removeEventListener('resize', sync);
-  }, [imageUrl]);
 
   const handleCanvasClick = (event: MouseEvent<HTMLDivElement>) => {
     if (!onCanvasClick || !imgRef.current) return;
@@ -340,9 +314,9 @@ export function FloorplanCanvas({ imageUrl, imageAlt, desks, selectedDeskId, hov
   };
 
   return (
-    <div ref={containerRef} className="floorplan-canvas" role="presentation" onClick={handleCanvasClick} style={style}>
-      <FloorplanImage imageUrl={imageUrl} imageAlt={imageAlt} imgRef={imgRef} onLoad={sync} />
-      <DeskOverlay desks={desks} selectedDeskId={selectedDeskId} hoveredDeskId={hoveredDeskId} selectedDate={selectedDate} bookingVersion={bookingVersion} overlayRect={overlayRect} onHoverDesk={onHoverDesk} onSelectDesk={onSelectDesk} onDeskDoubleClick={onDeskDoubleClick} onDeskAnchorChange={onDeskAnchorChange} disablePulseAnimation={disablePulseAnimation} />
+    <div className="floorplan-canvas" role="presentation" onClick={handleCanvasClick} style={style}>
+      <FloorplanImage imageUrl={imageUrl} imageAlt={imageAlt} imgRef={imgRef} />
+      <DeskOverlay desks={desks} selectedDeskId={selectedDeskId} hoveredDeskId={hoveredDeskId} selectedDate={selectedDate} bookingVersion={bookingVersion} onHoverDesk={onHoverDesk} onSelectDesk={onSelectDesk} onDeskDoubleClick={onDeskDoubleClick} onDeskAnchorChange={onDeskAnchorChange} disablePulseAnimation={disablePulseAnimation} />
     </div>
   );
 }
