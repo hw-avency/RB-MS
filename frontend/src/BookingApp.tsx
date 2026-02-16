@@ -1488,8 +1488,26 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
       return;
     }
 
-    const popupRect = popupRef.current.getBoundingClientRect();
-    setDeskPopupCoords(calculatePopupCoordinates(deskPopup.anchorRect, popupRect));
+    const popupElement = popupRef.current;
+    const updatePopupCoordinates = () => {
+      const popupRect = popupElement.getBoundingClientRect();
+      setDeskPopupCoords(calculatePopupCoordinates(deskPopup.anchorRect, popupRect));
+    };
+
+    updatePopupCoordinates();
+
+    if (typeof ResizeObserver === 'undefined') {
+      return;
+    }
+
+    const observer = new ResizeObserver(() => {
+      updatePopupCoordinates();
+    });
+    observer.observe(popupElement);
+
+    return () => {
+      observer.disconnect();
+    };
   }, [deskPopup, bookingDialogState, popupDeskState, dialogErrorMessage]);
 
 
@@ -2392,8 +2410,26 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
       return;
     }
 
-    const popupRect = popupRef.current.getBoundingClientRect();
-    setDeskPopupCoords(calculatePopupCoordinates(deskPopup.anchorRect, popupRect));
+    const popupElement = popupRef.current;
+    const updatePopupCoordinates = () => {
+      const popupRect = popupElement.getBoundingClientRect();
+      setDeskPopupCoords(calculatePopupCoordinates(deskPopup.anchorRect, popupRect));
+    };
+
+    updatePopupCoordinates();
+
+    if (typeof ResizeObserver === 'undefined') {
+      return;
+    }
+
+    const observer = new ResizeObserver(() => {
+      updatePopupCoordinates();
+    });
+    observer.observe(popupElement);
+
+    return () => {
+      observer.disconnect();
+    };
   }, [deskPopup, bookingDialogState, popupDeskState, dialogErrorMessage]);
 
 
