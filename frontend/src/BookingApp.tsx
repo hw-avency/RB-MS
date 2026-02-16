@@ -560,6 +560,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
   });
   const [bookingVersion, setBookingVersion] = useState(0);
   const [isFloorplanDragging, setIsFloorplanDragging] = useState(false);
+  const [lastZoomAction, setLastZoomAction] = useState('init');
 
   const [isBootstrapping, setIsBootstrapping] = useState(true);
   const [isUpdatingOccupancy, setIsUpdatingOccupancy] = useState(false);
@@ -880,6 +881,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
         return current;
       }
       hasFloorplanManualTransformRef.current = true;
+      setLastZoomAction(zoomDirection === 'in' ? 'button+' : 'button-');
       logFloorplanDebug('APPLY_TRANSFORM', { reason: 'ZOOM_BUTTON', ...nextTransform });
       return nextTransform;
     });
@@ -902,12 +904,13 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
         return current;
       }
       hasFloorplanManualTransformRef.current = true;
+      setLastZoomAction('wheel');
       logFloorplanDebug('APPLY_TRANSFORM', { reason: 'ZOOM_WHEEL', ...nextTransform });
       return nextTransform;
     });
   }, [floorplanMinScale, isFiniteTransform, logFloorplanDebug]);
 
-  const canPanFloorplan = floorplanTransform.scale > floorplanInitialTransform.scale + FLOORPLAN_DRAG_EPSILON;
+  const canPanFloorplan = floorplanTransform.scale > floorplanMinScale + FLOORPLAN_DRAG_EPSILON;
 
   const stopFloorplanDragging = useCallback((pointerId?: number) => {
     if (!floorplanDragRef.current) return;
@@ -919,6 +922,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
 
   const handleFloorplanPointerDown = useCallback((event: PointerEvent<HTMLDivElement>) => {
     if (!canPanFloorplan || event.button !== 0 || !floorplanViewportRef.current) return;
+    if (event.target !== event.currentTarget) return;
     floorplanSuppressClickRef.current = false;
     floorplanDragRef.current = {
       pointerId: event.pointerId,
@@ -930,6 +934,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
     };
     floorplanViewportRef.current.setPointerCapture(event.pointerId);
     setIsFloorplanDragging(true);
+    setLastZoomAction('pan-start');
   }, [canPanFloorplan, floorplanTransform.translateX, floorplanTransform.translateY]);
 
   const handleFloorplanPointerMove = useCallback((event: PointerEvent<HTMLDivElement>) => {
@@ -940,6 +945,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
     if (Math.abs(deltaX) + Math.abs(deltaY) > 3) {
       drag.moved = true;
       floorplanSuppressClickRef.current = true;
+      setLastZoomAction('pan-drag');
     }
     hasFloorplanManualTransformRef.current = true;
     setFloorplanTransform((current) => {
@@ -985,6 +991,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
   const resetFloorplanView = useCallback(() => {
     stopFloorplanDragging();
     hasFloorplanManualTransformRef.current = false;
+    setLastZoomAction('reset');
     applyFloorplanTransform(floorplanInitialTransform, 'RESET_BUTTON');
   }, [applyFloorplanTransform, floorplanInitialTransform, stopFloorplanDragging]);
   const employeesByEmail = useMemo(() => new Map(employees.map((employee) => [employee.email.toLowerCase(), employee])), [employees]);
@@ -1118,8 +1125,11 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
   const floorplanTransformStyle = floorplanTransformEnabled
     ? { transform: `translate3d(${floorplanTransform.translateX}px, ${floorplanTransform.translateY}px, 0) scale(${floorplanTransform.scale})` }
     : undefined;
+  const resourcesCount = occupancy?.desks.length ?? 0;
+  const bookingsCount = useMemo(() => (occupancy?.desks ?? []).reduce((total, desk) => total + normalizeDeskBookings(desk).length, 0), [occupancy?.desks]);
   const floorplanMarkersCount = filteredDesks.filter((desk) => Number.isFinite(desk.x) && Number.isFinite(desk.y)).length;
-  const floorplanCanvasDesks = floorplanImageLoadState === 'loaded' && floorplanTransformEnabled ? filteredDesks : [];
+  const floorplanCanvasDesks = floorplanImageLoadState === 'loaded' ? filteredDesks : [];
+  const shouldWarnMissingMarkers = floorplanImageLoadState === 'loaded' && resourcesCount > 0 && floorplanMarkersCount === 0;
   const roomBookingConflict = useMemo(() => {
     if (!popupDesk || !isRoomResource(popupDesk)) return '';
     const start = bookingTimeToMinutes(bookingFormValues.startTime);
@@ -2259,14 +2269,14 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
                 >
                   {!floorplanImageSrc ? (
                     <div className="floorplan-status-banner is-error" role="alert">Floorplan-Bildquelle fehlt.</div>
-                  ) : floorplanTransformEnabled ? (
+                  ) : (
                     <div
                       ref={floorplanTransformLayerRef}
                       className="floorplan-transform-layer"
                       style={{
-                        width: floorplanImageSize?.width ?? 1,
-                        height: floorplanImageSize?.height ?? 1,
-                        ...floorplanTransformStyle,
+                        width: Math.max(1, floorplanImageSize?.width ?? floorplanRenderedImageSize.width ?? 1),
+                        height: Math.max(1, floorplanImageSize?.height ?? floorplanRenderedImageSize.height ?? 1),
+                        ...(floorplanTransformStyle ?? {}),
                       }}
                     >
                       <FloorplanCanvas
@@ -2284,27 +2294,10 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
                         onImageError={handleFloorplanImageError}
                         onImageRenderSizeChange={setFloorplanRenderedImageSize}
                         bookingVersion={bookingVersion}
+                        debugEnabled={showRoomDebugInfo}
                         style={{ width: '100%', height: '100%' }}
                       />
                     </div>
-                  ) : (
-                    <FloorplanCanvas
-                      imageUrl={floorplanImageSrc}
-                      imageAlt={selectedFloorplan.name}
-                      desks={[]}
-                      selectedDeskId={selectedDeskId}
-                      hoveredDeskId={hoveredDeskId}
-                      onHoverDesk={() => undefined}
-                      selectedDate={selectedDate}
-                      onSelectDesk={() => undefined}
-                      onDeskAnchorChange={registerDeskAnchor}
-                      containImageOnly
-                      onImageLoad={handleFloorplanImageLoad}
-                      onImageError={handleFloorplanImageError}
-                      onImageRenderSizeChange={setFloorplanRenderedImageSize}
-                      bookingVersion={bookingVersion}
-                      style={{ width: '100%', height: '100%' }}
-                    />
                   )}
 
                   {floorplanImageLoadState === 'loading' && <div className="floorplan-status-banner" aria-live="polite">Floorplan lädt…</div>}
@@ -2348,7 +2341,12 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
                   <div>transform scale/tx/ty={floorplanTransform.scale.toFixed(3)} / {Math.round(floorplanTransform.translateX)} / {Math.round(floorplanTransform.translateY)}</div>
                   <div>transformFinite={Number.isFinite(floorplanTransform.scale) && Number.isFinite(floorplanTransform.translateX) && Number.isFinite(floorplanTransform.translateY) ? 'yes' : 'no'}</div>
                   <div>fit={floorplanFitScaleForDebug?.toFixed(3) ?? '-'}</div>
-                  <div>markers={floorplanMarkersCount}</div>
+                  <div>resourcesCount={resourcesCount}</div>
+                  <div>bookingsCount={bookingsCount}</div>
+                  <div>markersRenderedCount={floorplanMarkersCount}</div>
+                  <div>isDragging={isFloorplanDragging ? 'yes' : 'no'}</div>
+                  <div>lastZoomAction={lastZoomAction}</div>
+                  {shouldWarnMissingMarkers && <div style={{ color: '#f87171', fontWeight: 700 }}>Markers not rendering: check wrapper layering / gating / coords</div>}
                   <div>visibility viewport mounted={floorplanVisibilityDebug.isMounted ? 'yes' : 'no'} hidden={floorplanVisibilityDebug.isHidden ? 'yes' : 'no'} opacity={floorplanVisibilityDebug.opacity} display={floorplanVisibilityDebug.display} zIndex={floorplanVisibilityDebug.zIndex}</div>
                   <div>visibility layer opacity={floorplanVisibilityDebug.layerOpacity} display={floorplanVisibilityDebug.layerDisplay} zIndex={floorplanVisibilityDebug.layerZIndex}</div>
                   <div>renderCount={floorplanRenderCountRef.current}</div>

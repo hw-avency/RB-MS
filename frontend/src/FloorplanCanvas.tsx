@@ -127,6 +127,7 @@ type FloorplanCanvasProps = {
   onImageError?: (payload: { src: string; message: string }) => void;
   onImageRenderSizeChange?: (size: { width: number; height: number }) => void;
   containImageOnly?: boolean;
+  debugEnabled?: boolean;
   style?: CSSProperties;
 };
 
@@ -149,7 +150,7 @@ const FloorplanImage = memo(function FloorplanImage({ imageUrl, imageAlt, imgRef
   );
 });
 
-const DeskOverlay = memo(function DeskOverlay({ desks, selectedDeskId, hoveredDeskId, selectedDate, bookingVersion, onHoverDesk, onSelectDesk, onDeskDoubleClick, onDeskAnchorChange, disablePulseAnimation = false }: { desks: FloorplanDesk[]; selectedDeskId: string; hoveredDeskId: string; selectedDate?: string; bookingVersion?: number; onHoverDesk: (deskId: string) => void; onSelectDesk: (deskId: string, anchorEl?: HTMLElement) => void; onDeskDoubleClick?: (deskId: string) => void; onDeskAnchorChange?: (deskId: string, element: HTMLElement | null) => void; disablePulseAnimation?: boolean; }) {
+const DeskOverlay = memo(function DeskOverlay({ desks, selectedDeskId, hoveredDeskId, selectedDate, bookingVersion, onHoverDesk, onSelectDesk, onDeskDoubleClick, onDeskAnchorChange, disablePulseAnimation = false, debugEnabled = false }: { desks: FloorplanDesk[]; selectedDeskId: string; hoveredDeskId: string; selectedDate?: string; bookingVersion?: number; onHoverDesk: (deskId: string) => void; onSelectDesk: (deskId: string, anchorEl?: HTMLElement) => void; onDeskDoubleClick?: (deskId: string) => void; onDeskAnchorChange?: (deskId: string, element: HTMLElement | null) => void; disablePulseAnimation?: boolean; debugEnabled?: boolean; }) {
   const [imageStates, setImageStates] = useState<Record<string, boolean>>({});
   const [tooltip, setTooltip] = useState<{ deskId: string; left: number; top: number } | null>(null);
 
@@ -227,12 +228,21 @@ const DeskOverlay = memo(function DeskOverlay({ desks, selectedDeskId, hoveredDe
                 event.stopPropagation();
                 onSelectDesk(desk.id, event.currentTarget);
               }}
+              onPointerDown={(event) => {
+                event.stopPropagation();
+              }}
               onDoubleClick={(event) => {
                 event.stopPropagation();
                 onDeskDoubleClick?.(desk.id);
               }}
               tabIndex={0}
               title={bookings.length === 2 && !fullBooking ? '2 Buchungen' : undefined}
+              data-debug-state={debugEnabled ? JSON.stringify({
+                resourceId: desk.id,
+                type: desk.kind ?? 'SONSTIGES',
+                bookingsForResourceCount: bookings.length,
+                occupancyState: isRoom ? (isRoomFullyBooked ? 'full' : roomIntervals.length > 0 ? 'partial' : 'free') : fullBooking ? 'full-day' : amBooking || pmBooking ? 'half-day' : 'free'
+              }) : undefined}
               aria-label={`${resourceKindLabel(desk.kind)}: ${getDeskLabel(desk)}`}
             >
               {shouldShowPulse && <div className="pulseHalo" aria-hidden="true" />}
@@ -312,6 +322,16 @@ const DeskOverlay = memo(function DeskOverlay({ desks, selectedDeskId, hoveredDe
             })()
           )}
           <span>{new Date(`${selectedDate ?? new Date().toISOString().slice(0, 10)}T00:00:00.000Z`).toLocaleDateString('de-DE')}</span>
+          {debugEnabled && (() => {
+            const tooltipBookings = normalizeBookings(tooltipDesk);
+            const full = tooltipBookings.find((booking) => slotFromBooking(booking) === 'FULL');
+            const am = full ?? tooltipBookings.find((booking) => slotFromBooking(booking) === 'AM');
+            const pm = full ?? tooltipBookings.find((booking) => slotFromBooking(booking) === 'PM');
+            const state = tooltipDesk.kind === 'RAUM'
+              ? (tooltipBookings.length > 0 ? 'occupied-segments' : 'free')
+              : full ? 'full-day' : am || pm ? 'half-day' : 'free';
+            return <span className="muted">debug: resourceId={tooltipDesk.id}; type={tooltipDesk.kind ?? 'SONSTIGES'}; bookingsForResourceCount={tooltipBookings.length}; occupancy={state}</span>;
+          })()}
         </div>,
         document.body
       )}
@@ -319,7 +339,7 @@ const DeskOverlay = memo(function DeskOverlay({ desks, selectedDeskId, hoveredDe
   );
 });
 
-export function FloorplanCanvas({ imageUrl, imageAlt, desks, selectedDeskId, hoveredDeskId, selectedDate, bookingVersion, onHoverDesk, onSelectDesk, onCanvasClick, onDeskDoubleClick, onDeskAnchorChange, disablePulseAnimation = false, onImageLoad, onImageError, onImageRenderSizeChange, containImageOnly = false, style }: FloorplanCanvasProps) {
+export function FloorplanCanvas({ imageUrl, imageAlt, desks, selectedDeskId, hoveredDeskId, selectedDate, bookingVersion, onHoverDesk, onSelectDesk, onCanvasClick, onDeskDoubleClick, onDeskAnchorChange, disablePulseAnimation = false, onImageLoad, onImageError, onImageRenderSizeChange, containImageOnly = false, debugEnabled = false, style }: FloorplanCanvasProps) {
   const imgRef = useRef<HTMLImageElement | null>(null);
 
   useEffect(() => {
@@ -345,7 +365,7 @@ export function FloorplanCanvas({ imageUrl, imageAlt, desks, selectedDeskId, hov
   return (
     <div className={`floorplan-canvas ${containImageOnly ? 'floorplan-canvas-contain' : ''}`} role="presentation" onClick={handleCanvasClick} style={style}>
       <FloorplanImage imageUrl={imageUrl} imageAlt={imageAlt} imgRef={imgRef} onImageLoad={onImageLoad} onImageError={onImageError} containImageOnly={containImageOnly} />
-      {!containImageOnly && <DeskOverlay desks={desks} selectedDeskId={selectedDeskId} hoveredDeskId={hoveredDeskId} selectedDate={selectedDate} bookingVersion={bookingVersion} onHoverDesk={onHoverDesk} onSelectDesk={onSelectDesk} onDeskDoubleClick={onDeskDoubleClick} onDeskAnchorChange={onDeskAnchorChange} disablePulseAnimation={disablePulseAnimation} />}
+      {!containImageOnly && <DeskOverlay desks={desks} selectedDeskId={selectedDeskId} hoveredDeskId={hoveredDeskId} selectedDate={selectedDate} bookingVersion={bookingVersion} onHoverDesk={onHoverDesk} onSelectDesk={onSelectDesk} onDeskDoubleClick={onDeskDoubleClick} onDeskAnchorChange={onDeskAnchorChange} disablePulseAnimation={disablePulseAnimation} debugEnabled={debugEnabled} />}
     </div>
   );
 }
