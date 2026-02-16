@@ -1,4 +1,4 @@
-import { MouseEvent, PointerEvent, ReactNode, WheelEvent, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { MouseEvent, PointerEvent, WheelEvent, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { API_BASE, ApiError, checkBackendHealth, get, markBackendAvailable, post, put, resolveApiUrl } from './api';
 import { cancelBooking, createRoomBooking } from './api/bookings';
@@ -498,26 +498,6 @@ function TopLoadingBar({ loading }: { loading: boolean }) {
 }
 
 
-function ZoomIconButton({ label, disabled = false, onClick, children }: { label: string; disabled?: boolean; onClick: () => void; children: ReactNode }) {
-  return (
-    <button type="button" className="floorplan-zoom-btn" aria-label={label} title={label} disabled={disabled} onClick={onClick}>
-      {children}
-    </button>
-  );
-}
-
-function IconMinus() {
-  return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" /></svg>;
-}
-
-function IconPlus() {
-  return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" /></svg>;
-}
-
-function IconReset() {
-  return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" /><path d="M3 4v5h5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>;
-}
-
 export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogout, currentUser }: { onOpenAdmin: () => void; canOpenAdmin: boolean; currentUserEmail?: string; onLogout: () => Promise<void>; currentUser: AuthUser }) {
   const [floorplans, setFloorplans] = useState<Floorplan[]>([]);
   const [selectedFloorplanId, setSelectedFloorplanId] = useState('');
@@ -541,6 +521,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
   const [floorplanImageError, setFloorplanImageError] = useState('');
   const [floorplanLoadedSrc, setFloorplanLoadedSrc] = useState('');
   const [floorplanRenderedImageSize, setFloorplanRenderedImageSize] = useState<{ width: number; height: number }>({ width: 0, height: 0 });
+  const [floorplanDisplayedRect, setFloorplanDisplayedRect] = useState<{ left: number; top: number; width: number; height: number }>({ left: 0, top: 0, width: 0, height: 0 });
   const [floorplanViewportSize, setFloorplanViewportSize] = useState<{ width: number; height: number }>({ width: 1, height: 1 });
   const [floorplanSafeModeActive, setFloorplanSafeModeActive] = useState(false);
   const [floorplanDisableTransformsDebug, setFloorplanDisableTransformsDebug] = useState(false);
@@ -2265,48 +2246,29 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
               {isBootstrapping ? (
                 <div className="skeleton h-420" />
               ) : selectedFloorplan ? (
-                <div
-                  ref={floorplanViewportRef}
-                  className={`floorplan-viewport ${canPanFloorplan ? (isFloorplanDragging ? 'is-grabbing' : 'is-grabbable') : ''}`}
-                  style={{ height: FLOORPLAN_VIEWPORT_HEIGHT, minHeight: 520 }}
-                  onPointerDown={handleFloorplanPointerDown}
-                  onPointerMove={handleFloorplanPointerMove}
-                  onPointerUp={handleFloorplanPointerUp}
-                  onPointerCancel={handleFloorplanPointerCancel}
-                  onWheel={handleFloorplanWheel}
-                  onClickCapture={handleFloorplanClickCapture}
-                >
+                <div className="floorplan-viewport" style={{ height: FLOORPLAN_VIEWPORT_HEIGHT, minHeight: 520 }}>
                   {!floorplanImageSrc ? (
                     <div className="floorplan-status-banner is-error" role="alert">Floorplan-Bildquelle fehlt.</div>
                   ) : (
-                    <div
-                      ref={floorplanTransformLayerRef}
-                      className="floorplan-transform-layer"
-                      style={{
-                        width: Math.max(1, floorplanImageSize?.width ?? floorplanRenderedImageSize.width ?? 1),
-                        height: Math.max(1, floorplanImageSize?.height ?? floorplanRenderedImageSize.height ?? 1),
-                        ...(floorplanTransformStyle ?? {}),
-                      }}
-                    >
-                      <FloorplanCanvas
-                        imageUrl={floorplanImageSrc}
-                        imageAlt={selectedFloorplan.name}
-                        desks={floorplanCanvasDesks}
-                        selectedDeskId={selectedDeskId}
-                        hoveredDeskId={hoveredDeskId}
-                        onHoverDesk={(deskId) => { setHoveredDeskId(deskId); if (deskId) triggerDeskHighlight(deskId, 900); }}
-                        selectedDate={selectedDate}
-                        onSelectDesk={selectDeskFromCanvas}
-                        onCanvasClick={() => { setSelectedDeskId(''); setHighlightedDeskId(''); closeBookingFlow(); }}
-                        onDeskAnchorChange={registerDeskAnchor}
-                        onImageLoad={handleFloorplanImageLoad}
-                        onImageError={handleFloorplanImageError}
-                        onImageRenderSizeChange={setFloorplanRenderedImageSize}
-                        bookingVersion={bookingVersion}
-                        debugEnabled={showRoomDebugInfo}
-                        style={{ width: '100%', height: '100%' }}
-                      />
-                    </div>
+                    <FloorplanCanvas
+                      imageUrl={floorplanImageSrc}
+                      imageAlt={selectedFloorplan.name}
+                      desks={floorplanCanvasDesks}
+                      selectedDeskId={selectedDeskId}
+                      hoveredDeskId={hoveredDeskId}
+                      onHoverDesk={(deskId) => { setHoveredDeskId(deskId); if (deskId) triggerDeskHighlight(deskId, 900); }}
+                      selectedDate={selectedDate}
+                      onSelectDesk={selectDeskFromCanvas}
+                      onCanvasClick={() => { setSelectedDeskId(''); setHighlightedDeskId(''); closeBookingFlow(); }}
+                      onDeskAnchorChange={registerDeskAnchor}
+                      onImageLoad={handleFloorplanImageLoad}
+                      onImageError={handleFloorplanImageError}
+                      onImageRenderSizeChange={setFloorplanRenderedImageSize}
+                      onDisplayedRectChange={setFloorplanDisplayedRect}
+                      bookingVersion={bookingVersion}
+                      debugEnabled={showRoomDebugInfo}
+                      style={{ width: '100%', height: '100%' }}
+                    />
                   )}
 
                   {floorplanImageLoadState === 'loading' && <div className="floorplan-status-banner" aria-live="polite">Floorplan lädt…</div>}
@@ -2316,19 +2278,6 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
                       {showRoomDebugInfo && floorplanImageSrc ? <span> src={floorplanImageSrc}</span> : null}
                     </div>
                   )}
-
-                  <div className="floorplan-zoom-controls" role="group" aria-label="Floorplan Zoomsteuerung">
-                    <ZoomIconButton label="Rauszoomen" disabled={floorplanTransform.scale <= floorplanMinScale + 0.001} onClick={() => applyFloorplanZoom('out')}>
-                      <IconMinus />
-                    </ZoomIconButton>
-                    <ZoomIconButton label="Ansicht zurücksetzen" onClick={resetFloorplanView}>
-                      <IconReset />
-                    </ZoomIconButton>
-                    <ZoomIconButton label="Reinzoomen" disabled={floorplanTransform.scale >= FLOORPLAN_MAX_SCALE - 0.001} onClick={() => applyFloorplanZoom('in')}>
-                      <IconPlus />
-                    </ZoomIconButton>
-                  </div>
-
                 </div>
               ) : (
                 <div className="empty-state"><p>Kein Floorplan ausgewählt.</p></div>
@@ -2343,35 +2292,11 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
                   <div>imageStatus={floorplanImageLoadState}</div>
                   <div>error={floorplanImageError || '-'}</div>
                   <div>loadedSrc={floorplanLoadedSrc || '-'}</div>
-                  <div>img naturalWidth/naturalHeight={Math.round(floorplanImageSize?.width ?? 0)}×{Math.round(floorplanImageSize?.height ?? 0)}</div>
-                  <div>imgRect={Math.round(floorplanRenderedImageSize.width)}×{Math.round(floorplanRenderedImageSize.height)}</div>
-                  <div>viewport vw/vh={Math.round(floorplanViewportSize.width)}×{Math.round(floorplanViewportSize.height)}</div>
-                  <div>wrapper style={Math.round(floorplanTransformLayerRef.current?.clientWidth ?? 0)}×{Math.round(floorplanTransformLayerRef.current?.clientHeight ?? 0)}</div>
-                  <div>current scale={floorplanTransform.scale.toFixed(3)}</div>
-                  <div>tx/ty={Math.round(floorplanTransform.translateX)} / {Math.round(floorplanTransform.translateY)}</div>
-                  <div>transformFinite={Number.isFinite(floorplanTransform.scale) && Number.isFinite(floorplanTransform.translateX) && Number.isFinite(floorplanTransform.translateY) ? 'yes' : 'no'}</div>
-                  <div>fitScale={floorplanFitScaleForDebug?.toFixed(3) ?? '-'}</div>
-                  <div>isDirtyTransform={hasFloorplanManualTransformRef.current ? 'yes' : 'no'}</div>
+                  <div>naturalWidth/naturalHeight={Math.round(floorplanImageSize?.width ?? 0)}×{Math.round(floorplanImageSize?.height ?? 0)}</div>
+
+                  <div>displayedRect={Math.round(floorplanDisplayedRect.left)} / {Math.round(floorplanDisplayedRect.top)} / {Math.round(floorplanDisplayedRect.width)} / {Math.round(floorplanDisplayedRect.height)}</div>
                   <div>resourcesCount={resourcesCount}</div>
-                  <div>bookingsCount={bookingsCount}</div>
                   <div>markersRenderedCount={floorplanMarkersCount}</div>
-                  <div>isDragging={isFloorplanDragging ? 'yes' : 'no'}</div>
-                  <div>lastZoomAction={lastZoomAction}</div>
-                  {shouldWarnMissingMarkers && <div style={{ color: '#f87171', fontWeight: 700 }}>Markers not rendering: check wrapper layering / gating / coords</div>}
-                  <div>visibility viewport mounted={floorplanVisibilityDebug.isMounted ? 'yes' : 'no'} hidden={floorplanVisibilityDebug.isHidden ? 'yes' : 'no'} opacity={floorplanVisibilityDebug.opacity} display={floorplanVisibilityDebug.display} zIndex={floorplanVisibilityDebug.zIndex}</div>
-                  <div>visibility layer opacity={floorplanVisibilityDebug.layerOpacity} display={floorplanVisibilityDebug.layerDisplay} zIndex={floorplanVisibilityDebug.layerZIndex}</div>
-                  <div>renderCount={floorplanRenderCountRef.current}</div>
-                  <div>srcChangeCount={floorplanDebugCounters.srcChangeCount}</div>
-                  <div>transformRecalcCount={floorplanDebugCounters.transformRecalcCount}</div>
-                  <div>resizeObserverCount={floorplanDebugCounters.resizeObserverCount}</div>
-                  <label className="floorplan-debug-toggle">
-                    <input
-                      type="checkbox"
-                      checked={floorplanDisableTransformsDebug}
-                      onChange={(event) => setFloorplanDisableTransformsDebug(event.target.checked)}
-                    />
-                    Disable transforms
-                  </label>
                 </div>
               )}
             </div>

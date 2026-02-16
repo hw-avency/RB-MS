@@ -1,4 +1,4 @@
-import { CSSProperties, MouseEvent, RefObject, memo, useEffect, useRef, useState } from 'react';
+import { CSSProperties, MouseEvent, RefObject, memo, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { normalizeDaySlotBookings } from './daySlotBookings';
 import { resourceKindLabel } from './resourceKinds';
@@ -34,6 +34,7 @@ type FloorplanDesk = {
 };
 
 type PixelPoint = { x: number; y: number };
+type DisplayedImageRect = { left: number; top: number; width: number; height: number };
 type SlotKey = 'AM' | 'PM';
 
 const PIN_HITBOX_SIZE = 44;
@@ -128,6 +129,7 @@ type FloorplanCanvasProps = {
   onImageLoad?: (payload: { width: number; height: number; src: string }) => void;
   onImageError?: (payload: { src: string; message: string }) => void;
   onImageRenderSizeChange?: (size: { width: number; height: number }) => void;
+  onDisplayedRectChange?: (rect: DisplayedImageRect) => void;
   containImageOnly?: boolean;
   debugEnabled?: boolean;
   style?: CSSProperties;
@@ -152,7 +154,7 @@ const FloorplanImage = memo(function FloorplanImage({ imageUrl, imageAlt, imgRef
   );
 });
 
-const DeskOverlay = memo(function DeskOverlay({ desks, selectedDeskId, hoveredDeskId, selectedDate, bookingVersion, onHoverDesk, onSelectDesk, onDeskDoubleClick, onDeskAnchorChange, disablePulseAnimation = false, debugEnabled = false, imageSize }: { desks: FloorplanDesk[]; selectedDeskId: string; hoveredDeskId: string; selectedDate?: string; bookingVersion?: number; onHoverDesk: (deskId: string) => void; onSelectDesk: (deskId: string, anchorEl?: HTMLElement) => void; onDeskDoubleClick?: (deskId: string) => void; onDeskAnchorChange?: (deskId: string, element: HTMLElement | null) => void; disablePulseAnimation?: boolean; debugEnabled?: boolean; imageSize: { width: number; height: number } | null; }) {
+const DeskOverlay = memo(function DeskOverlay({ desks, selectedDeskId, hoveredDeskId, selectedDate, bookingVersion, onHoverDesk, onSelectDesk, onDeskDoubleClick, onDeskAnchorChange, disablePulseAnimation = false, debugEnabled = false, displayedRect, imageSize }: { desks: FloorplanDesk[]; selectedDeskId: string; hoveredDeskId: string; selectedDate?: string; bookingVersion?: number; onHoverDesk: (deskId: string) => void; onSelectDesk: (deskId: string, anchorEl?: HTMLElement) => void; onDeskDoubleClick?: (deskId: string) => void; onDeskAnchorChange?: (deskId: string, element: HTMLElement | null) => void; disablePulseAnimation?: boolean; debugEnabled?: boolean; displayedRect: DisplayedImageRect | null; imageSize: { width: number; height: number } | null; }) {
   const [imageStates, setImageStates] = useState<Record<string, boolean>>({});
   const [tooltip, setTooltip] = useState<{ deskId: string; left: number; top: number } | null>(null);
 
@@ -168,6 +170,15 @@ const DeskOverlay = memo(function DeskOverlay({ desks, selectedDeskId, hoveredDe
   }, [tooltip]);
 
   const tooltipDesk = desks.find((desk) => desk.id === tooltip?.deskId);
+  const mapPoint = useMemo(() => {
+    if (!displayedRect || !imageSize || imageSize.width <= 0 || imageSize.height <= 0) return null;
+    const sx = displayedRect.width / imageSize.width;
+    const sy = displayedRect.height / imageSize.height;
+    return (point: PixelPoint): PixelPoint => ({
+      x: displayedRect.left + point.x * sx,
+      y: displayedRect.top + point.y * sy,
+    });
+  }, [displayedRect, imageSize]);
 
   return (
     <>
@@ -176,10 +187,11 @@ const DeskOverlay = memo(function DeskOverlay({ desks, selectedDeskId, hoveredDe
           const rawPoint = toPixelPoint(desk);
           if (!rawPoint) return null;
           const isLegacyPoint = isLegacyNormalizedPoint(rawPoint);
-          if (isLegacyPoint && !imageSize) return null;
+          if (!mapPoint || (isLegacyPoint && !imageSize)) return null;
           const point = isLegacyPoint && imageSize
             ? { x: rawPoint.x * imageSize.width, y: rawPoint.y * imageSize.height }
             : rawPoint;
+          const displayPoint = mapPoint(point);
           const bookings = normalizeBookings(desk);
           const isRoom = desk.kind === 'RAUM';
           const roomMarkerLabel = isRoom ? getRoomMarkerLabel(desk) : null;
@@ -222,7 +234,7 @@ const DeskOverlay = memo(function DeskOverlay({ desks, selectedDeskId, hoveredDe
               data-desk-id={desk.id}
               className={`desk-pin ${selectedDeskId === desk.id ? 'selected' : ''} ${hoveredDeskId === desk.id ? 'hovered' : ''} ${desk.isCurrentUsersDesk ? 'is-own-desk' : ''} ${desk.isHighlighted ? 'is-highlighted' : ''} ${desk.isSelected ? 'is-selected' : ''} ${!isClickable ? 'is-click-disabled' : ''}`}
               data-free={shouldShowPulse ? 'true' : 'false'}
-              style={{ left: `${point.x - PIN_HITBOX_SIZE / 2}px`, top: `${point.y - PIN_HITBOX_SIZE / 2}px` }}
+              style={{ left: `${displayPoint.x - PIN_HITBOX_SIZE / 2}px`, top: `${displayPoint.y - PIN_HITBOX_SIZE / 2}px` }}
               onMouseEnter={(event) => {
                 const rect = event.currentTarget.getBoundingClientRect();
                 setTooltip({ deskId: desk.id, left: rect.left + rect.width / 2, top: rect.top - 10 });
@@ -347,33 +359,52 @@ const DeskOverlay = memo(function DeskOverlay({ desks, selectedDeskId, hoveredDe
   );
 });
 
-export function FloorplanCanvas({ imageUrl, imageAlt, desks, selectedDeskId, hoveredDeskId, selectedDate, bookingVersion, onHoverDesk, onSelectDesk, onCanvasClick, onDeskDoubleClick, onDeskAnchorChange, disablePulseAnimation = false, onImageLoad, onImageError, onImageRenderSizeChange, containImageOnly = false, debugEnabled = false, style }: FloorplanCanvasProps) {
+export function FloorplanCanvas({ imageUrl, imageAlt, desks, selectedDeskId, hoveredDeskId, selectedDate, bookingVersion, onHoverDesk, onSelectDesk, onCanvasClick, onDeskDoubleClick, onDeskAnchorChange, disablePulseAnimation = false, onImageLoad, onImageError, onImageRenderSizeChange, onDisplayedRectChange, containImageOnly = false, debugEnabled = false, style }: FloorplanCanvasProps) {
   const imgRef = useRef<HTMLImageElement | null>(null);
+  const canvasRef = useRef<HTMLDivElement | null>(null);
   const [naturalSize, setNaturalSize] = useState<{ width: number; height: number } | null>(null);
+  const [displayedRect, setDisplayedRect] = useState<DisplayedImageRect | null>(null);
 
   useEffect(() => {
     setNaturalSize(null);
   }, [imageUrl]);
 
+  const syncDisplayedRect = useMemo(() => {
+    return () => {
+      if (!canvasRef.current || !naturalSize) return;
+      const containerWidth = canvasRef.current.clientWidth;
+      const containerHeight = canvasRef.current.clientHeight;
+      if (containerWidth <= 0 || containerHeight <= 0 || naturalSize.width <= 0 || naturalSize.height <= 0) return;
+
+      const scale = Math.min(containerWidth / naturalSize.width, containerHeight / naturalSize.height);
+      const width = naturalSize.width * scale;
+      const height = naturalSize.height * scale;
+      const left = (containerWidth - width) / 2;
+      const top = (containerHeight - height) / 2;
+      const nextRect = { left, top, width, height };
+      setDisplayedRect(nextRect);
+      onImageRenderSizeChange?.({ width, height });
+      onDisplayedRectChange?.(nextRect);
+    };
+  }, [naturalSize, onDisplayedRectChange, onImageRenderSizeChange]);
+
   useEffect(() => {
-    if (!imgRef.current || !onImageRenderSizeChange) return;
-    const node = imgRef.current;
-    const syncSize = () => onImageRenderSizeChange({ width: node.clientWidth, height: node.clientHeight });
-    syncSize();
-    const observer = new ResizeObserver(syncSize);
-    observer.observe(node);
+    if (!canvasRef.current || !naturalSize) return;
+    syncDisplayedRect();
+    const observer = new ResizeObserver(syncDisplayedRect);
+    observer.observe(canvasRef.current);
     return () => observer.disconnect();
-  }, [imageUrl, onImageRenderSizeChange]);
+  }, [naturalSize, syncDisplayedRect]);
 
   const handleCanvasClick = (event: MouseEvent<HTMLDivElement>) => {
-    if (!onCanvasClick || !imgRef.current) return;
-    const clickedLayerRect = imgRef.current.getBoundingClientRect();
-    const localX = event.clientX - clickedLayerRect.left;
-    const localY = event.clientY - clickedLayerRect.top;
-    const xNorm = clamp01(localX / clickedLayerRect.width);
-    const yNorm = clamp01(localY / clickedLayerRect.height);
-    const imageWidth = imgRef.current.naturalWidth;
-    const imageHeight = imgRef.current.naturalHeight;
+    if (!onCanvasClick || !canvasRef.current || !displayedRect || !naturalSize) return;
+    const canvasRect = canvasRef.current.getBoundingClientRect();
+    const localX = event.clientX - canvasRect.left;
+    const localY = event.clientY - canvasRect.top;
+    const xNorm = clamp01((localX - displayedRect.left) / Math.max(displayedRect.width, 1));
+    const yNorm = clamp01((localY - displayedRect.top) / Math.max(displayedRect.height, 1));
+    const imageWidth = naturalSize.width;
+    const imageHeight = naturalSize.height;
     onCanvasClick({
       xPct: xNorm,
       yPct: yNorm,
@@ -385,7 +416,7 @@ export function FloorplanCanvas({ imageUrl, imageAlt, desks, selectedDeskId, hov
   };
 
   return (
-    <div className={`floorplan-canvas ${containImageOnly ? 'floorplan-canvas-contain' : ''}`} role="presentation" onClick={handleCanvasClick} style={style}>
+    <div ref={canvasRef} className={`floorplan-canvas ${containImageOnly ? 'floorplan-canvas-contain' : ''}`} role="presentation" onClick={handleCanvasClick} style={style}>
       <FloorplanImage
         imageUrl={imageUrl}
         imageAlt={imageAlt}
@@ -397,7 +428,7 @@ export function FloorplanCanvas({ imageUrl, imageAlt, desks, selectedDeskId, hov
         onImageError={onImageError}
         containImageOnly={containImageOnly}
       />
-      {!containImageOnly && <DeskOverlay desks={desks} selectedDeskId={selectedDeskId} hoveredDeskId={hoveredDeskId} selectedDate={selectedDate} bookingVersion={bookingVersion} onHoverDesk={onHoverDesk} onSelectDesk={onSelectDesk} onDeskDoubleClick={onDeskDoubleClick} onDeskAnchorChange={onDeskAnchorChange} disablePulseAnimation={disablePulseAnimation} debugEnabled={debugEnabled} imageSize={naturalSize} />}
+      {!containImageOnly && <DeskOverlay desks={desks} selectedDeskId={selectedDeskId} hoveredDeskId={hoveredDeskId} selectedDate={selectedDate} bookingVersion={bookingVersion} onHoverDesk={onHoverDesk} onSelectDesk={onSelectDesk} onDeskDoubleClick={onDeskDoubleClick} onDeskAnchorChange={onDeskAnchorChange} disablePulseAnimation={disablePulseAnimation} debugEnabled={debugEnabled} displayedRect={displayedRect} imageSize={naturalSize} />}
     </div>
   );
 }

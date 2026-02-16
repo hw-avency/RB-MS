@@ -663,7 +663,6 @@ function DesksPage({ path, navigate, onLogout, currentUser }: RouteProps) {
   const [pendingRepositionCoords, setPendingRepositionCoords] = useState<{ x: number; y: number } | null>(null);
   const [savePositionError, setSavePositionError] = useState('');
   const [isSavingPosition, setIsSavingPosition] = useState(false);
-  const [zoom, setZoom] = useState(1);
   const [imageSize, setImageSize] = useState<{ width: number; height: number } | null>(null);
   const [renderSize, setRenderSize] = useState<{ width: number; height: number }>({ width: 0, height: 0 });
   const [isRepairingPositions, setIsRepairingPositions] = useState(false);
@@ -961,11 +960,7 @@ function DesksPage({ path, navigate, onLogout, currentUser }: RouteProps) {
               <h3>Floorplan</h3>
               <p className="muted">Klicke Marker für Details</p>
             </div>
-            <div className="admin-toolbar">
-              <button type="button" className="btn btn-outline btn-icon" title="Zoom verkleinern" onClick={() => setZoom((value) => Math.max(0.7, Number((value - 0.1).toFixed(2))))}>−</button>
-              <button type="button" className="btn btn-outline btn-icon" title="Zoom zurücksetzen" onClick={() => setZoom(1)}>⟲</button>
-              <button type="button" className="btn btn-outline btn-icon" title="Zoom vergrößern" onClick={() => setZoom((value) => Math.min(1.7, Number((value + 0.1).toFixed(2))))}>＋</button>
-            </div>
+            <div className="admin-toolbar" />
           </div>
           {(canvasMode === 'create' || ((canvasMode === 'reposition' || canvasMode === 'CONFIRM_SAVE_POSITION') && pendingRepositionDesk)) && (
             <Badge tone="warn">{canvasMode === 'create' ? 'Klicke auf den Plan, um die Ressource zu platzieren' : `Neue Position für ${pendingRepositionDesk?.name ?? ''} wählen`}</Badge>
@@ -975,8 +970,7 @@ function DesksPage({ path, navigate, onLogout, currentUser }: RouteProps) {
           {floorplan && (
             <>
               <div className={`canvas-body admin-floor-canvas ${canvasMode !== 'idle' ? 'is-active-mode' : ''}`}>
-                <div style={{ transform: `scale(${zoom})`, transformOrigin: 'top left' }}>
-                  <FloorplanCanvas
+                <FloorplanCanvas
                     imageUrl={floorplan.imageUrl}
                     imageAlt={floorplan.name}
                     desks={desks.filter(hasDeskPosition).map((desk) => ({
@@ -1003,7 +997,6 @@ function DesksPage({ path, navigate, onLogout, currentUser }: RouteProps) {
                     onImageRenderSizeChange={setRenderSize}
                     debugEnabled={debugEnabled}
                   />
-                </div>
               </div>
               <div className="desks-legend">
                 <Badge>Normal</Badge>
@@ -1016,7 +1009,6 @@ function DesksPage({ path, navigate, onLogout, currentUser }: RouteProps) {
                   <strong>Floorplan Debug</strong>
                   <p className="muted">imgW/imgH: {Math.round(imageSize?.width ?? 0)} / {Math.round(imageSize?.height ?? 0)}</p>
                   <p className="muted">renderW/renderH: {Math.round(renderSize.width)} / {Math.round(renderSize.height)}</p>
-                  <p className="muted">scale/tx/ty: {zoom.toFixed(2)} / 0 / 0</p>
                   <p className="muted">null positions: {desks.filter((desk) => !hasDeskPosition(desk)).length}</p>
                   {desks.slice(0, 5).map((desk) => {
                     const mapped = normalizeDeskPosition(desk, imageSize);
