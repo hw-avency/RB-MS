@@ -1,5 +1,5 @@
 import cors from 'cors';
-import { canCancelBooking } from './bookingCancelAuthz';
+import { canCancelBooking } from './auth/bookingAuth';
 import express from 'express';
 import crypto from 'crypto';
 import bcrypt from 'bcryptjs';
@@ -331,6 +331,22 @@ const attachAuthUser: express.RequestHandler = async (req, _res, next) => {
         email: 'dev@local',
         displayName: 'Dev Admin',
         role: 'admin',
+        isActive: true
+      };
+      next();
+      return;
+    }
+
+    if (devUserHeader) {
+      const devUserId = req.get('x-dev-user-id')?.trim() || `dev-${devUserHeader.replace(/[^a-z0-9_-]+/g, '-')}`;
+      const devUserEmail = req.get('x-dev-user-email')?.trim().toLowerCase() || `${devUserHeader}@local`;
+      const devUserRoleHeader = req.get('x-dev-user-role')?.trim().toLowerCase();
+      const devUserRole: EmployeeRole = devUserRoleHeader === 'admin' ? 'admin' : 'user';
+      req.authUser = {
+        id: devUserId,
+        email: devUserEmail,
+        displayName: devUserHeader,
+        role: devUserRole,
         isActive: true
       };
       next();
@@ -2158,21 +2174,26 @@ app.delete('/bookings/:id', async (req, res) => {
       : null;
 
     const allowed = canCancelBooking({
-      bookedFor: existing.bookedFor,
-      userId: bookingOwner?.id ?? null,
-      createdByUserId: existing.createdByUserId
-    }, {
-      id: req.authUser.id,
-      role: req.authUser.role
+      booking: {
+        bookedFor: existing.bookedFor,
+        userId: bookingOwner?.id ?? null,
+        createdByUserId: existing.createdByUserId
+      },
+      actor: {
+        userId: req.authUser.id,
+        isAdmin: req.authUser.role === 'admin'
+      }
     });
 
-    console.info('CANCEL_AUTHZ', {
+    console.info('CANCEL_AUTHZ_CHECK', {
       requestId,
       bookingId: id,
       bookedFor: existing.bookedFor,
       bookingUserId: bookingOwner?.id ?? null,
       createdByUserId: existing.createdByUserId,
       actorUserId: req.authUser.id,
+      actorEmail: req.authUser.email,
+      actorIsAdmin: req.authUser.role === 'admin',
       allowed
     });
 
@@ -3756,4 +3777,8 @@ const start = async () => {
   });
 };
 
-void start();
+if (require.main === module) {
+  void start();
+}
+
+export { app, start };
