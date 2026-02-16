@@ -3002,10 +3002,12 @@ const getBookingsForDateRange = async (from: Date, to: Date, floorplanId: string
 };
 
 app.post('/recurring-bookings', async (req, res) => {
-  const { resourceId, startDate, endDate, patternType, interval, byWeekday, byMonthday, bySetPos, byMonth, bookedFor, guestName, period, startTime, endTime } = req.body as {
+  const { resourceId, startDate, endDate, rangeMode, count, patternType, interval, byWeekday, byMonthday, bySetPos, byMonth, bookedFor, guestName, period, startTime, endTime } = req.body as {
     resourceId?: string;
     startDate?: string;
     endDate?: string;
+    rangeMode?: 'BY_DATE' | 'BY_COUNT';
+    count?: number;
     patternType?: RecurrencePatternType;
     interval?: number;
     byWeekday?: number[];
@@ -3019,8 +3021,8 @@ app.post('/recurring-bookings', async (req, res) => {
     endTime?: string | null;
   };
 
-  if (!resourceId || !startDate || !endDate || !patternType) {
-    res.status(400).json({ error: 'validation', message: 'resourceId, startDate, endDate and patternType are required' });
+  if (!resourceId || !startDate || !patternType) {
+    res.status(400).json({ error: 'validation', message: 'resourceId, startDate and patternType are required' });
     return;
   }
   if (!RECURRENCE_PATTERN_VALUES.has(patternType)) {
@@ -3028,11 +3030,48 @@ app.post('/recurring-bookings', async (req, res) => {
     return;
   }
 
+  const normalizedInterval = Number.isInteger(interval) ? Number(interval) : 1;
+  const normalizedCount = Number.isInteger(count) ? Number(count) : null;
+
+  let resolvedEndDate = endDate;
+  if (!resolvedEndDate && rangeMode === 'BY_COUNT' && normalizedCount && normalizedCount >= 1 && normalizedCount <= MAX_RECURRING_OCCURRENCES) {
+    const intervalDays = patternType === 'DAILY' ? normalizedInterval : patternType === 'WEEKLY' ? normalizedInterval * 7 : 0;
+    let horizonDate = toDateOnly(startDate);
+    if (horizonDate) {
+      if (intervalDays > 0) {
+        horizonDate = new Date(horizonDate.getTime() + (intervalDays * Math.max(normalizedCount, 1) + 14) * 24 * 60 * 60 * 1000);
+      } else if (patternType === 'MONTHLY') {
+        horizonDate = new Date(Date.UTC(horizonDate.getUTCFullYear(), horizonDate.getUTCMonth() + normalizedInterval * Math.max(normalizedCount, 1) + 1, horizonDate.getUTCDate()));
+      } else {
+        horizonDate = new Date(Date.UTC(horizonDate.getUTCFullYear() + normalizedInterval * Math.max(normalizedCount, 1) + 1, horizonDate.getUTCMonth(), horizonDate.getUTCDate()));
+      }
+      const probeDefinition: RecurrenceDefinition = {
+        startDate,
+        endDate: toISODateOnly(horizonDate),
+        patternType,
+        interval: normalizedInterval,
+        byWeekday: Array.isArray(byWeekday) ? Array.from(new Set(byWeekday.filter((value) => Number.isInteger(value)))) : null,
+        byMonthday: typeof byMonthday === 'number' ? byMonthday : null,
+        bySetPos: typeof bySetPos === 'number' ? bySetPos : null,
+        byMonth: typeof byMonth === 'number' ? byMonth : null
+      };
+      const probeDates = expandRecurrence(probeDefinition, normalizedCount).dates;
+      if (probeDates.length >= normalizedCount) {
+        resolvedEndDate = probeDates[normalizedCount - 1];
+      }
+    }
+  }
+
+  if (!resolvedEndDate) {
+    res.status(400).json({ error: 'validation', message: 'endDate is required (or provide rangeMode=BY_COUNT with count).' });
+    return;
+  }
+
   const recurrenceDefinition: RecurrenceDefinition = {
     startDate,
-    endDate,
+    endDate: resolvedEndDate,
     patternType,
-    interval: Number.isInteger(interval) ? Number(interval) : 1,
+    interval: normalizedInterval,
     byWeekday: Array.isArray(byWeekday) ? Array.from(new Set(byWeekday.filter((value) => Number.isInteger(value)))) : null,
     byMonthday: typeof byMonthday === 'number' ? byMonthday : null,
     bySetPos: typeof bySetPos === 'number' ? bySetPos : null,
@@ -3174,7 +3213,7 @@ app.post('/recurring-bookings', async (req, res) => {
         resourceId,
         createdByEmployeeId: actorEmployee.id,
         startDate: toDateOnly(startDate)!,
-        endDate: toDateOnly(endDate)!,
+        endDate: toDateOnly(resolvedEndDate)!,
         patternType,
         interval: recurrenceDefinition.interval,
         byWeekday: recurrenceDefinition.byWeekday ?? [],

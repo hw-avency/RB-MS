@@ -73,9 +73,8 @@ input, select { border: 1px solid hsl(var(--border)); border-radius: 12px; paddi
 .day-btn.has-bookings { box-shadow: none; }
 .day-btn.availability-many-free { background: color-mix(in srgb, var(--resource-free) 22%, white); }
 .day-btn.availability-few-free { 
-  background: color-mix(in srgb, #f59e0b 36%, white);
+  background: color-mix(in srgb, #f59e0b 48%, white);
   color: #0f172a;
-  box-shadow: inset 0 0 0 1.5px #f59e0b;
 }
 .day-btn.availability-none-free { background: color-mix(in srgb, var(--resource-busy) 24%, white); }
 .day-btn.today { box-shadow: inset 0 0 0 1px hsl(var(--primary)); }
@@ -83,7 +82,7 @@ input, select { border: 1px solid hsl(var(--border)); border-radius: 12px; paddi
 .day-btn.outside { opacity: .4; }
 
 .legend{display:grid;gap:8px}.legend span{display:flex;align-items:center;gap:8px;font-size:14px}.dot{width:10px;height:10px;border-radius:999px;display:inline-block}
-.dot.free{background:var(--resource-free)}.dot.booked{background:var(--resource-busy)}.dot.selected{background:var(--resource-own)}.dot.availability-many{background:color-mix(in srgb,var(--resource-free) 55%,white)}.dot.availability-few{background:#f59e0b;box-shadow:inset 0 0 0 1px #b45309}.dot.availability-none{background:color-mix(in srgb,var(--resource-busy) 65%,white)}
+.dot.free{background:var(--resource-free)}.dot.booked{background:var(--resource-busy)}.dot.selected{background:var(--resource-own)}.dot.availability-many{background:color-mix(in srgb,var(--resource-free) 55%,white)}.dot.availability-few{background:#f59e0b}.dot.availability-none{background:color-mix(in srgb,var(--resource-busy) 65%,white)}
 .toggle{display:flex;align-items:center;gap:8px;font-size:14px}
 
 .card-header-row{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:12px}.toolbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
@@ -139,6 +138,13 @@ input, select { border: 1px solid hsl(var(--border)); border-radius: 12px; paddi
 .split{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
 .desk-booking-form .weekday-toggle-group{max-height:120px;overflow-y:auto;padding-right:2px}
 .recurring-panel{border:1px solid hsl(var(--border));border-radius:10px;padding:10px;background:hsl(var(--card-2))}
+.recurrence-interval-row{display:flex;align-items:center;gap:8px;flex-wrap:nowrap}
+.recurrence-interval-row label{margin:0;flex:0 0 auto}
+.recurrence-interval-row input{flex:0 0 90px;min-width:90px}
+.recurrence-interval-row span{flex:0 0 auto;white-space:nowrap}
+.recurrence-range-row{display:flex;align-items:center;gap:8px;flex-wrap:nowrap}
+.recurrence-range-row input[type="radio"]{flex:0 0 auto}
+.recurrence-range-row input[type="date"],.recurrence-range-row input[type="number"]{flex:1 1 160px;min-width:0}
 .desk-booking-form-footer{position:sticky;bottom:0;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;padding-top:10px;background:hsl(var(--card))}
 .desk-booking-form-footer .btn{justify-content:center;min-height:38px}
 .room-schedule-block{padding:10px;border-radius:10px;background:hsl(var(--muted)/.45);border:1px solid hsl(var(--border));gap:10px}
