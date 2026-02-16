@@ -113,6 +113,8 @@ model Booking {
   createdByEmployee Employee @relation("BookingCreatedByEmployee", fields: [createdByEmployeeId], references: [id], onDelete: Restrict)
   createdByUserId String?
   createdByEmail String?
+  recurringBookingId String?
+  recurringGroupId String?
   date      DateTime @db.Date
   daySlot   DaySlot?
   startTime DateTime?
@@ -124,6 +126,7 @@ model Booking {
   desk      Desk     @relation(fields: [deskId], references: [id], onDelete: Cascade)
   createdBy User? @relation("BookingCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
   employee Employee? @relation("BookingEmployee", fields: [employeeId], references: [id], onDelete: SetNull)
+  recurringBooking RecurringBooking? @relation(fields: [recurringBookingId], references: [id], onDelete: SetNull)
 
   @@index([userEmail, date])
   @@index([employeeId, date])
@@ -132,6 +135,8 @@ model Booking {
   @@index([createdByUserId])
   @@index([createdByEmail])
   @@index([createdByEmployeeId])
+  @@index([recurringBookingId])
+  @@index([recurringGroupId])
 }
 
 enum BookedFor {
@@ -161,6 +166,7 @@ enum RecurrencePatternType {
 
 model RecurringBooking {
   id                  String    @id @default(cuid())
+  groupId             String    @default(uuid())
   resourceId          String
   createdByEmployeeId String
   startDate           DateTime  @db.Date
@@ -179,7 +185,9 @@ model RecurringBooking {
   createdAt           DateTime  @default(now())
   resource            Desk      @relation("RecurringBookingResource", fields: [resourceId], references: [id], onDelete: Cascade)
   createdByEmployee   Employee  @relation("RecurringBookingCreatedByEmployee", fields: [createdByEmployeeId], references: [id], onDelete: Restrict)
+  bookings            Booking[]
 
   @@index([resourceId, startDate, endDate])
   @@index([createdByEmployeeId])
+  @@index([groupId])
 }

@@ -982,6 +982,8 @@ const mapBookingResponse = (booking: BookingWithCreator & { employeeId?: string 
   createdBy: booking.createdByEmployee,
   createdByUserId: booking.createdByEmployeeId,
   createdByEmployeeId: booking.createdByEmployeeId,
+  recurringBookingId: booking.recurringBookingId ?? null,
+  recurringGroupId: booking.recurringGroupId ?? null,
   date: booking.date,
   daySlot: booking.daySlot,
   slot: booking.slot,
@@ -2623,6 +2625,8 @@ app.get('/bookings', async (req, res) => {
       bookedFor: true,
       guestName: true,
       createdByEmployeeId: true,
+      recurringBookingId: true,
+      recurringGroupId: true,
       creatorUnknown: true,
       date: true,
       daySlot: true,
@@ -2686,6 +2690,8 @@ app.get('/bookings', async (req, res) => {
     userEmail: booking.userEmail,
     bookedFor: booking.bookedFor,
     guestName: booking.guestName,
+    recurringBookingId: booking.recurringBookingId,
+    recurringGroupId: booking.recurringGroupId,
     date: booking.date,
     createdAt: booking.createdAt,
     daySlot: booking.daySlot ?? bookingSlotToDaySlot(booking.slot),
@@ -2884,6 +2890,8 @@ app.get('/resources/:resourceId/availability', async (req, res) => {
     createdByEmployeeId: booking.createdByEmployeeId,
     creatorUnknown: booking.creatorUnknown,
     type: recurringOccurrenceKeys.has(`${resourceId}|${toISODateOnly(booking.date)}|${booking.createdByEmployeeId}`) ? 'recurring' : 'single',
+    recurringBookingId: booking.recurringBookingId,
+    recurringGroupId: booking.recurringGroupId,
     user: {
       email: booking.userEmail,
       name: booking.bookedFor === 'GUEST'
@@ -3188,26 +3196,6 @@ app.post('/recurring-bookings', async (req, res) => {
       };
     }
 
-    const createdBookings = await Promise.all(targetDates.map((targetDate) => tx.booking.create({
-      data: {
-        deskId: resourceId,
-        userEmail: normalizedBookedFor === 'SELF' ? actorEmployee.email : null,
-        employeeId: normalizedBookedFor === 'SELF' ? actorEmployee.id : null,
-        bookedFor: normalizedBookedFor,
-        guestName: normalizedBookedFor === 'GUEST' ? normalizedGuestName : null,
-        createdByEmployeeId: actorEmployee.id,
-        createdByUserId: req.authUser?.source === 'local' ? req.authUser.id : null,
-        createdByEmail: req.authUser?.email ?? null,
-        date: targetDate,
-        daySlot: recurrenceWindow.mode === 'day' ? recurrenceWindow.daySlot : null,
-        slot: recurrenceWindow.mode === 'day' ? (recurrenceWindow.daySlot === 'FULL' ? 'FULL_DAY' : recurrenceWindow.daySlot === 'AM' ? 'MORNING' : 'AFTERNOON') : 'CUSTOM',
-        startMinute: recurrenceWindow.mode === 'time' ? recurrenceWindow.startMinute : null,
-        endMinute: recurrenceWindow.mode === 'time' ? recurrenceWindow.endMinute : null,
-        startTime: recurrenceWindow.mode === 'time' ? new Date(Date.UTC(targetDate.getUTCFullYear(), targetDate.getUTCMonth(), targetDate.getUTCDate(), Math.floor(recurrenceWindow.startMinute / 60), recurrenceWindow.startMinute % 60, 0, 0)) : null,
-        endTime: recurrenceWindow.mode === 'time' ? new Date(Date.UTC(targetDate.getUTCFullYear(), targetDate.getUTCMonth(), targetDate.getUTCDate(), Math.floor(recurrenceWindow.endMinute / 60), recurrenceWindow.endMinute % 60, 0, 0)) : null
-      }
-    })));
-
     const recurringBooking = await tx.recurringBooking.create({
       data: {
         resourceId,
@@ -3227,6 +3215,28 @@ app.post('/recurring-bookings', async (req, res) => {
         endTime: recurrenceWindow.mode === 'time' ? endTime : null
       }
     });
+
+    const createdBookings = await Promise.all(targetDates.map((targetDate) => tx.booking.create({
+      data: {
+        deskId: resourceId,
+        userEmail: normalizedBookedFor === 'SELF' ? actorEmployee.email : null,
+        employeeId: normalizedBookedFor === 'SELF' ? actorEmployee.id : null,
+        bookedFor: normalizedBookedFor,
+        guestName: normalizedBookedFor === 'GUEST' ? normalizedGuestName : null,
+        createdByEmployeeId: actorEmployee.id,
+        createdByUserId: req.authUser?.source === 'local' ? req.authUser.id : null,
+        createdByEmail: req.authUser?.email ?? null,
+        recurringBookingId: recurringBooking.id,
+        recurringGroupId: recurringBooking.groupId,
+        date: targetDate,
+        daySlot: recurrenceWindow.mode === 'day' ? recurrenceWindow.daySlot : null,
+        slot: recurrenceWindow.mode === 'day' ? (recurrenceWindow.daySlot === 'FULL' ? 'FULL_DAY' : recurrenceWindow.daySlot === 'AM' ? 'MORNING' : 'AFTERNOON') : 'CUSTOM',
+        startMinute: recurrenceWindow.mode === 'time' ? recurrenceWindow.startMinute : null,
+        endMinute: recurrenceWindow.mode === 'time' ? recurrenceWindow.endMinute : null,
+        startTime: recurrenceWindow.mode === 'time' ? new Date(Date.UTC(targetDate.getUTCFullYear(), targetDate.getUTCMonth(), targetDate.getUTCDate(), Math.floor(recurrenceWindow.startMinute / 60), recurrenceWindow.startMinute % 60, 0, 0)) : null,
+        endTime: recurrenceWindow.mode === 'time' ? new Date(Date.UTC(targetDate.getUTCFullYear(), targetDate.getUTCMonth(), targetDate.getUTCDate(), Math.floor(recurrenceWindow.endMinute / 60), recurrenceWindow.endMinute % 60, 0, 0)) : null
+      }
+    })));
 
     return {
       kind: 'ok' as const,
@@ -3917,14 +3927,113 @@ app.get('/admin/recurring-bookings', requireAdmin, async (req, res) => {
   res.status(200).json(recurringBookings);
 });
 
+type SeriesCancelMode = 'ALL' | 'FUTURE';
+
+const parseSeriesCancelMode = (value: unknown): SeriesCancelMode | null => {
+  if (typeof value !== 'string') return null;
+  const normalized = value.trim().toUpperCase();
+  if (normalized === 'ALL' || normalized === 'FUTURE') return normalized;
+  return null;
+};
+
+const cancelRecurringBookingInstances = async ({
+  recurringBookingId,
+  mode,
+  anchorDate
+}: {
+  recurringBookingId: string;
+  mode: SeriesCancelMode;
+  anchorDate?: string;
+}, tx: Prisma.TransactionClient) => {
+  if (mode === 'ALL') {
+    const deleted = await tx.booking.deleteMany({ where: { recurringBookingId } });
+    await tx.recurringBooking.deleteMany({ where: { id: recurringBookingId } });
+    return deleted.count;
+  }
+
+  if (!anchorDate) {
+    const error = new Error('anchorDate is required for FUTURE mode');
+    (error as Error & { status?: number }).status = 400;
+    throw error;
+  }
+
+  const parsedAnchor = toDateOnly(anchorDate);
+  if (!parsedAnchor) {
+    const error = new Error('anchorDate must be in YYYY-MM-DD format');
+    (error as Error & { status?: number }).status = 400;
+    throw error;
+  }
+
+  const deleted = await tx.booking.deleteMany({ where: { recurringBookingId, date: { gte: parsedAnchor } } });
+  return deleted.count;
+};
+
+app.delete('/recurring-bookings/:recurringBookingId/instances', async (req, res) => {
+  const recurringBookingId = getRouteId(req.params.recurringBookingId);
+  const requestId = req.requestId ?? 'unknown';
+  if (!recurringBookingId) {
+    res.status(400).json({ error: 'validation', message: 'recurringBookingId is required' });
+    return;
+  }
+
+  const mode = parseSeriesCancelMode((req.query.mode as unknown) ?? (req.body as { mode?: unknown } | undefined)?.mode ?? 'ALL');
+  if (!mode) {
+    res.status(400).json({ error: 'validation', message: 'mode must be ALL or FUTURE' });
+    return;
+  }
+
+  const anchorDateRaw = typeof req.query.anchorDate === 'string'
+    ? req.query.anchorDate
+    : typeof (req.body as { anchorDate?: unknown } | undefined)?.anchorDate === 'string'
+      ? (req.body as { anchorDate?: string }).anchorDate
+      : undefined;
+
+  const recurring = await prisma.recurringBooking.findUnique({ where: { id: recurringBookingId }, select: { id: true, createdByEmployeeId: true } });
+  if (!recurring) {
+    res.status(404).json({ error: 'not_found', message: 'Recurring booking not found' });
+    return;
+  }
+
+  let actorEmployee;
+  try {
+    actorEmployee = await requireActorEmployee(req);
+  } catch (error) {
+    const status = (error as Error & { status?: number }).status ?? 403;
+    res.status(status).json({ error: status === 401 ? 'unauthorized' : 'forbidden', message: (error as Error).message });
+    return;
+  }
+
+  const isAdmin = req.authUser?.role === 'admin';
+  if (!isAdmin && recurring.createdByEmployeeId !== actorEmployee.id) {
+    res.status(403).json({ error: 'forbidden', message: 'Du darfst diese Serie nicht stornieren.' });
+    return;
+  }
+
+  try {
+    const deletedCount = await prisma.$transaction(async (tx) => cancelRecurringBookingInstances({ recurringBookingId, mode, anchorDate: anchorDateRaw }, tx));
+    console.info('SERIES_CANCEL', { requestId, recurringBookingId, actorEmployeeId: actorEmployee.id, deletedCount, mode });
+    res.status(200).json({ deletedCount });
+  } catch (error) {
+    const status = (error as Error & { status?: number }).status ?? 500;
+    const message = error instanceof Error ? error.message : 'Series cancel failed';
+    if (status >= 500) {
+      console.error('SERIES_CANCEL', { requestId, recurringBookingId, actorEmployeeId: actorEmployee.id, deletedCount: 0, mode, error: message, status });
+      res.status(status).json({ error: 'internal_error', message: 'Series cancel failed' });
+      return;
+    }
+
+    res.status(status).json({ error: 'validation', message });
+  }
+});
+
 app.delete('/recurring-bookings/:id', async (req, res) => {
-  const id = getRouteId(req.params.id);
-  if (!id) {
+  const recurringBookingId = getRouteId(req.params.id);
+  if (!recurringBookingId) {
     res.status(400).json({ error: 'validation', message: 'id is required' });
     return;
   }
 
-  const recurring = await prisma.recurringBooking.findUnique({ where: { id }, include: { resource: { select: { kind: true } } } });
+  const recurring = await prisma.recurringBooking.findUnique({ where: { id: recurringBookingId }, select: { id: true, createdByEmployeeId: true } });
   if (!recurring) {
     res.status(404).json({ error: 'not_found', message: 'Recurring booking not found' });
     return;
@@ -3945,35 +4054,9 @@ app.delete('/recurring-bookings/:id', async (req, res) => {
     return;
   }
 
-  const recurrenceWindow = recurringToWindow(recurring, recurring.resource.kind);
-  const { dates } = expandRecurrence(recurringToDefinition(recurring), Number.MAX_SAFE_INTEGER);
-
   await prisma.$transaction(async (tx) => {
-    if (recurrenceWindow && dates.length > 0) {
-      const dateValues = dates.map((dateValue) => toDateOnly(dateValue)).filter((dateValue): dateValue is Date => Boolean(dateValue));
-      const candidateBookings = await tx.booking.findMany({
-        where: {
-          deskId: recurring.resourceId,
-          createdByEmployeeId: recurring.createdByEmployeeId,
-          bookedFor: recurring.bookedFor,
-          date: { in: dateValues }
-        }
-      });
-
-      const matchingBookingIds = candidateBookings
-        .filter((booking) => {
-          if ((recurring.guestName ?? null) !== (booking.guestName ?? null)) return false;
-          const candidateWindow = bookingToWindow(booking);
-          return candidateWindow ? windowsOverlap(recurrenceWindow, candidateWindow) : false;
-        })
-        .map((booking) => booking.id);
-
-      if (matchingBookingIds.length > 0) {
-        await tx.booking.deleteMany({ where: { id: { in: matchingBookingIds } } });
-      }
-    }
-
-    await tx.recurringBooking.delete({ where: { id } });
+    await tx.booking.deleteMany({ where: { recurringBookingId } });
+    await tx.recurringBooking.deleteMany({ where: { id: recurringBookingId } });
   });
 
   res.status(204).send();
