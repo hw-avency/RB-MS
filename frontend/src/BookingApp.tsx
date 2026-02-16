@@ -1,4 +1,4 @@
-import { MouseEvent, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { MouseEvent, ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { API_BASE, ApiError, checkBackendHealth, get, markBackendAvailable, post, put, resolveApiUrl } from './api';
 import { cancelBooking, createRoomBooking } from './api/bookings';
@@ -88,6 +88,8 @@ type RoomBookingListEntry = { id: string; start: number; end: number; label: str
 type DeskSlotAvailability = 'FREE' | 'AM_BOOKED' | 'PM_BOOKED' | 'FULL_BOOKED';
 type PopupPlacement = 'top' | 'right' | 'bottom' | 'left';
 type PopupCoordinates = { left: number; top: number; placement: PopupPlacement };
+type FloorplanTransform = { scale: number; translateX: number; translateY: number };
+type FloorplanImageSize = { width: number; height: number };
 type CalendarBooking = { date: string; deskId: string; daySlot?: 'AM' | 'PM' | 'FULL' };
 type DayAvailabilityTone = 'many-free' | 'few-free' | 'none-free';
 type OverviewTab = 'PRESENCE' | 'ROOMS' | 'MY_BOOKINGS';
@@ -96,6 +98,11 @@ const POPUP_OFFSET = 12;
 const POPUP_PADDING = 8;
 
 const clamp = (value: number, min: number, max: number): number => Math.min(max, Math.max(min, value));
+
+const FLOORPLAN_FIT_PADDING = 24;
+const FLOORPLAN_MIN_SCALE = 0.6;
+const FLOORPLAN_MAX_SCALE = 2.4;
+const FLOORPLAN_ZOOM_STEP = 1.1;
 
 const getCandidatePosition = (placement: PopupPlacement, anchorRect: DOMRect, popupWidth: number, popupHeight: number): { left: number; top: number } => {
   const anchorCenterX = anchorRect.left + anchorRect.width / 2;
@@ -469,6 +476,27 @@ function TopLoadingBar({ loading }: { loading: boolean }) {
   );
 }
 
+
+function ZoomIconButton({ label, disabled = false, onClick, children }: { label: string; disabled?: boolean; onClick: () => void; children: ReactNode }) {
+  return (
+    <button type="button" className="floorplan-zoom-btn" aria-label={label} title={label} disabled={disabled} onClick={onClick}>
+      {children}
+    </button>
+  );
+}
+
+function IconMinus() {
+  return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" /></svg>;
+}
+
+function IconPlus() {
+  return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" /></svg>;
+}
+
+function IconReset() {
+  return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4a8 8 0 1 0 7.5 10.8" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" /><path d="M14 4h6v6" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>;
+}
+
 export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogout, currentUser }: { onOpenAdmin: () => void; canOpenAdmin: boolean; currentUserEmail?: string; onLogout: () => Promise<void>; currentUser: AuthUser }) {
   const [floorplans, setFloorplans] = useState<Floorplan[]>([]);
   const [selectedFloorplanId, setSelectedFloorplanId] = useState('');
@@ -485,7 +513,10 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
 
   const [selectedDeskId, setSelectedDeskId] = useState('');
   const [hoveredDeskId, setHoveredDeskId] = useState('');
-  const [floorplanZoom, setFloorplanZoom] = useState(1);
+  const [floorplanTransform, setFloorplanTransform] = useState<FloorplanTransform>({ scale: 1, translateX: 0, translateY: 0 });
+  const [floorplanInitialTransform, setFloorplanInitialTransform] = useState<FloorplanTransform>({ scale: 1, translateX: 0, translateY: 0 });
+  const [floorplanImageSize, setFloorplanImageSize] = useState<FloorplanImageSize | null>(null);
+  const [floorplanViewportSize, setFloorplanViewportSize] = useState<{ width: number; height: number }>({ width: 1, height: 1 });
   const [bookingVersion, setBookingVersion] = useState(0);
 
   const [isBootstrapping, setIsBootstrapping] = useState(true);
@@ -524,6 +555,8 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
   const highlightTimerRef = useRef<number | null>(null);
   const popupRef = useRef<HTMLElement | null>(null);
   const cancelDialogRef = useRef<HTMLElement | null>(null);
+  const floorplanViewportRef = useRef<HTMLDivElement | null>(null);
+  const hasFloorplanManualTransformRef = useRef(false);
   const availabilityCacheRef = useRef<Map<string, Map<string, DayAvailabilityTone>>>(new Map());
   const deskAnchorElementsRef = useRef<Map<string, HTMLElement>>(new Map());
 
@@ -556,6 +589,75 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
   }, [refreshDeskPopupAnchorRect, registerToastDeskAnchor]);
 
   const selectedFloorplan = useMemo(() => floorplans.find((f) => f.id === selectedFloorplanId) ?? null, [floorplans, selectedFloorplanId]);
+
+  useEffect(() => {
+    hasFloorplanManualTransformRef.current = false;
+    if (!selectedFloorplan?.imageUrl) {
+      setFloorplanImageSize(null);
+      return;
+    }
+
+    const image = new Image();
+    image.onload = () => {
+      if (!image.naturalWidth || !image.naturalHeight) return;
+      setFloorplanImageSize({ width: image.naturalWidth, height: image.naturalHeight });
+    };
+    image.src = selectedFloorplan.imageUrl;
+  }, [selectedFloorplan?.id, selectedFloorplan?.imageUrl]);
+
+  useLayoutEffect(() => {
+    if (!floorplanViewportRef.current) return;
+    const viewport = floorplanViewportRef.current;
+    const syncSize = () => {
+      setFloorplanViewportSize({ width: Math.max(1, viewport.clientWidth), height: Math.max(1, viewport.clientHeight) });
+    };
+    syncSize();
+    const observer = new ResizeObserver(syncSize);
+    observer.observe(viewport);
+    window.addEventListener('resize', syncSize);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener('resize', syncSize);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!floorplanImageSize) return;
+    const availableWidth = Math.max(1, floorplanViewportSize.width - FLOORPLAN_FIT_PADDING * 2);
+    const availableHeight = Math.max(1, floorplanViewportSize.height - FLOORPLAN_FIT_PADDING * 2);
+    const fitScale = clamp(Math.min(availableWidth / floorplanImageSize.width, availableHeight / floorplanImageSize.height), FLOORPLAN_MIN_SCALE, FLOORPLAN_MAX_SCALE);
+    const fitTransform = {
+      scale: fitScale,
+      translateX: (floorplanViewportSize.width - floorplanImageSize.width * fitScale) / 2,
+      translateY: (floorplanViewportSize.height - floorplanImageSize.height * fitScale) / 2,
+    };
+    setFloorplanInitialTransform(fitTransform);
+    if (!hasFloorplanManualTransformRef.current) setFloorplanTransform(fitTransform);
+  }, [floorplanImageSize, floorplanViewportSize.height, floorplanViewportSize.width]);
+
+  const applyFloorplanZoom = useCallback((zoomDirection: 'in' | 'out') => {
+    const factor = zoomDirection === 'in' ? FLOORPLAN_ZOOM_STEP : 1 / FLOORPLAN_ZOOM_STEP;
+    setFloorplanTransform((current) => {
+      const nextScale = clamp(current.scale * factor, FLOORPLAN_MIN_SCALE, FLOORPLAN_MAX_SCALE);
+      if (nextScale === current.scale) return current;
+      const centerX = floorplanViewportSize.width / 2;
+      const centerY = floorplanViewportSize.height / 2;
+      const worldX = (centerX - current.translateX) / current.scale;
+      const worldY = (centerY - current.translateY) / current.scale;
+      hasFloorplanManualTransformRef.current = true;
+      return {
+        scale: nextScale,
+        translateX: centerX - worldX * nextScale,
+        translateY: centerY - worldY * nextScale,
+      };
+    });
+  }, [floorplanViewportSize.height, floorplanViewportSize.width]);
+
+  const resetFloorplanView = useCallback(() => {
+    hasFloorplanManualTransformRef.current = false;
+    setFloorplanTransform(floorplanInitialTransform);
+    floorplanViewportRef.current?.scrollTo({ left: 0, top: 0, behavior: 'auto' });
+  }, [floorplanInitialTransform]);
   const employeesByEmail = useMemo(() => new Map(employees.map((employee) => [employee.email.toLowerCase(), employee])), [employees]);
   const employeesById = useMemo(() => new Map(employees.map((employee) => [employee.id, employee])), [employees]);
   const desks = useMemo(() => enrichDeskBookings({
@@ -1789,29 +1891,55 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
                 <h2>{selectedFloorplan?.name ?? 'Floorplan'} · {formatDate(selectedDate)}</h2>
                 <p className="muted">Klicke auf einen Platz zum Buchen</p>
               </div>
-              <div className="toolbar">
-                <button className="btn btn-ghost" type="button" onClick={() => setFloorplanZoom((prev) => Math.max(0.8, Number((prev - 0.1).toFixed(2))))}>−</button>
-                <button className="btn btn-ghost" type="button" onClick={() => setFloorplanZoom(1)}>Reset</button>
-                <button className="btn btn-ghost" type="button" onClick={() => setFloorplanZoom((prev) => Math.min(1.8, Number((prev + 0.1).toFixed(2))))}>＋</button>
-              </div>
+              <div className="toolbar" />
             </div>
-            <div className={`canvas-body canvas-body-focus ${isUpdatingOccupancy ? 'is-loading' : ''}`} style={{ ['--floorplan-zoom' as string]: floorplanZoom }}>
+            <div className={`canvas-body canvas-body-focus ${isUpdatingOccupancy ? 'is-loading' : ''}`}>
               {isBootstrapping ? (
                 <div className="skeleton h-420" />
               ) : selectedFloorplan ? (
-                <FloorplanCanvas
-                  imageUrl={selectedFloorplan.imageUrl}
-                  imageAlt={selectedFloorplan.name}
-                  desks={filteredDesks}
-                  selectedDeskId={selectedDeskId}
-                  hoveredDeskId={hoveredDeskId}
-                  onHoverDesk={(deskId) => { setHoveredDeskId(deskId); if (deskId) triggerDeskHighlight(deskId, 900); }}
-                  selectedDate={selectedDate}
-                  onSelectDesk={selectDeskFromCanvas}
-                  onCanvasClick={() => { setSelectedDeskId(''); setHighlightedDeskId(''); closeBookingFlow(); }}
-                  onDeskAnchorChange={registerDeskAnchor}
-                  bookingVersion={bookingVersion}
-                />
+                <div ref={floorplanViewportRef} className="floorplan-viewport">
+                  <div
+                    className="floorplan-transform-layer"
+                    style={{
+                      width: floorplanImageSize?.width ?? 1,
+                      height: floorplanImageSize?.height ?? 1,
+                      transform: `translate3d(${floorplanTransform.translateX}px, ${floorplanTransform.translateY}px, 0) scale(${floorplanTransform.scale})`,
+                    }}
+                  >
+                    <FloorplanCanvas
+                      imageUrl={selectedFloorplan.imageUrl}
+                      imageAlt={selectedFloorplan.name}
+                      desks={filteredDesks}
+                      selectedDeskId={selectedDeskId}
+                      hoveredDeskId={hoveredDeskId}
+                      onHoverDesk={(deskId) => { setHoveredDeskId(deskId); if (deskId) triggerDeskHighlight(deskId, 900); }}
+                      selectedDate={selectedDate}
+                      onSelectDesk={selectDeskFromCanvas}
+                      onCanvasClick={() => { setSelectedDeskId(''); setHighlightedDeskId(''); closeBookingFlow(); }}
+                      onDeskAnchorChange={registerDeskAnchor}
+                      bookingVersion={bookingVersion}
+                      style={{ width: '100%', height: '100%' }}
+                    />
+                  </div>
+
+                  <div className="floorplan-zoom-controls" role="group" aria-label="Floorplan Zoomsteuerung">
+                    <ZoomIconButton label="Rauszoomen" disabled={floorplanTransform.scale <= FLOORPLAN_MIN_SCALE + 0.001} onClick={() => applyFloorplanZoom('out')}>
+                      <IconMinus />
+                    </ZoomIconButton>
+                    <ZoomIconButton label="Ansicht zurücksetzen" onClick={resetFloorplanView}>
+                      <IconReset />
+                    </ZoomIconButton>
+                    <ZoomIconButton label="Reinzoomen" disabled={floorplanTransform.scale >= FLOORPLAN_MAX_SCALE - 0.001} onClick={() => applyFloorplanZoom('in')}>
+                      <IconPlus />
+                    </ZoomIconButton>
+                  </div>
+
+                  {showRoomDebugInfo && (
+                    <div className="floorplan-debug" aria-live="polite">
+                      scale={floorplanTransform.scale.toFixed(3)} · x={Math.round(floorplanTransform.translateX)} · y={Math.round(floorplanTransform.translateY)} · initial={floorplanInitialTransform.scale.toFixed(3)}
+                    </div>
+                  )}
+                </div>
               ) : (
                 <div className="empty-state"><p>Kein Floorplan ausgewählt.</p></div>
               )}
