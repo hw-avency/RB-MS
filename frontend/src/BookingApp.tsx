@@ -285,10 +285,19 @@ const getBookingCreatorName = (booking: { createdBy?: BookingActor }): string =>
   return booking.createdBy?.displayName ?? booking.createdBy?.name ?? 'Unbekannt';
 };
 
-const isMine = (booking: { bookedFor?: 'SELF' | 'GUEST'; userId?: string | null; createdByUserId?: string }, me?: AuthUser | null): boolean => {
+const canCancelBooking = (
+  booking: { bookedFor?: 'SELF' | 'GUEST'; userId?: string | null; createdByUserId?: string },
+  me?: AuthUser | null
+): boolean => {
   if (!me) return false;
-  if (booking.bookedFor === 'SELF' && booking.userId && booking.userId === me.id) return true;
-  return Boolean(booking.createdByUserId && booking.createdByUserId === me.id);
+  if (me.role === 'admin') return true;
+  if (booking.bookedFor === 'SELF') return Boolean(booking.userId && booking.userId === me.id);
+  if (booking.bookedFor === 'GUEST') return Boolean(booking.createdByUserId && booking.createdByUserId === me.id);
+  return false;
+};
+
+const isMine = (booking: { bookedFor?: 'SELF' | 'GUEST'; userId?: string | null; createdByUserId?: string }, me?: AuthUser | null): boolean => {
+  return canCancelBooking(booking, me);
 };
 
 const formatDate = (dateString: string): string => new Date(`${dateString}T00:00:00.000Z`).toLocaleDateString('de-DE');
@@ -472,7 +481,7 @@ const enrichDeskBookings = ({
     const bookingPhotoUrl = resolveApiUrl(booking.userPhotoUrl);
     const isMineByEmail = Boolean(currentUserEmail && normalizedEmail && normalizedEmail === currentUserEmail.toLowerCase());
     const isMineByUserId = Boolean(currentUserId && booking.userId && booking.userId === currentUserId && booking.bookedFor === 'SELF');
-    const isMineByCreator = Boolean(currentUserId && booking.createdByUserId && booking.createdByUserId === currentUserId);
+    const isMineByCreator = Boolean(currentUserId && booking.createdByUserId && booking.createdByUserId === currentUserId && booking.bookedFor === 'GUEST');
 
     return {
       ...booking,
@@ -1118,7 +1127,6 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
   const popupRoomFreeIntervals = useMemo(() => invertIntervals(ROOM_WINDOW_START_MINUTES, ROOM_WINDOW_END_MINUTES, popupRoomOccupiedIntervals), [popupRoomOccupiedIntervals]);
   const popupRoomOccupiedSegments = useMemo(() => intervalsToSegments(ROOM_WINDOW_START_MINUTES, ROOM_WINDOW_END_MINUTES, popupRoomOccupiedIntervals), [popupRoomOccupiedIntervals]);
   const popupRoomBookingsList = useMemo<RoomBookingListEntry[]>(() => {
-    const isAdmin = currentUser?.role === 'admin';
     const rendered = popupRoomBookingsForSelectedDay
       .flatMap((booking) => {
         const start = bookingTimeToMinutes(booking.startTime);
@@ -1129,11 +1137,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
         const bookingEmail = booking.user?.email?.toLowerCase();
         const mine = isMine(booking, currentUser);
         const isCurrentUser = mine || Boolean(currentUserEmail && bookingEmail && bookingEmail === currentUserEmail.toLowerCase());
-        const canCancel = Boolean(
-          isAdmin
-          || (booking.bookedFor === 'SELF' && currentUser?.id && booking.userId === currentUser.id)
-          || (booking.bookedFor === 'GUEST' && currentUser?.id && booking.createdByUserId === currentUser.id)
-        );
+        const canCancel = canCancelBooking(booking, currentUser);
         return [{
           id: booking.id,
           start: clamped.startMin,
