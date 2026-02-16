@@ -35,7 +35,18 @@ type OccupancyDesk = {
 type OccupancyPerson = { email: string; displayName?: string; deskName?: string; deskId?: string };
 type OccupancyResponse = { date: string; floorplanId: string; desks: OccupancyDesk[]; people: OccupancyPerson[] };
 type BookingEmployee = { id: string; email: string; firstName?: string; displayName: string; photoUrl?: string };
-type OccupantForDay = { deskId: string; deskLabel: string; deskKindLabel: string; userId: string; name: string; firstName: string; email: string; employeeId?: string; photoUrl?: string };
+type OccupantForDay = {
+  deskId: string;
+  deskLabel: string;
+  deskKindLabel: string;
+  userId: string;
+  name: string;
+  firstName: string;
+  email: string;
+  employeeId?: string;
+  photoUrl?: string;
+  presenceDebug?: string;
+};
 type BookingSubmitPayload = BookingFormSubmitPayload;
 type BookingDialogState = 'IDLE' | 'BOOKING_OPEN' | 'SUBMITTING' | 'CONFLICT_REVIEW';
 type RebookConfirmState = {
@@ -68,6 +79,7 @@ type DeskPopupState = { deskId: string; anchorRect: DOMRect; openedAt: number };
 type CancelConfirmContext = DeskPopupState & { bookingIds: string[]; bookingLabel: string; isRecurring: boolean; keepPopoverOpen: boolean };
 type OccupancyBooking = NonNullable<OccupancyDesk['booking']>;
 type NormalizedOccupancyBooking = ReturnType<typeof normalizeDaySlotBookings<OccupancyBooking>>[number];
+type PresenceBookingCandidate = { desk: OccupancyDesk; booking: NormalizedOccupancyBooking };
 type RoomAvailabilityBooking = { id: string; startTime: string | null; endTime: string | null; user: { email: string; name?: string } };
 type RoomAvailabilityResponse = {
   resource: { id: string; name: string; type: string };
@@ -355,31 +367,102 @@ const getOccupantIdentityKey = (occupant: OccupantForDay): string => {
   return `user:${occupant.userId}`;
 };
 
-const mapBookingsForDay = (desks: OccupancyDesk[]): OccupantForDay[] => {
+const getBookingUserKey = (booking: NormalizedOccupancyBooking): string => {
+  if (booking.employeeId?.trim()) return `employee:${booking.employeeId}`;
+  if (booking.userEmail.trim()) return `email:${booking.userEmail.toLowerCase()}`;
+  return `booking:${booking.id ?? 'unknown'}`;
+};
+
+const getPresenceTypePriority = (kind?: string): number => {
+  if (kind === 'TISCH') return 0;
+  if (kind === 'PARKPLATZ') return 1;
+  if (kind === 'RAUM') return 2;
+  return 3;
+};
+
+const isFullDayBooking = (booking: NormalizedOccupancyBooking): boolean => booking.daySlot === 'FULL' || booking.slot === 'FULL_DAY';
+
+const getBookingStartPriority = (booking: NormalizedOccupancyBooking): number => {
+  const startMinutes = bookingTimeToMinutes(booking.startTime);
+  if (startMinutes !== null) return startMinutes;
+  if (booking.daySlot === 'AM' || booking.slot === 'MORNING') return ROOM_WINDOW_START_MINUTES;
+  if (booking.daySlot === 'PM' || booking.slot === 'AFTERNOON') return 12 * 60;
+  return ROOM_WINDOW_START_MINUTES;
+};
+
+const pickPresenceDisplayBooking = (bookingsForUser: PresenceBookingCandidate[]): PresenceBookingCandidate | null => {
+  if (bookingsForUser.length === 0) return null;
+
+  const sorted = [...bookingsForUser].sort((left, right) => {
+    const priorityDiff = getPresenceTypePriority(left.desk.kind) - getPresenceTypePriority(right.desk.kind);
+    if (priorityDiff !== 0) return priorityDiff;
+
+    const fullDayDiff = Number(isFullDayBooking(right.booking)) - Number(isFullDayBooking(left.booking));
+    if (fullDayDiff !== 0) return fullDayDiff;
+
+    return getBookingStartPriority(left.booking) - getBookingStartPriority(right.booking);
+  });
+
+  return sorted[0] ?? null;
+};
+
+const mapBookingsForDay = (desks: OccupancyDesk[], people: OccupancyPerson[], debugEnabled = false): OccupantForDay[] => {
   const uniqueOccupants = new Map<string, OccupantForDay>();
+  const bookingsByUser = new Map<string, PresenceBookingCandidate[]>();
 
   desks.forEach((desk) => {
     for (const booking of normalizeDeskBookings(desk)) {
-      const fullName = booking.userDisplayName ?? booking.userEmail ?? 'Unbekannt';
-
-      const occupant: OccupantForDay = {
-        deskId: desk.id,
-        deskLabel: desk.name,
-        deskKindLabel: resourceKindLabel(desk.kind),
-        userId: booking.id ?? booking.employeeId ?? booking.userEmail ?? `${desk.id}-occupant`,
-        name: fullName,
-        firstName: getFirstName({ firstName: booking.userFirstName, displayName: fullName, email: booking.userEmail }),
-        email: booking.userEmail ?? '',
-        employeeId: booking.employeeId,
-        photoUrl: booking.userPhotoUrl
-      };
-
-      const occupantKey = getOccupantIdentityKey(occupant);
-      if (!uniqueOccupants.has(occupantKey)) {
-        uniqueOccupants.set(occupantKey, occupant);
-      }
+      const userKey = getBookingUserKey(booking);
+      const current = bookingsByUser.get(userKey) ?? [];
+      current.push({ desk, booking });
+      bookingsByUser.set(userKey, current);
     }
   });
+
+  for (const [userKey, candidates] of bookingsByUser.entries()) {
+    const selected = pickPresenceDisplayBooking(candidates);
+    if (!selected) continue;
+
+    const { desk, booking } = selected;
+    const fullName = booking.userDisplayName ?? booking.userEmail ?? 'Unbekannt';
+    const bookingCounts = candidates.reduce((acc, candidate) => {
+      const priority = getPresenceTypePriority(candidate.desk.kind);
+      if (priority === 0) acc.desks += 1;
+      if (priority === 1) acc.parking += 1;
+      if (priority === 2) acc.rooms += 1;
+      return acc;
+    }, { desks: 0, parking: 0, rooms: 0 });
+
+    uniqueOccupants.set(userKey, {
+      deskId: desk.id,
+      deskLabel: desk.name,
+      deskKindLabel: resourceKindLabel(desk.kind),
+      userId: booking.id ?? booking.employeeId ?? booking.userEmail ?? `${desk.id}-occupant`,
+      name: fullName,
+      firstName: getFirstName({ firstName: booking.userFirstName, displayName: fullName, email: booking.userEmail }),
+      email: booking.userEmail ?? '',
+      employeeId: booking.employeeId,
+      photoUrl: booking.userPhotoUrl,
+      presenceDebug: debugEnabled ? `d=${bookingCounts.desks} p=${bookingCounts.parking} r=${bookingCounts.rooms} | prio=${resourceKindLabel(desk.kind)}${isFullDayBooking(booking) ? ', ganztag' : ', teiltag'}; start=${booking.startTime ?? booking.daySlot ?? booking.slot ?? '--'}` : undefined
+    });
+  }
+
+  for (const person of people) {
+    const fullName = person.displayName?.trim() || person.email || 'Unbekannt';
+    const occupant: OccupantForDay = {
+      deskId: person.deskId?.trim() || `presence-${person.email || fullName}`,
+      deskLabel: '',
+      deskKindLabel: '',
+      userId: person.email || fullName,
+      name: fullName,
+      firstName: getFirstName({ displayName: fullName, email: person.email }),
+      email: person.email || '',
+      presenceDebug: debugEnabled ? 'd=0 p=0 r=0 | anwesend-ohne-buchung' : undefined
+    };
+
+    const occupantKey = getOccupantIdentityKey(occupant);
+    if (!uniqueOccupants.has(occupantKey)) uniqueOccupants.set(occupantKey, occupant);
+  }
 
   return Array.from(uniqueOccupants.values()).sort((a, b) => a.name.localeCompare(b.name, 'de'));
 };
@@ -999,7 +1082,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
     return desks.filter((desk) => (desk.kind ?? 'SONSTIGES') === selectedResourceKindFilter);
   }, [desks, selectedResourceKindFilter]);
   const filteredDesks = useMemo(() => desksBySelectedResourceKind.map((desk) => ({ ...desk, isHighlighted: desk.id === highlightedDeskId })), [desksBySelectedResourceKind, highlightedDeskId]);
-  const bookingsForSelectedDate = useMemo<OccupantForDay[]>(() => mapBookingsForDay(desksBySelectedResourceKind), [desksBySelectedResourceKind]);
+  const bookingsForSelectedDate = useMemo<OccupantForDay[]>(() => mapBookingsForDay(desksBySelectedResourceKind, occupancy?.people ?? [], showRoomDebugInfo), [desksBySelectedResourceKind, occupancy?.people, showRoomDebugInfo]);
   const roomsForSelectedDate = useMemo(() => desksBySelectedResourceKind
     .filter((desk) => isRoomResource(desk))
     .map((room) => ({ room, bookings: normalizeDeskBookings(room) })), [desksBySelectedResourceKind]);
@@ -1985,31 +2068,39 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
 
     return (
       <div className="occupancy-list" role="list" aria-label={title}>
-        {items.map((occupant) => (
-          <div
-            key={`selected-${occupant.userId}-${occupant.deskId}`}
-            ref={(node) => { occupantRowRefs.current[occupant.deskId] = node; }}
-            role="listitem"
-            className={`occupant-compact-card ${(hoveredDeskId === occupant.deskId || selectedDeskId === occupant.deskId) ? 'is-active' : ''} ${highlightedDeskId === occupant.deskId ? 'is-highlighted' : ''}`}
-            onMouseEnter={() => {
-              setHoveredDeskId(occupant.deskId);
-              setHighlightedDeskId(occupant.deskId);
-            }}
-            onMouseLeave={() => {
-              setHoveredDeskId('');
-              setHighlightedDeskId('');
-            }}
-          >
-            <div className="occupant-card-main">
-              <Avatar displayName={occupant.name} email={occupant.email} photoUrl={occupant.photoUrl} size={26} />
-              <div className="occupant-card-text">
-                <strong>{occupant.name}</strong>
-                <p className="muted">{occupant.email}</p>
+        {items.map((occupant) => {
+          const canHighlightDesk = Boolean(occupant.deskLabel);
+          return (
+            <div
+              key={`selected-${occupant.userId}-${occupant.deskId}`}
+              ref={(node) => { occupantRowRefs.current[occupant.deskId] = node; }}
+              role="listitem"
+              className={`occupant-compact-card ${canHighlightDesk && (hoveredDeskId === occupant.deskId || selectedDeskId === occupant.deskId) ? 'is-active' : ''} ${canHighlightDesk && highlightedDeskId === occupant.deskId ? 'is-highlighted' : ''}`}
+              onMouseEnter={() => {
+                if (!canHighlightDesk) return;
+                setHoveredDeskId(occupant.deskId);
+                setHighlightedDeskId(occupant.deskId);
+              }}
+              onMouseLeave={() => {
+                if (!canHighlightDesk) return;
+                setHoveredDeskId('');
+                setHighlightedDeskId('');
+              }}
+            >
+              <div className="occupant-card-main">
+                <Avatar displayName={occupant.name} email={occupant.email} photoUrl={occupant.photoUrl} size={26} />
+                <div className="occupant-card-text">
+                  <strong>{occupant.name}</strong>
+                  <p className="muted">{occupant.email}</p>
+                </div>
               </div>
+              {occupant.deskLabel
+                ? <span className="occupant-desk-label" title={`${occupant.deskKindLabel}: ${occupant.deskLabel}`}>{occupant.deskKindLabel}: {occupant.deskLabel}</span>
+                : <span className="occupant-desk-label" title="Anwesend ohne Buchung">Anwesend</span>}
+              {showRoomDebugInfo && occupant.presenceDebug && <p className="muted">{occupant.presenceDebug}</p>}
             </div>
-            {occupant.deskLabel && <span className="occupant-desk-label" title={`${occupant.deskKindLabel}: ${occupant.deskLabel}`}>{occupant.deskKindLabel}: {occupant.deskLabel}</span>}
-          </div>
-        ))}
+          );
+        })}
       </div>
     );
   };
