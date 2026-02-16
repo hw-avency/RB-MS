@@ -138,6 +138,7 @@ input, select { border: 1px solid hsl(var(--border)); border-radius: 12px; paddi
 .desk-booking-form{display:grid;gap:12px}
 .split{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
 .desk-booking-form .weekday-toggle-group{max-height:120px;overflow-y:auto;padding-right:2px}
+.recurring-panel{border:1px solid hsl(var(--border));border-radius:10px;padding:10px;background:hsl(var(--card-2))}
 .desk-booking-form-footer{position:sticky;bottom:0;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;padding-top:10px;background:hsl(var(--card))}
 .desk-booking-form-footer .btn{justify-content:center;min-height:38px}
 .room-schedule-block{padding:10px;border-radius:10px;background:hsl(var(--muted)/.45);border:1px solid hsl(var(--border));gap:10px}

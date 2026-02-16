@@ -152,13 +152,25 @@ enum BookingSlot {
   CUSTOM
 }
 
+enum RecurrencePatternType {
+  DAILY
+  WEEKLY
+  MONTHLY
+  YEARLY
+}
+
 model RecurringBooking {
   id                  String    @id @default(cuid())
   resourceId          String
   createdByEmployeeId String
-  weekday             Int
-  validFrom           DateTime  @db.Date
-  validTo             DateTime? @db.Date
+  startDate           DateTime  @db.Date
+  endDate             DateTime  @db.Date
+  patternType         RecurrencePatternType
+  interval            Int       @default(1)
+  byWeekday           Int[]
+  byMonthday          Int?
+  bySetPos            Int?
+  byMonth             Int?
   bookedFor           BookedFor @default(SELF)
   guestName           String?
   period              DaySlot?
@@ -168,6 +180,6 @@ model RecurringBooking {
   resource            Desk      @relation("RecurringBookingResource", fields: [resourceId], references: [id], onDelete: Cascade)
   createdByEmployee   Employee  @relation("RecurringBookingCreatedByEmployee", fields: [createdByEmployeeId], references: [id], onDelete: Restrict)
 
-  @@index([resourceId, weekday, validFrom, validTo])
+  @@index([resourceId, startDate, endDate])
   @@index([createdByEmployeeId])
 }

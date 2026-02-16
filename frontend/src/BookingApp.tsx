@@ -1763,9 +1763,13 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
     const isRoomRecurring = Boolean(recurringTarget && isRoomResource(recurringTarget));
     const recurringPayload = {
       resourceId: deskId,
-      weekdays: payload.weekdays,
-      validFrom: payload.dateFrom,
-      validTo: payload.dateTo,
+      startDate: payload.startDate,
+      endDate: payload.endDate,
+      patternType: payload.patternType,
+      interval: payload.interval,
+      byWeekday: payload.byWeekday,
+      byMonthday: payload.byMonthday,
+      byMonth: payload.byMonth,
       bookedFor: payload.bookedFor,
       guestName: payload.bookedFor === 'GUEST' ? payload.guestName : undefined,
       period: isRoomRecurring ? null : payload.slot === 'MORNING' ? 'AM' : payload.slot === 'AFTERNOON' ? 'PM' : 'FULL',

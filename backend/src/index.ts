@@ -3,8 +3,9 @@ import { canCancelBooking } from './auth/bookingAuth';
 import express from 'express';
 import crypto from 'crypto';
 import bcrypt from 'bcryptjs';
-import { BookedFor, BookingSlot, DaySlot, Prisma, ResourceKind } from '@prisma/client';
+import { BookedFor, BookingSlot, DaySlot, Prisma, RecurrencePatternType, ResourceKind } from '@prisma/client';
 import { prisma } from './prisma';
+import { expandRecurrence, MAX_RECURRING_OCCURRENCES, type RecurrenceDefinition, validateRecurrenceDefinition } from './recurrence';
 
 const app = express();
 const port = Number(process.env.PORT ?? 3000);
@@ -71,6 +72,7 @@ app.use((req, res, next) => {
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const RESOURCE_KINDS = new Set<ResourceKind>(['TISCH', 'PARKPLATZ', 'RAUM', 'SONSTIGES']);
 const BOOKED_FOR_VALUES = new Set<BookedFor>(['SELF', 'GUEST']);
+const RECURRENCE_PATTERN_VALUES = new Set<RecurrencePatternType>(['DAILY', 'WEEKLY', 'MONTHLY', 'YEARLY']);
 
 const parseResourceKind = (value: unknown): ResourceKind | null => {
   if (typeof value !== 'string') return null;
@@ -2931,6 +2933,26 @@ const recurringToWindow = (recurring: { period: DaySlot | null; startTime: strin
   return { mode: 'day', daySlot: recurring.period };
 };
 
+const recurringToDefinition = (recurring: {
+  startDate: Date;
+  endDate: Date;
+  patternType: RecurrencePatternType;
+  interval: number;
+  byWeekday: number[];
+  byMonthday: number | null;
+  bySetPos: number | null;
+  byMonth: number | null;
+}): RecurrenceDefinition => ({
+  startDate: toISODateOnly(recurring.startDate),
+  endDate: toISODateOnly(recurring.endDate),
+  patternType: recurring.patternType,
+  interval: recurring.interval,
+  byWeekday: recurring.byWeekday,
+  byMonthday: recurring.byMonthday,
+  bySetPos: recurring.bySetPos,
+  byMonth: recurring.byMonth
+});
+
 const getBookingsForDateRange = async (from: Date, to: Date, floorplanId: string) => {
   const [singleBookings, recurringBookings] = await Promise.all([
     prisma.booking.findMany({
@@ -2946,8 +2968,8 @@ const getBookingsForDateRange = async (from: Date, to: Date, floorplanId: string
     prisma.recurringBooking.findMany({
       where: {
         resource: { floorplanId },
-        validFrom: { lte: to },
-        OR: [{ validTo: null }, { validTo: { gte: from } }]
+        startDate: { lte: to },
+        endDate: { gte: from }
       },
       include: {
         resource: { select: { id: true, kind: true, floorplanId: true } },
@@ -2957,17 +2979,18 @@ const getBookingsForDateRange = async (from: Date, to: Date, floorplanId: string
   ]);
 
   const occurrences = recurringBookings.flatMap((recurring) => {
-    const end = recurring.validTo && recurring.validTo < to ? recurring.validTo : to;
-    const rangeStart = recurring.validFrom > from ? recurring.validFrom : from;
     const window = recurringToWindow(recurring, recurring.resource.kind);
     if (!window) return [];
 
-    return datesInRange(rangeStart, end)
-      .filter((dateValue) => dateValue.getUTCDay() === recurring.weekday)
+    const definition = recurringToDefinition(recurring);
+    const { dates } = expandRecurrence(definition, Number.MAX_SAFE_INTEGER);
+
+    return dates
+      .filter((dateValue) => dateValue >= toISODateOnly(from) && dateValue <= toISODateOnly(to))
       .map((dateValue) => ({
         recurringId: recurring.id,
         resourceId: recurring.resourceId,
-        date: toISODateOnly(dateValue),
+        date: dateValue,
         bookedFor: recurring.bookedFor,
         guestName: recurring.guestName,
         createdByEmployeeId: recurring.createdByEmployeeId,
@@ -2979,12 +3002,16 @@ const getBookingsForDateRange = async (from: Date, to: Date, floorplanId: string
 };
 
 app.post('/recurring-bookings', async (req, res) => {
-  const { resourceId, weekdays, weekday, validFrom, validTo, bookedFor, guestName, period, startTime, endTime } = req.body as {
+  const { resourceId, startDate, endDate, patternType, interval, byWeekday, byMonthday, bySetPos, byMonth, bookedFor, guestName, period, startTime, endTime } = req.body as {
     resourceId?: string;
-    weekdays?: number[];
-    weekday?: number;
-    validFrom?: string;
-    validTo?: string | null;
+    startDate?: string;
+    endDate?: string;
+    patternType?: RecurrencePatternType;
+    interval?: number;
+    byWeekday?: number[];
+    byMonthday?: number | null;
+    bySetPos?: number | null;
+    byMonth?: number | null;
     bookedFor?: BookedFor;
     guestName?: string | null;
     period?: DaySlot | null;
@@ -2992,26 +3019,29 @@ app.post('/recurring-bookings', async (req, res) => {
     endTime?: string | null;
   };
 
-  const normalizedWeekdays = Array.from(new Set(Array.isArray(weekdays) ? weekdays : (typeof weekday === 'number' ? [weekday] : [])));
-  if (!resourceId || normalizedWeekdays.length === 0 || !validFrom) {
-    res.status(400).json({ error: 'validation', message: 'resourceId, weekday(s) and validFrom are required' });
+  if (!resourceId || !startDate || !endDate || !patternType) {
+    res.status(400).json({ error: 'validation', message: 'resourceId, startDate, endDate and patternType are required' });
+    return;
+  }
+  if (!RECURRENCE_PATTERN_VALUES.has(patternType)) {
+    res.status(400).json({ error: 'validation', message: 'patternType must be DAILY, WEEKLY, MONTHLY or YEARLY' });
     return;
   }
 
-  if (normalizedWeekdays.some((entry) => !Number.isInteger(entry) || entry < 0 || entry > 6)) {
-    res.status(400).json({ error: 'validation', message: 'weekday values must be between 0 and 6' });
-    return;
-  }
+  const recurrenceDefinition: RecurrenceDefinition = {
+    startDate,
+    endDate,
+    patternType,
+    interval: Number.isInteger(interval) ? Number(interval) : 1,
+    byWeekday: Array.isArray(byWeekday) ? Array.from(new Set(byWeekday.filter((value) => Number.isInteger(value)))) : null,
+    byMonthday: typeof byMonthday === 'number' ? byMonthday : null,
+    bySetPos: typeof bySetPos === 'number' ? bySetPos : null,
+    byMonth: typeof byMonth === 'number' ? byMonth : null
+  };
 
-  const parsedValidFrom = toDateOnly(validFrom);
-  const parsedValidTo = validTo ? toDateOnly(validTo) : null;
-  if (!parsedValidFrom || (validTo && !parsedValidTo)) {
-    res.status(400).json({ error: 'validation', message: 'validFrom/validTo must be in YYYY-MM-DD format' });
-    return;
-  }
-
-  if (parsedValidTo && parsedValidTo < parsedValidFrom) {
-    res.status(400).json({ error: 'validation', message: 'validTo must be on or after validFrom' });
+  const recurrenceValidationError = validateRecurrenceDefinition(recurrenceDefinition);
+  if (recurrenceValidationError) {
+    res.status(400).json({ error: 'validation', message: recurrenceValidationError });
     return;
   }
 
@@ -3063,32 +3093,59 @@ app.post('/recurring-bookings', async (req, res) => {
     }
   }
 
-  const effectiveValidTo = parsedValidTo ?? endOfCurrentYear();
-  const targetDates = datesInRange(parsedValidFrom, effectiveValidTo).filter((dateValue) => normalizedWeekdays.includes(dateValue.getUTCDay()));
+  const { dates: occurrenceDates, truncated } = expandRecurrence(recurrenceDefinition, MAX_RECURRING_OCCURRENCES);
+  if (truncated) {
+    res.status(400).json({ error: 'validation', message: `Recurrence exceeds the maximum of ${MAX_RECURRING_OCCURRENCES} occurrences. Please reduce the range.` });
+    return;
+  }
+
+  const targetDates = occurrenceDates.map((value) => toDateOnly(value)).filter((value): value is Date => Boolean(value));
   const recurrenceWindow = recurringToWindow({ period: normalizedPeriod, startTime: startTime ?? null, endTime: endTime ?? null }, resource.kind);
   if (!recurrenceWindow) {
     res.status(400).json({ error: 'validation', message: 'Invalid recurring booking window' });
     return;
   }
 
+  const identity = normalizedBookedFor === 'SELF' ? await findBookingIdentity(actorEmployee.email) : null;
+
   const result = await prisma.$transaction(async (tx) => {
-    const conflicts = await tx.booking.findMany({
+    const resourceConflicts = await tx.booking.findMany({
       where: { date: { in: targetDates }, deskId: resourceId },
       include: { desk: { select: { name: true, kind: true } } }
     });
 
-    const conflictDates = Array.from(new Set(conflicts
+    const conflictDates = new Set(resourceConflicts
       .filter((booking) => {
         const candidateWindow = bookingToWindow(booking);
         return candidateWindow ? windowsOverlap(recurrenceWindow, candidateWindow) : false;
       })
-      .map((booking) => toISODateOnly(booking.date))));
+      .map((booking) => toISODateOnly(booking.date)));
 
-    if (conflictDates.length > 0) {
+    if (identity) {
+      const personalConflicts = await tx.booking.findMany({
+        where: {
+          date: { in: targetDates },
+          bookedFor: 'SELF',
+          userEmail: { in: identity.emailAliases },
+          desk: { kind: resource.kind }
+        },
+        include: { desk: { select: { id: true } } }
+      });
+
+      for (const booking of personalConflicts) {
+        if (booking.deskId === resourceId) continue;
+        const candidateWindow = bookingToWindow(booking);
+        if (candidateWindow && windowsOverlap(recurrenceWindow, candidateWindow)) {
+          conflictDates.add(toISODateOnly(booking.date));
+        }
+      }
+    }
+
+    if (conflictDates.size > 0) {
       return {
         kind: 'conflict' as const,
         message: 'Recurring series conflicts with existing bookings',
-        details: { resourceId, conflictDates }
+        details: { resourceId, conflictDates: Array.from(conflictDates).sort() }
       };
     }
 
@@ -3096,6 +3153,7 @@ app.post('/recurring-bookings', async (req, res) => {
       data: {
         deskId: resourceId,
         userEmail: normalizedBookedFor === 'SELF' ? actorEmployee.email : null,
+        employeeId: normalizedBookedFor === 'SELF' ? actorEmployee.id : null,
         bookedFor: normalizedBookedFor,
         guestName: normalizedBookedFor === 'GUEST' ? normalizedGuestName : null,
         createdByEmployeeId: actorEmployee.id,
@@ -3111,29 +3169,33 @@ app.post('/recurring-bookings', async (req, res) => {
       }
     })));
 
-    const recurringBookings = await Promise.all(normalizedWeekdays.map((weekdayValue) => tx.recurringBooking.create({
+    const recurringBooking = await tx.recurringBooking.create({
       data: {
         resourceId,
         createdByEmployeeId: actorEmployee.id,
-        weekday: weekdayValue,
-        validFrom: parsedValidFrom,
-        validTo: parsedValidTo,
+        startDate: toDateOnly(startDate)!,
+        endDate: toDateOnly(endDate)!,
+        patternType,
+        interval: recurrenceDefinition.interval,
+        byWeekday: recurrenceDefinition.byWeekday ?? [],
+        byMonthday: recurrenceDefinition.byMonthday,
+        bySetPos: recurrenceDefinition.bySetPos,
+        byMonth: recurrenceDefinition.byMonth,
         bookedFor: normalizedBookedFor,
         guestName: normalizedBookedFor === 'GUEST' ? normalizedGuestName : null,
         period: recurrenceWindow.mode === 'day' ? recurrenceWindow.daySlot : null,
         startTime: recurrenceWindow.mode === 'time' ? startTime : null,
         endTime: recurrenceWindow.mode === 'time' ? endTime : null
       }
-    })));
+    });
 
     return {
       kind: 'ok' as const,
       payload: {
-        recurringBookings,
+        recurringBookings: [recurringBooking],
         createdCount: createdBookings.length,
-        updatedCount: 0,
-        skippedCount: 0,
-        skippedDates: []
+        conflicts: [],
+        truncated: false
       }
     };
   });
@@ -3146,8 +3208,9 @@ app.post('/recurring-bookings', async (req, res) => {
   res.status(201).json(result.payload);
 });
 
+
 app.post('/recurring-bookings/bulk', async (_req, res) => {
-  res.status(410).json({ error: 'deprecated', message: 'Use POST /recurring-bookings with resourceId and weekdays' });
+  res.status(410).json({ error: 'deprecated', message: 'Use POST /recurring-bookings with patternType, interval, startDate and endDate' });
 });
 
 app.get('/recurring-bookings', async (req, res) => {
@@ -3156,7 +3219,7 @@ app.get('/recurring-bookings', async (req, res) => {
   const recurringBookings = await prisma.recurringBooking.findMany({
     where: floorplanId ? { resource: { floorplanId } } : undefined,
     include: { resource: true, createdByEmployee: { select: { id: true, displayName: true, email: true } } },
-    orderBy: [{ validFrom: 'asc' }, { createdAt: 'asc' }]
+    orderBy: [{ startDate: 'asc' }, { createdAt: 'asc' }]
   });
 
   res.status(200).json(recurringBookings);
@@ -3809,7 +3872,7 @@ app.get('/admin/recurring-bookings', requireAdmin, async (req, res) => {
       resource: { select: { id: true, name: true, floorplanId: true, kind: true } },
       createdByEmployee: { select: { id: true, displayName: true, email: true } }
     },
-    orderBy: [{ validFrom: 'asc' }, { createdAt: 'asc' }]
+    orderBy: [{ startDate: 'asc' }, { createdAt: 'asc' }]
   });
 
   res.status(200).json(recurringBookings);
@@ -3822,7 +3885,7 @@ app.delete('/recurring-bookings/:id', async (req, res) => {
     return;
   }
 
-  const recurring = await prisma.recurringBooking.findUnique({ where: { id } });
+  const recurring = await prisma.recurringBooking.findUnique({ where: { id }, include: { resource: { select: { kind: true } } } });
   if (!recurring) {
     res.status(404).json({ error: 'not_found', message: 'Recurring booking not found' });
     return;
@@ -3843,7 +3906,37 @@ app.delete('/recurring-bookings/:id', async (req, res) => {
     return;
   }
 
-  await prisma.recurringBooking.delete({ where: { id } });
+  const recurrenceWindow = recurringToWindow(recurring, recurring.resource.kind);
+  const { dates } = expandRecurrence(recurringToDefinition(recurring), Number.MAX_SAFE_INTEGER);
+
+  await prisma.$transaction(async (tx) => {
+    if (recurrenceWindow && dates.length > 0) {
+      const dateValues = dates.map((dateValue) => toDateOnly(dateValue)).filter((dateValue): dateValue is Date => Boolean(dateValue));
+      const candidateBookings = await tx.booking.findMany({
+        where: {
+          deskId: recurring.resourceId,
+          createdByEmployeeId: recurring.createdByEmployeeId,
+          bookedFor: recurring.bookedFor,
+          date: { in: dateValues }
+        }
+      });
+
+      const matchingBookingIds = candidateBookings
+        .filter((booking) => {
+          if ((recurring.guestName ?? null) !== (booking.guestName ?? null)) return false;
+          const candidateWindow = bookingToWindow(booking);
+          return candidateWindow ? windowsOverlap(recurrenceWindow, candidateWindow) : false;
+        })
+        .map((booking) => booking.id);
+
+      if (matchingBookingIds.length > 0) {
+        await tx.booking.deleteMany({ where: { id: { in: matchingBookingIds } } });
+      }
+    }
+
+    await tx.recurringBooking.delete({ where: { id } });
+  });
+
   res.status(204).send();
 });
 
