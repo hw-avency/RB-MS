@@ -89,6 +89,16 @@ type BulkBookingResponse = {
   updatedCount?: number;
   skippedCount?: number;
   skippedDates?: string[];
+  skippedConflicts?: string[];
+};
+type RecurringPreviewResponse = {
+  conflictDates: string[];
+  freeDates: string[];
+};
+type RecurringConflictState = {
+  payload: Extract<BookingSubmitPayload, { type: 'recurring' }>;
+  conflictDates: string[];
+  freeDates: string[];
 };
 type DeskPopupState = { deskId: string; anchorRect: DOMRect; openedAt: number };
 type CancelConfirmContext = DeskPopupState & { bookingIds: string[]; bookingLabel: string; recurringBookingId?: string | null; isRecurring: boolean; keepPopoverOpen: boolean };
@@ -618,6 +628,8 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
   const [dialogErrorMessage, setDialogErrorMessage] = useState('');
   const [rebookConfirm, setRebookConfirm] = useState<RebookConfirmState | null>(null);
   const [isRebooking, setIsRebooking] = useState(false);
+  const [recurringConflictState, setRecurringConflictState] = useState<RecurringConflictState | null>(null);
+  const [isResolvingRecurringConflict, setIsResolvingRecurringConflict] = useState(false);
   const [cancelFlowState, setCancelFlowState] = useState<CancelFlowState>('NONE');
   const [cancelConfirmContext, setCancelConfirmContext] = useState<CancelConfirmContext | null>(null);
   const [isCancellingBooking, setIsCancellingBooking] = useState(false);
@@ -1665,7 +1677,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
 
     if (hasMineBookings) {
       setBookingDialogState('IDLE');
-    } else if (fullyOccupiedByOthers) {
+    } else if (fullyOccupiedByOthers && !isRoomResource(desk)) {
       setBookingDialogState('IDLE');
     } else {
       if (!isRoomResource(desk)) {
@@ -1729,6 +1741,8 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
     setCancellingBookingId(null);
     setCancelDialogError('');
     setIsManageEditOpen(false);
+    setRecurringConflictState(null);
+    setIsResolvingRecurringConflict(false);
   };
 
   const updateCancelDebug = useCallback((next: Partial<CancelDebugState> & { lastAction: CancelDebugAction }) => {
@@ -1776,7 +1790,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
     setCancelFlowState('DESK_POPOVER_OPEN');
   };
 
-  const submitPopupBooking = async (deskId: string, payload: BookingSubmitPayload, overwrite = false) => {
+  const submitPopupBooking = async (deskId: string, payload: BookingSubmitPayload, options?: { overwrite?: boolean; allowPartial?: boolean; explicitDates?: string[] }): Promise<BulkBookingResponse | void> => {
     if (!selectedEmployeeEmail) {
       throw new Error('Bitte Mitarbeiter auswählen.');
     }
@@ -1791,10 +1805,11 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
         daySlot: payload.slot === 'FULL_DAY' ? 'FULL' : payload.slot === 'MORNING' ? 'AM' : payload.slot === 'AFTERNOON' ? 'PM' : undefined,
         startTime: payload.startTime,
         endTime: payload.endTime,
-        overwrite
+        overwrite: options?.overwrite ?? false
       }));
-      toast.success(overwrite ? 'Umbuchung durchgeführt.' : 'Gebucht', { deskId });
-      return;
+      toast.success((options?.overwrite ?? false) ? 'Umbuchung durchgeführt.' : 'Gebucht', { deskId });
+      return { createdCount: 1 };
+
     }
     const recurringTarget = popupDesk?.id === deskId ? popupDesk : desks.find((desk) => desk.id === deskId);
     const isRoomRecurring = Boolean(recurringTarget && isRoomResource(recurringTarget));
@@ -1814,7 +1829,9 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
       period: isRoomRecurring ? null : payload.slot === 'MORNING' ? 'AM' : payload.slot === 'AFTERNOON' ? 'PM' : 'FULL',
       startTime: isRoomRecurring ? payload.startTime : null,
       endTime: isRoomRecurring ? payload.endTime : null,
-      overwrite
+      overwrite: options?.overwrite ?? false,
+      allowPartial: options?.allowPartial ?? false,
+      explicitDates: options?.explicitDates
     };
 
     if (showRoomDebugInfo) {
@@ -1823,9 +1840,10 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
 
     const response = await runWithAppLoading(() => post<BulkBookingResponse>('/recurring-bookings', recurringPayload));
 
-    toast.success(overwrite
+    toast.success((options?.overwrite ?? false)
       ? `${response.createdCount ?? 0} Tage gebucht, ${response.updatedCount ?? 0} Tage umgebucht.`
       : 'Gebucht', { deskId });
+    return response;
   };
 
   const updateExistingDeskBooking = async () => {
@@ -1844,7 +1862,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
         daySlot: manageTargetSlot === 'FULL_DAY' ? 'FULL' : manageTargetSlot === 'MORNING' ? 'AM' : 'PM',
         slot: manageTargetSlot
       }));
-      await submitPopupBooking(popupDesk.id, { type: 'single', date: selectedDate, slot: manageTargetSlot, bookedFor: 'SELF' }, true);
+      await submitPopupBooking(popupDesk.id, { type: 'single', date: selectedDate, slot: manageTargetSlot, bookedFor: 'SELF' }, { overwrite: true });
       await reloadBookings();
       setBookingVersion((value) => value + 1);
       setIsManageEditOpen(false);
@@ -1856,7 +1874,125 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
     }
   };
 
+  const previewRecurringConflicts = async (deskId: string, payload: Extract<BookingSubmitPayload, { type: 'recurring' }>): Promise<RecurringPreviewResponse> => {
+    const period = payload.slot === 'MORNING' ? 'AM' : payload.slot === 'AFTERNOON' ? 'PM' : 'FULL';
+    return runWithAppLoading(() => post<RecurringPreviewResponse>('/recurring-bookings/preview', {
+      resourceId: deskId,
+      resourceType: popupDesk?.kind,
+      bookedFor: payload.bookedFor,
+      guestName: payload.bookedFor === 'GUEST' ? payload.guestName : undefined,
+      startDate: payload.startDate,
+      endDate: payload.endDate,
+      rangeMode: payload.rangeMode,
+      count: payload.count,
+      patternType: payload.patternType,
+      interval: payload.interval,
+      byWeekday: payload.byWeekday,
+      byMonthday: payload.byMonthday,
+      byMonth: payload.byMonth,
+      period
+    }));
+  };
 
+  const runRecurringReassign = async () => {
+    if (!popupDesk || !recurringConflictState) return;
+    setIsResolvingRecurringConflict(true);
+    setDialogErrorMessage('');
+    try {
+      const recurringPayload = recurringConflictState.payload;
+      const period = recurringPayload.slot === 'MORNING' ? 'AM' : recurringPayload.slot === 'AFTERNOON' ? 'PM' : 'FULL';
+      const resolveResponse = await runWithAppLoading(() => post<{ reassigned: Array<{ date: string; newResourceId: string }>; unresolved: Array<{ date: string; reason: string }> }>('/recurring-bookings/resolve-conflicts', {
+        originalResourceId: popupDesk.id,
+        floorplanId: selectedFloorplanId,
+        bookedFor: recurringPayload.bookedFor,
+        guestName: recurringPayload.bookedFor === 'GUEST' ? recurringPayload.guestName : undefined,
+        period,
+        conflictDates: recurringConflictState.conflictDates,
+        strategy: 'AUTO'
+      }));
+
+      const reassignedByResource = new Map<string, string[]>();
+      for (const item of resolveResponse.reassigned) {
+        const next = reassignedByResource.get(item.newResourceId) ?? [];
+        next.push(item.date);
+        reassignedByResource.set(item.newResourceId, next);
+      }
+
+      const baseResult = await runWithAppLoading(() => post<BulkBookingResponse>('/recurring-bookings', {
+        resourceId: popupDesk.id,
+        startDate: recurringPayload.startDate,
+        endDate: recurringPayload.endDate,
+        rangeMode: recurringPayload.rangeMode,
+        count: recurringPayload.count,
+        patternType: recurringPayload.patternType,
+        interval: recurringPayload.interval,
+        byWeekday: recurringPayload.byWeekday,
+        byMonthday: recurringPayload.byMonthday,
+        byMonth: recurringPayload.byMonth,
+        bookedFor: recurringPayload.bookedFor,
+        guestName: recurringPayload.bookedFor === 'GUEST' ? recurringPayload.guestName : undefined,
+        period,
+        allowPartial: true
+      }));
+
+      let reassignedCount = 0;
+      for (const [resourceId, dates] of reassignedByResource.entries()) {
+        const response = await runWithAppLoading(() => post<BulkBookingResponse>('/recurring-bookings', {
+          resourceId,
+          startDate: recurringPayload.startDate,
+          endDate: recurringPayload.endDate,
+          rangeMode: recurringPayload.rangeMode,
+          count: recurringPayload.count,
+          patternType: recurringPayload.patternType,
+          interval: recurringPayload.interval,
+          byWeekday: recurringPayload.byWeekday,
+          byMonthday: recurringPayload.byMonthday,
+          byMonth: recurringPayload.byMonth,
+          bookedFor: recurringPayload.bookedFor,
+          guestName: recurringPayload.bookedFor === 'GUEST' ? recurringPayload.guestName : undefined,
+          period,
+          explicitDates: dates
+        }));
+        reassignedCount += response.createdCount ?? 0;
+      }
+
+      const totalCreated = (baseResult.createdCount ?? 0) + reassignedCount;
+      toast.success(`Konflikte umgebucht. ${totalCreated} Termine erstellt, ${resolveResponse.unresolved.length} nicht möglich.`);
+      if (resolveResponse.unresolved.length > 0) {
+        toast.error(`Nicht lösbar: ${resolveResponse.unresolved.slice(0, 5).map((item) => item.date).join(', ')}`);
+      }
+      setRecurringConflictState(null);
+      await reloadBookings();
+      setBookingVersion((value) => value + 1);
+      closeBookingFlow();
+    } catch (error) {
+      setDialogErrorMessage(error instanceof Error ? error.message : 'Konfliktauflösung fehlgeschlagen.');
+    } finally {
+      setIsResolvingRecurringConflict(false);
+    }
+  };
+
+
+
+
+  const runRecurringIgnoreConflicts = async () => {
+    if (!popupDesk || !recurringConflictState) return;
+    setIsResolvingRecurringConflict(true);
+    try {
+      const result = await submitPopupBooking(popupDesk.id, recurringConflictState.payload, { allowPartial: true });
+      const created = (result as BulkBookingResponse | undefined)?.createdCount ?? 0;
+      const skipped = (result as BulkBookingResponse | undefined)?.skippedConflicts?.length ?? recurringConflictState.conflictDates.length;
+      toast.success(`${created} Termine erstellt, ${skipped} übersprungen (Konflikte).`);
+      setRecurringConflictState(null);
+      await reloadBookings();
+      setBookingVersion((value) => value + 1);
+      closeBookingFlow();
+    } catch (error) {
+      setDialogErrorMessage(error instanceof Error ? error.message : 'Teilweise Serienbuchung fehlgeschlagen.');
+    } finally {
+      setIsResolvingRecurringConflict(false);
+    }
+  };
 
   const handleBookingSubmit = async (payload: BookingSubmitPayload) => {
     if (payload.type === 'recurring' && popupDesk?.effectiveAllowSeries === false) {
@@ -1905,7 +2041,19 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
         await runWithAppLoading(() => createRoomBooking(body, { requestId }));
         toast.success('Gebucht', { deskId: popupDesk.id });
       } else {
-        await submitPopupBooking(popupDesk.id, payload, false);
+        if (payload.type === 'recurring' && !isRoomResource(popupDesk)) {
+          const preview = await previewRecurringConflicts(popupDesk.id, payload);
+          if (preview.conflictDates.length > 0) {
+            setRecurringConflictState({
+              payload,
+              conflictDates: preview.conflictDates,
+              freeDates: preview.freeDates
+            });
+            setBookingDialogState('BOOKING_OPEN');
+            return;
+          }
+        }
+        await submitPopupBooking(popupDesk.id, payload, { overwrite: false });
       }
       const refreshed = await reloadBookings(isRoomCreate ? { requestId, roomId: popupDesk.id, date: payload.date } : undefined);
       if (!refreshed) {
@@ -1985,7 +2133,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
     setIsRebooking(true);
 
     try {
-      await submitPopupBooking(rebookConfirm.deskId, rebookConfirm.retryPayload, true);
+      await submitPopupBooking(rebookConfirm.deskId, rebookConfirm.retryPayload, { overwrite: true });
       setRebookConfirm(null);
       setIsRebooking(false);
       closeBookingFlow();
@@ -2655,7 +2803,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
                     freeSlots: popupRoomFreeSlotChips,
                     occupiedSegments: popupRoomOccupiedSegments,
                     isFullyBooked: popupRoomFreeSlotChips.length === 0,
-                    conflictMessage: roomBookingConflict,
+                    conflictMessage: popupRoomFreeSlotChips.length === 0 ? 'Heute vollständig belegt' : roomBookingConflict,
                     debugInfo: roomDebugInfo,
                     ringDebugTitle: popupRoomRingDebugTitle,
                     onSelectFreeSlot: (startTime, endTime) => {
@@ -2768,6 +2916,27 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
               <button type="button" className="btn btn-danger" onMouseDown={(event) => { event.stopPropagation(); }} onClick={(event) => void submitPopupCancel(event, 'SINGLE')} disabled={isCancellingBooking} data-state={isCancellingBooking ? 'loading' : 'idle'}>
                 {isCancellingBooking && cancellingBookingId === cancelConfirmContext?.bookingIds[0] ? <><span className="btn-spinner" aria-hidden />Stornieren…</> : (cancelConfirmContext?.recurringBookingId ? 'Nur diesen Termin stornieren' : 'Stornieren')}
               </button>
+            </div>
+          </section>
+        </div>,
+        document.body
+      )}
+
+
+      {recurringConflictState && popupDesk && createPortal(
+        <div className="overlay" role="presentation">
+          <section className="card dialog stack-sm rebook-dialog" role="dialog" aria-modal="true" aria-labelledby="series-conflict-title">
+            <h3 id="series-conflict-title">Konflikte gefunden</h3>
+            <p>An {recurringConflictState.conflictDates.length} Tagen bestehen bereits Buchungen. Wie möchtest du fortfahren?</p>
+            <p className="muted">
+              {recurringConflictState.conflictDates.slice(0, 5).join(', ')}
+              {recurringConflictState.conflictDates.length > 5 ? ` +${recurringConflictState.conflictDates.length - 5} weitere` : ''}
+            </p>
+            {dialogErrorMessage && <p className="error-banner">{dialogErrorMessage}</p>}
+            <div className="inline-end rebook-actions">
+              <button type="button" className="btn btn-outline" onClick={() => setRecurringConflictState(null)} disabled={isResolvingRecurringConflict}>Abbrechen</button>
+              <button type="button" className="btn" onClick={() => void runRecurringIgnoreConflicts()} disabled={isResolvingRecurringConflict}>Konflikte ignorieren</button>
+              <button type="button" className="btn btn-danger" onClick={() => void runRecurringReassign()} disabled={isResolvingRecurringConflict}>Konflikte umbuchen</button>
             </div>
           </section>
         </div>,
