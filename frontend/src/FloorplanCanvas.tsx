@@ -123,11 +123,25 @@ type FloorplanCanvasProps = {
   onDeskDoubleClick?: (deskId: string) => void;
   onDeskAnchorChange?: (deskId: string, element: HTMLElement | null) => void;
   disablePulseAnimation?: boolean;
+  onImageLoad?: (size: { width: number; height: number }) => void;
+  onImageError?: () => void;
   style?: CSSProperties;
 };
 
-const FloorplanImage = memo(function FloorplanImage({ imageUrl, imageAlt, imgRef }: { imageUrl: string; imageAlt: string; imgRef: RefObject<HTMLImageElement> }) {
-  return <img ref={imgRef} src={imageUrl} alt={imageAlt} className="floorplan-image" />;
+const FloorplanImage = memo(function FloorplanImage({ imageUrl, imageAlt, imgRef, onImageLoad, onImageError }: { imageUrl: string; imageAlt: string; imgRef: RefObject<HTMLImageElement>; onImageLoad?: (size: { width: number; height: number }) => void; onImageError?: () => void }) {
+  return (
+    <img
+      ref={imgRef}
+      src={imageUrl}
+      alt={imageAlt}
+      className="floorplan-image"
+      onLoad={(event) => {
+        const { naturalWidth, naturalHeight } = event.currentTarget;
+        if (naturalWidth > 0 && naturalHeight > 0) onImageLoad?.({ width: naturalWidth, height: naturalHeight });
+      }}
+      onError={() => onImageError?.()}
+    />
+  );
 });
 
 const DeskOverlay = memo(function DeskOverlay({ desks, selectedDeskId, hoveredDeskId, selectedDate, bookingVersion, onHoverDesk, onSelectDesk, onDeskDoubleClick, onDeskAnchorChange, disablePulseAnimation = false }: { desks: FloorplanDesk[]; selectedDeskId: string; hoveredDeskId: string; selectedDate?: string; bookingVersion?: number; onHoverDesk: (deskId: string) => void; onSelectDesk: (deskId: string, anchorEl?: HTMLElement) => void; onDeskDoubleClick?: (deskId: string) => void; onDeskAnchorChange?: (deskId: string, element: HTMLElement | null) => void; disablePulseAnimation?: boolean; }) {
@@ -300,7 +314,7 @@ const DeskOverlay = memo(function DeskOverlay({ desks, selectedDeskId, hoveredDe
   );
 });
 
-export function FloorplanCanvas({ imageUrl, imageAlt, desks, selectedDeskId, hoveredDeskId, selectedDate, bookingVersion, onHoverDesk, onSelectDesk, onCanvasClick, onDeskDoubleClick, onDeskAnchorChange, disablePulseAnimation = false, style }: FloorplanCanvasProps) {
+export function FloorplanCanvas({ imageUrl, imageAlt, desks, selectedDeskId, hoveredDeskId, selectedDate, bookingVersion, onHoverDesk, onSelectDesk, onCanvasClick, onDeskDoubleClick, onDeskAnchorChange, disablePulseAnimation = false, onImageLoad, onImageError, style }: FloorplanCanvasProps) {
   const imgRef = useRef<HTMLImageElement | null>(null);
 
   const handleCanvasClick = (event: MouseEvent<HTMLDivElement>) => {
@@ -315,7 +329,7 @@ export function FloorplanCanvas({ imageUrl, imageAlt, desks, selectedDeskId, hov
 
   return (
     <div className="floorplan-canvas" role="presentation" onClick={handleCanvasClick} style={style}>
-      <FloorplanImage imageUrl={imageUrl} imageAlt={imageAlt} imgRef={imgRef} />
+      <FloorplanImage imageUrl={imageUrl} imageAlt={imageAlt} imgRef={imgRef} onImageLoad={onImageLoad} onImageError={onImageError} />
       <DeskOverlay desks={desks} selectedDeskId={selectedDeskId} hoveredDeskId={hoveredDeskId} selectedDate={selectedDate} bookingVersion={bookingVersion} onHoverDesk={onHoverDesk} onSelectDesk={onSelectDesk} onDeskDoubleClick={onDeskDoubleClick} onDeskAnchorChange={onDeskAnchorChange} disablePulseAnimation={disablePulseAnimation} />
     </div>
   );

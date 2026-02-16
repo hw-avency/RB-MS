@@ -90,6 +90,7 @@ type PopupPlacement = 'top' | 'right' | 'bottom' | 'left';
 type PopupCoordinates = { left: number; top: number; placement: PopupPlacement };
 type FloorplanTransform = { scale: number; translateX: number; translateY: number };
 type FloorplanImageSize = { width: number; height: number };
+type FloorplanImageLoadState = 'idle' | 'loading' | 'loaded' | 'error';
 type CalendarBooking = { date: string; deskId: string; daySlot?: 'AM' | 'PM' | 'FULL' };
 type DayAvailabilityTone = 'many-free' | 'few-free' | 'none-free';
 type OverviewView = 'presence' | 'rooms' | 'myBookings';
@@ -114,6 +115,7 @@ const FLOORPLAN_MIN_SCALE = 0.6;
 const FLOORPLAN_MAX_SCALE = 2.4;
 const FLOORPLAN_ZOOM_STEP = 1.1;
 const FLOORPLAN_DRAG_EPSILON = 0.001;
+const FLOORPLAN_VIEWPORT_MIN_HEIGHT = 'min(70vh, 640px)';
 
 const getFloorplanMinScale = (fitScale: number): number => Math.min(FLOORPLAN_MIN_SCALE, fitScale);
 
@@ -529,7 +531,9 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
   const [floorplanTransform, setFloorplanTransform] = useState<FloorplanTransform>({ scale: 1, translateX: 0, translateY: 0 });
   const [floorplanInitialTransform, setFloorplanInitialTransform] = useState<FloorplanTransform>({ scale: 1, translateX: 0, translateY: 0 });
   const [floorplanImageSize, setFloorplanImageSize] = useState<FloorplanImageSize | null>(null);
+  const [floorplanImageLoadState, setFloorplanImageLoadState] = useState<FloorplanImageLoadState>('idle');
   const [floorplanViewportSize, setFloorplanViewportSize] = useState<{ width: number; height: number }>({ width: 1, height: 1 });
+  const [floorplanSafeModeActive, setFloorplanSafeModeActive] = useState(false);
   const [bookingVersion, setBookingVersion] = useState(0);
   const [isFloorplanDragging, setIsFloorplanDragging] = useState(false);
 
@@ -614,33 +618,50 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
   }, [refreshDeskPopupAnchorRect, registerToastDeskAnchor]);
 
   const selectedFloorplan = useMemo(() => floorplans.find((f) => f.id === selectedFloorplanId) ?? null, [floorplans, selectedFloorplanId]);
+  const showRoomDebugInfo = useMemo(() => {
+    if (typeof window === 'undefined') return false;
+    return new URLSearchParams(window.location.search).get('debug') === '1';
+  }, []);
 
   useEffect(() => {
     hasFloorplanManualTransformRef.current = false;
     if (!selectedFloorplan?.imageUrl) {
       setFloorplanImageSize(null);
+      setFloorplanImageLoadState('idle');
+      setFloorplanSafeModeActive(false);
       return;
     }
 
-    const image = new Image();
-    image.onload = () => {
-      if (!image.naturalWidth || !image.naturalHeight) return;
-      setFloorplanImageSize({ width: image.naturalWidth, height: image.naturalHeight });
-    };
-    image.src = selectedFloorplan.imageUrl;
+    setFloorplanImageSize(null);
+    setFloorplanImageLoadState('loading');
+    setFloorplanSafeModeActive(false);
+    setFloorplanInitialTransform({ scale: 1, translateX: 0, translateY: 0 });
+    setFloorplanTransform({ scale: 1, translateX: 0, translateY: 0 });
   }, [selectedFloorplan?.id, selectedFloorplan?.imageUrl]);
 
   useLayoutEffect(() => {
     if (!floorplanViewportRef.current) return;
     const viewport = floorplanViewportRef.current;
+    let rafId: number | null = null;
+    let retryCount = 0;
     const syncSize = () => {
-      setFloorplanViewportSize({ width: Math.max(1, viewport.clientWidth), height: Math.max(1, viewport.clientHeight) });
+      const width = viewport.clientWidth;
+      const height = viewport.clientHeight;
+      setFloorplanViewportSize({ width: Math.max(1, width), height: Math.max(1, height) });
+
+      if ((width <= 0 || height <= 0) && retryCount < 8) {
+        retryCount += 1;
+        rafId = window.requestAnimationFrame(syncSize);
+      } else {
+        retryCount = 0;
+      }
     };
     syncSize();
     const observer = new ResizeObserver(syncSize);
     observer.observe(viewport);
     window.addEventListener('resize', syncSize);
     return () => {
+      if (rafId) window.cancelAnimationFrame(rafId);
       observer.disconnect();
       window.removeEventListener('resize', syncSize);
     };
@@ -648,17 +669,38 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
 
   useEffect(() => {
     if (!floorplanImageSize) return;
+    if (floorplanViewportSize.width <= 0 || floorplanViewportSize.height <= 0) return;
     const availableWidth = Math.max(1, floorplanViewportSize.width - FLOORPLAN_FIT_PADDING * 2);
     const availableHeight = Math.max(1, floorplanViewportSize.height - FLOORPLAN_FIT_PADDING * 2);
     const fitScale = Math.min(Math.min(availableWidth / floorplanImageSize.width, availableHeight / floorplanImageSize.height), FLOORPLAN_MAX_SCALE);
+    if (!Number.isFinite(fitScale) || fitScale <= 0) return;
     const fitTransform = {
       scale: fitScale,
       translateX: (floorplanViewportSize.width - floorplanImageSize.width * fitScale) / 2,
       translateY: (floorplanViewportSize.height - floorplanImageSize.height * fitScale) / 2,
     };
+    if (!Number.isFinite(fitTransform.translateX) || !Number.isFinite(fitTransform.translateY)) return;
     setFloorplanInitialTransform(fitTransform);
     if (!hasFloorplanManualTransformRef.current) setFloorplanTransform(fitTransform);
   }, [floorplanImageSize, floorplanViewportSize.height, floorplanViewportSize.width]);
+
+  useEffect(() => {
+    if (!showRoomDebugInfo || floorplanImageLoadState !== 'loaded') return;
+    const hasBadTransform = !Number.isFinite(floorplanTransform.scale)
+      || !Number.isFinite(floorplanTransform.translateX)
+      || !Number.isFinite(floorplanTransform.translateY)
+      || floorplanTransform.scale <= 0;
+    if (!hasBadTransform && (floorplanViewportSize.width > 1 && floorplanViewportSize.height > 1)) return;
+
+    const timeout = window.setTimeout(() => {
+      setFloorplanSafeModeActive(true);
+      hasFloorplanManualTransformRef.current = false;
+      setFloorplanTransform({ scale: 1, translateX: 0, translateY: 0 });
+      setFloorplanInitialTransform({ scale: 1, translateX: 0, translateY: 0 });
+    }, 1000);
+
+    return () => window.clearTimeout(timeout);
+  }, [floorplanImageLoadState, floorplanTransform.scale, floorplanTransform.translateX, floorplanTransform.translateY, floorplanViewportSize.height, floorplanViewportSize.width, showRoomDebugInfo]);
 
   const floorplanMinScale = getFloorplanMinScale(floorplanInitialTransform.scale);
 
@@ -863,11 +905,6 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
       endTime: formatMinutes(interval.endMin),
       label: `${formatMinutes(interval.startMin)} – ${formatMinutes(interval.endMin)}`
     })), [popupRoomFreeIntervals]);
-  const showRoomDebugInfo = useMemo(() => {
-    if (typeof window === 'undefined') return false;
-    return new URLSearchParams(window.location.search).get('debug') === '1';
-  }, []);
-
   const roomDebugInfo = useMemo(() => {
     if (!showRoomDebugInfo || !popupDesk || !isRoomResource(popupDesk)) return undefined;
 
@@ -883,6 +920,26 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
       `segments: ${popupRoomOccupiedSegments.length > 0 ? popupRoomOccupiedSegments.map((segment) => `[${segment.p0.toFixed(3)}..${segment.p1.toFixed(3)}]`).join(', ') : '—'}`
     ];
   }, [popupDesk, popupRoomFreeIntervals, popupRoomOccupiedIntervals, popupRoomOccupiedSegments, showRoomDebugInfo]);
+
+  const floorplanDebugImageSrc = useMemo(() => {
+    const src = selectedFloorplan?.imageUrl ?? '';
+    if (src.length <= 96) return src || '-';
+    return `${src.slice(0, 93)}...`;
+  }, [selectedFloorplan?.imageUrl]);
+
+  const floorplanFitScaleForDebug = useMemo(() => {
+    if (!floorplanImageSize?.width || !floorplanImageSize?.height) return null;
+    if (floorplanViewportSize.width <= 0 || floorplanViewportSize.height <= 0) return null;
+    const availableWidth = Math.max(1, floorplanViewportSize.width - FLOORPLAN_FIT_PADDING * 2);
+    const availableHeight = Math.max(1, floorplanViewportSize.height - FLOORPLAN_FIT_PADDING * 2);
+    const fitScale = Math.min(Math.min(availableWidth / floorplanImageSize.width, availableHeight / floorplanImageSize.height), FLOORPLAN_MAX_SCALE);
+    return Number.isFinite(fitScale) ? fitScale : null;
+  }, [floorplanImageSize?.height, floorplanImageSize?.width, floorplanViewportSize.height, floorplanViewportSize.width]);
+
+  const floorplanTransformStyle = floorplanSafeModeActive
+    ? undefined
+    : { transform: `translate3d(${floorplanTransform.translateX}px, ${floorplanTransform.translateY}px, 0) scale(${floorplanTransform.scale})` };
+  const floorplanCanvasDesks = floorplanImageSize ? filteredDesks : [];
   const roomBookingConflict = useMemo(() => {
     if (!popupDesk || !isRoomResource(popupDesk)) return '';
     const start = bookingTimeToMinutes(bookingFormValues.startTime);
@@ -2013,6 +2070,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
                 <div
                   ref={floorplanViewportRef}
                   className={`floorplan-viewport ${canPanFloorplan ? (isFloorplanDragging ? 'is-grabbing' : 'is-grabbable') : ''}`}
+                  style={{ minHeight: FLOORPLAN_VIEWPORT_MIN_HEIGHT }}
                   onPointerDown={handleFloorplanPointerDown}
                   onPointerMove={handleFloorplanPointerMove}
                   onPointerUp={handleFloorplanPointerUp}
@@ -2025,13 +2083,13 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
                     style={{
                       width: floorplanImageSize?.width ?? 1,
                       height: floorplanImageSize?.height ?? 1,
-                      transform: `translate3d(${floorplanTransform.translateX}px, ${floorplanTransform.translateY}px, 0) scale(${floorplanTransform.scale})`,
+                      ...floorplanTransformStyle,
                     }}
                   >
                     <FloorplanCanvas
                       imageUrl={selectedFloorplan.imageUrl}
                       imageAlt={selectedFloorplan.name}
-                      desks={filteredDesks}
+                      desks={floorplanCanvasDesks}
                       selectedDeskId={selectedDeskId}
                       hoveredDeskId={hoveredDeskId}
                       onHoverDesk={(deskId) => { setHoveredDeskId(deskId); if (deskId) triggerDeskHighlight(deskId, 900); }}
@@ -2039,9 +2097,25 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
                       onSelectDesk={selectDeskFromCanvas}
                       onCanvasClick={() => { setSelectedDeskId(''); setHighlightedDeskId(''); closeBookingFlow(); }}
                       onDeskAnchorChange={registerDeskAnchor}
+                      onImageLoad={({ width, height }) => {
+                        setFloorplanImageSize({ width, height });
+                        setFloorplanImageLoadState('loaded');
+                      }}
+                      onImageError={() => {
+                        setFloorplanImageLoadState('error');
+                        setFloorplanImageSize(null);
+                      }}
                       bookingVersion={bookingVersion}
                       style={{ width: '100%', height: '100%' }}
                     />
+
+                    {floorplanImageLoadState === 'loading' && <div className="floorplan-status-banner" aria-live="polite">Floorplan lädt…</div>}
+                    {floorplanImageLoadState === 'error' && (
+                      <div className="floorplan-status-banner is-error" role="alert">
+                        Floorplan konnte nicht geladen werden.
+                        {showRoomDebugInfo && <span> src: {selectedFloorplan.imageUrl}</span>}
+                      </div>
+                    )}
                   </div>
 
                   <div className="floorplan-zoom-controls" role="group" aria-label="Floorplan Zoomsteuerung">
@@ -2058,7 +2132,10 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
 
                   {showRoomDebugInfo && (
                     <div className="floorplan-debug" aria-live="polite">
-                      img={Math.round(floorplanImageSize?.width ?? 0)}×{Math.round(floorplanImageSize?.height ?? 0)} · viewport={Math.round(floorplanViewportSize.width)}×{Math.round(floorplanViewportSize.height)} · fit={floorplanInitialTransform.scale.toFixed(3)} · scale={floorplanTransform.scale.toFixed(3)} · tx={Math.round(floorplanTransform.translateX)} · ty={Math.round(floorplanTransform.translateY)}
+                      src={floorplanDebugImageSrc}<br />
+                      state={floorplanImageLoadState}{floorplanSafeModeActive ? ' · fallback=active' : ''}<br />
+                      img={Math.round(floorplanImageSize?.width ?? 0)}×{Math.round(floorplanImageSize?.height ?? 0)} · viewport={Math.round(floorplanViewportSize.width)}×{Math.round(floorplanViewportSize.height)}<br />
+                      fit={floorplanFitScaleForDebug?.toFixed(3) ?? '-'} · scale={floorplanTransform.scale.toFixed(3)} · tx={Math.round(floorplanTransform.translateX)} · ty={Math.round(floorplanTransform.translateY)}
                     </div>
                   )}
                 </div>
