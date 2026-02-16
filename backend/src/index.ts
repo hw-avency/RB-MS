@@ -1,4 +1,5 @@
 import cors from 'cors';
+import { canCancelBooking } from './bookingCancelAuthz';
 import express from 'express';
 import crypto from 'crypto';
 import bcrypt from 'bcryptjs';
@@ -2149,18 +2150,29 @@ app.delete('/bookings/:id', async (req, res) => {
       return;
     }
 
-    const authEmail = req.authUser.email;
-    const isAdmin = req.authUser.role === 'admin';
-    const isSelfBookingOwner = existing.bookedFor === 'SELF' && existing.userEmail === authEmail;
-    const isCreator = existing.createdByUserId === req.authUser.id;
-    const allowed = isAdmin || isSelfBookingOwner || isCreator;
+    const bookingOwner = existing.userEmail
+      ? await prisma.user.findFirst({
+        where: { email: { equals: existing.userEmail, mode: 'insensitive' } },
+        select: { id: true }
+      })
+      : null;
+
+    const allowed = canCancelBooking({
+      bookedFor: existing.bookedFor,
+      userId: bookingOwner?.id ?? null,
+      createdByUserId: existing.createdByUserId
+    }, {
+      id: req.authUser.id,
+      role: req.authUser.role
+    });
 
     console.info('CANCEL_AUTHZ', {
       requestId,
       bookingId: id,
       bookedFor: existing.bookedFor,
+      bookingUserId: bookingOwner?.id ?? null,
       createdByUserId: existing.createdByUserId,
-      userId: req.authUser.id,
+      actorUserId: req.authUser.id,
       allowed
     });
 
