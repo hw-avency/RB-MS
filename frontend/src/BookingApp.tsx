@@ -13,6 +13,7 @@ import type { AuthUser } from './auth/AuthProvider';
 import { useToast } from './components/toast';
 import { normalizeDaySlotBookings } from './daySlotBookings';
 import { resourceKindLabel, type ResourceKind } from './resourceKinds';
+import { ROOM_DAY_WINDOW, formatInterval, getBookingMinutesOnDate, getRoomMergedIntervals, mergeIntervals, toMinutes } from './roomOccupancy';
 
 type Floorplan = { id: string; name: string; imageUrl: string; isDefault?: boolean; defaultResourceKind?: ResourceKind };
 type FloorplanResource = { id: string; floorplanId: string; kind?: ResourceKind };
@@ -77,74 +78,54 @@ type RoomAvailabilityResponse = {
 };
 type RoomBookingListEntry = { id: string; start: number; end: number; label: string; person: string; bookingId?: string; isCurrentUser: boolean; isRecurring: boolean };
 type DeskSlotAvailability = 'FREE' | 'AM_BOOKED' | 'PM_BOOKED' | 'FULL_BOOKED';
-type PopupPlacement = 'top' | 'right' | 'bottom' | 'left';
-type PopupCoordinates = { left: number; top: number; placement: PopupPlacement };
+type PopupPlacement = 'right-below' | 'right-above' | 'left-below' | 'left-above';
+type PopupCoordinates = { left: number; top: number; placement: PopupPlacement; maxHeight: number };
 type TimeInterval = { start: number; end: number };
 type CalendarBooking = { date: string; deskId: string; daySlot?: 'AM' | 'PM' | 'FULL' };
 type DayAvailabilityTone = 'many-free' | 'few-free' | 'none-free';
 
 const POPUP_OFFSET = 12;
-const POPUP_PADDING = 8;
-const WORK_START = 7 * 60;
-const WORK_END = 18 * 60;
+const POPUP_MARGIN = 12;
+const WORK_START = toMinutes(ROOM_DAY_WINDOW.start);
+const WORK_END = toMinutes(ROOM_DAY_WINDOW.end);
 
 const clamp = (value: number, min: number, max: number): number => Math.min(max, Math.max(min, value));
 
 const getCandidatePosition = (placement: PopupPlacement, anchorRect: DOMRect, popupWidth: number, popupHeight: number): { left: number; top: number } => {
-  const anchorCenterX = anchorRect.left + anchorRect.width / 2;
-  const anchorCenterY = anchorRect.top + anchorRect.height / 2;
-
-  if (placement === 'right') {
-    return { left: anchorRect.right + POPUP_OFFSET, top: anchorCenterY - popupHeight / 2 };
-  }
-  if (placement === 'left') {
-    return { left: anchorRect.left - popupWidth - POPUP_OFFSET, top: anchorCenterY - popupHeight / 2 };
-  }
-  if (placement === 'top') {
-    return { left: anchorCenterX - popupWidth / 2, top: anchorRect.top - popupHeight - POPUP_OFFSET };
-  }
-
-  return { left: anchorCenterX - popupWidth / 2, top: anchorRect.bottom + POPUP_OFFSET };
+  const horizontal = placement.startsWith('right') ? anchorRect.right + POPUP_OFFSET : anchorRect.left - popupWidth - POPUP_OFFSET;
+  const vertical = placement.endsWith('below') ? anchorRect.top : anchorRect.bottom - popupHeight;
+  return { left: horizontal, top: vertical };
 };
 
-const calculatePopupCoordinates = (anchorRect: DOMRect, popupRect: DOMRect): PopupCoordinates => {
-  const viewportWidth = window.innerWidth;
-  const viewportHeight = window.innerHeight;
-  const spaces = {
-    right: viewportWidth - anchorRect.right,
-    left: anchorRect.left,
-    bottom: viewportHeight - anchorRect.bottom,
-    top: anchorRect.top,
-  };
+const calculatePopupCoordinates = (
+  anchorRect: DOMRect,
+  popoverSize: { width: number; height: number },
+  viewportSize: { width: number; height: number },
+  margin: number,
+): PopupCoordinates => {
+  const maxHeight = Math.max(240, viewportSize.height - margin * 2);
+  const effectiveHeight = Math.min(popoverSize.height, maxHeight);
+  const minLeft = margin;
+  const minTop = margin;
+  const maxLeft = Math.max(margin, viewportSize.width - popoverSize.width - margin);
+  const maxTop = Math.max(margin, viewportSize.height - effectiveHeight - margin);
+  const candidates: PopupPlacement[] = ['right-below', 'right-above', 'left-below', 'left-above'];
 
-  const placements = (Object.keys(spaces) as PopupPlacement[]).sort((a, b) => spaces[b] - spaces[a]);
-  const minLeft = POPUP_PADDING;
-  const maxLeft = Math.max(POPUP_PADDING, viewportWidth - popupRect.width - POPUP_PADDING);
-  const minTop = POPUP_PADDING;
-  const maxTop = Math.max(POPUP_PADDING, viewportHeight - popupRect.height - POPUP_PADDING);
-
-  for (const placement of placements) {
-    const candidate = getCandidatePosition(placement, anchorRect, popupRect.width, popupRect.height);
-    const overflowLeft = Math.max(0, minLeft - candidate.left);
-    const overflowRight = Math.max(0, candidate.left + popupRect.width - (viewportWidth - POPUP_PADDING));
-    const overflowTop = Math.max(0, minTop - candidate.top);
-    const overflowBottom = Math.max(0, candidate.top + popupRect.height - (viewportHeight - POPUP_PADDING));
-    const overflow = overflowLeft + overflowRight + overflowTop + overflowBottom;
-
-    if (overflow <= 0.5) {
-      return {
-        left: clamp(candidate.left, minLeft, maxLeft),
-        top: clamp(candidate.top, minTop, maxTop),
-        placement,
-      };
+  for (const placement of candidates) {
+    const candidate = getCandidatePosition(placement, anchorRect, popoverSize.width, effectiveHeight);
+    const fitsHorizontally = candidate.left >= minLeft && candidate.left + popoverSize.width <= viewportSize.width - margin;
+    const fitsVertically = candidate.top >= minTop && candidate.top + effectiveHeight <= viewportSize.height - margin;
+    if (fitsHorizontally && fitsVertically) {
+      return { left: candidate.left, top: candidate.top, placement, maxHeight };
     }
   }
 
-  const fallback = getCandidatePosition(placements[0] ?? 'right', anchorRect, popupRect.width, popupRect.height);
+  const fallback = getCandidatePosition(candidates[0], anchorRect, popoverSize.width, effectiveHeight);
   return {
     left: clamp(fallback.left, minLeft, maxLeft),
     top: clamp(fallback.top, minTop, maxTop),
-    placement: placements[0] ?? 'right',
+    placement: candidates[0],
+    maxHeight,
   };
 };
 
@@ -203,44 +184,11 @@ const formatMinutesAsTime = (minutes: number): string => {
   return `${hour}:${minute}`;
 };
 
-const toMinutes = (value?: string): number | null => {
-  if (!value) return null;
-
-  if (/^\d{2}:\d{2}$/.test(value)) {
-    const [hour, minute] = value.split(':').map(Number);
-    if (!Number.isFinite(hour) || !Number.isFinite(minute)) return null;
-    return hour * 60 + minute;
-  }
-
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) return null;
-  const hour = parsed.getHours();
-  const minute = parsed.getMinutes();
-  if (!Number.isFinite(hour) || !Number.isFinite(minute)) return null;
-  return hour * 60 + minute;
-};
-
 const bookingBelongsToDay = (booking: { startTime?: string }, selectedDateValue: string): boolean => {
   if (!booking.startTime) return true;
   const parsed = new Date(booking.startTime);
   if (Number.isNaN(parsed.getTime())) return true;
   return toLocalDateKey(parsed) === selectedDateValue;
-};
-
-const mergeIntervals = (intervals: TimeInterval[]): TimeInterval[] => {
-  if (intervals.length === 0) return [];
-  const sorted = [...intervals].sort((a, b) => a.start - b.start);
-  const merged: TimeInterval[] = [sorted[0]];
-  for (let index = 1; index < sorted.length; index += 1) {
-    const current = sorted[index];
-    const last = merged[merged.length - 1];
-    if (current.start <= last.end) {
-      last.end = Math.max(last.end, current.end);
-      continue;
-    }
-    merged.push({ ...current });
-  }
-  return merged;
 };
 
 const toFreeIntervals = (occupied: TimeInterval[], dayStart = WORK_START, dayEnd = WORK_END): TimeInterval[] => {
@@ -541,6 +489,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
   const occupantRowRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const highlightTimerRef = useRef<number | null>(null);
   const popupRef = useRef<HTMLElement | null>(null);
+  const popupLayoutRafRef = useRef<number | null>(null);
   const availabilityCacheRef = useRef<Map<string, Map<string, DayAvailabilityTone>>>(new Map());
   const deskAnchorElementsRef = useRef<Map<string, HTMLElement>>(new Map());
 
@@ -605,7 +554,11 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
           endTime: booking.endTime,
           user: booking.user
         }))
-        .sort((left, right) => (toMinutes(left.startTime ?? undefined) ?? 0) - (toMinutes(right.startTime ?? undefined) ?? 0));
+        .sort((left, right) => {
+          const leftStart = getBookingMinutesOnDate(left, selectedDate)?.start ?? Number.POSITIVE_INFINITY;
+          const rightStart = getBookingMinutesOnDate(right, selectedDate)?.start ?? Number.POSITIVE_INFINITY;
+          return leftStart - rightStart;
+        });
     }
 
     return popupDeskBookings
@@ -615,20 +568,22 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
         endTime: booking.endTime ?? null,
         user: { email: booking.userEmail, name: booking.userDisplayName }
       }))
-      .sort((left, right) => (toMinutes(left.startTime ?? undefined) ?? 0) - (toMinutes(right.startTime ?? undefined) ?? 0));
+      .sort((left, right) => {
+        const leftStart = getBookingMinutesOnDate(left, selectedDate)?.start ?? Number.POSITIVE_INFINITY;
+        const rightStart = getBookingMinutesOnDate(right, selectedDate)?.start ?? Number.POSITIVE_INFINITY;
+        return leftStart - rightStart;
+      });
   }, [popupDesk, popupDeskBookings, roomAvailability, selectedDate]);
-  const popupRoomOccupiedIntervals = useMemo(() => mergeIntervals(popupRoomBookingsForSelectedDay.flatMap((booking) => {
-    const start = toMinutes(booking.startTime ?? undefined);
-    const end = toMinutes(booking.endTime ?? undefined);
-    if (start === null || end === null || end <= start) return [];
-    return [{ start, end }];
-  })), [popupRoomBookingsForSelectedDay]);
+  const popupRoomOccupiedIntervals = useMemo(
+    () => getRoomMergedIntervals(popupRoomBookingsForSelectedDay, selectedDate, WORK_START, WORK_END),
+    [popupRoomBookingsForSelectedDay, selectedDate],
+  );
   const popupRoomFreeIntervals = useMemo(() => {
     if (roomAvailability && roomAvailability.resource.id === popupDesk?.id && roomAvailability.date === selectedDate) {
       const normalizedWindows = roomAvailability.freeWindows.flatMap((window) => {
-        const start = toMinutes(window.startTime ?? undefined);
-        const end = toMinutes(window.endTime ?? undefined);
-        if (start === null || end === null || end <= start) return [];
+        const start = window.startTime ? toMinutes(window.startTime) : Number.NaN;
+        const end = window.endTime ? toMinutes(window.endTime) : Number.NaN;
+        if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return [];
         return [{ start, end }];
       });
       return mergeIntervals(normalizedWindows);
@@ -639,9 +594,9 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
   const popupRoomBookingsList = useMemo<RoomBookingListEntry[]>(() => {
     const rendered = popupRoomBookingsForSelectedDay
       .flatMap((booking) => {
-        const start = toMinutes(booking.startTime ?? undefined);
-        const end = toMinutes(booking.endTime ?? undefined);
-        if (start === null || end === null || end <= start) return [];
+        const bookingMinutes = getBookingMinutesOnDate(booking, selectedDate);
+        if (!bookingMinutes) return [];
+        const { start, end } = bookingMinutes;
         const bookingEmail = booking.user.email.toLowerCase();
         const isCurrentUser = Boolean(currentUserEmail && bookingEmail === currentUserEmail.toLowerCase());
         return [{
@@ -656,10 +611,8 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
         }];
       })
       .sort((a, b) => a.start - b.start);
-
-    console.log('[ROOM] renderedBookings ids', rendered.map((booking) => booking.bookingId ?? booking.id));
     return rendered;
-  }, [popupRoomBookingsForSelectedDay, currentUserEmail]);
+  }, [popupRoomBookingsForSelectedDay, currentUserEmail, selectedDate]);
   const popupRoomFreeSlotChips = useMemo(() => popupRoomFreeIntervals
     .filter((interval) => interval.end - interval.start >= 30)
     .map((interval) => ({
@@ -671,11 +624,21 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
     if (!popupDesk || !isRoomResource(popupDesk)) return '';
     const start = toMinutes(bookingFormValues.startTime);
     const end = toMinutes(bookingFormValues.endTime);
-    if (start === null || end === null || end <= start) return '';
+    if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return '';
     const conflict = popupRoomOccupiedIntervals.find((interval) => start < interval.end && end > interval.start);
     if (!conflict) return '';
     return `Kollidiert mit ${formatMinutesAsTime(conflict.start)} – ${formatMinutesAsTime(conflict.end)}`;
   }, [popupDesk, bookingFormValues.startTime, bookingFormValues.endTime, popupRoomOccupiedIntervals]);
+  const popupRoomOccupancyPercent = useMemo(() => {
+    const occupied = popupRoomOccupiedIntervals.reduce((sum, interval) => sum + (interval.end - interval.start), 0);
+    const total = WORK_END - WORK_START;
+    if (total <= 0) return 0;
+    return Math.round((occupied / total) * 100);
+  }, [popupRoomOccupiedIntervals]);
+  const popupRoomMergedLabel = useMemo(() => {
+    if (popupRoomOccupiedIntervals.length === 0) return 'keine';
+    return popupRoomOccupiedIntervals.map((interval) => formatInterval(interval)).join(', ');
+  }, [popupRoomOccupiedIntervals]);
   const popupDeskState = popupDesk ? (!canBookDesk(popupDesk) ? (popupDesk.isCurrentUsersDesk ? 'MINE' : 'TAKEN') : 'FREE') : null;
   const popupOwnBookingIsRecurring = useMemo(() => popupDeskBookings.some((booking) => booking.isCurrentUser && booking.type === 'recurring'), [popupDeskBookings]);
   const cancelConfirmDesk = useMemo(() => (cancelConfirmContext ? desks.find((desk) => desk.id === cancelConfirmContext.deskId) ?? null : null), [desks, cancelConfirmContext]);
@@ -877,15 +840,36 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
     };
   }, []);
 
+  const schedulePopupLayout = useCallback(() => {
+    if (!deskPopup) return;
+    if (popupLayoutRafRef.current) window.cancelAnimationFrame(popupLayoutRafRef.current);
+    popupLayoutRafRef.current = window.requestAnimationFrame(() => {
+      popupLayoutRafRef.current = null;
+      const anchorElement = deskAnchorElementsRef.current.get(deskPopup.deskId);
+      const anchorRect = cloneRect(anchorElement?.getBoundingClientRect() ?? deskPopup.anchorRect);
+      setDeskPopup((current) => {
+        if (!current || current.deskId !== deskPopup.deskId) return current;
+        return { ...current, anchorRect };
+      });
+      if (!popupRef.current) return;
+      const popupRect = popupRef.current.getBoundingClientRect();
+      setDeskPopupCoords(calculatePopupCoordinates(
+        anchorRect,
+        { width: popupRect.width, height: popupRect.height },
+        { width: window.innerWidth, height: window.innerHeight },
+        POPUP_MARGIN,
+      ));
+    });
+  }, [deskPopup]);
+
   useLayoutEffect(() => {
     if (!deskPopup || !popupRef.current) {
       setDeskPopupCoords(null);
       return;
     }
 
-    const popupRect = popupRef.current.getBoundingClientRect();
-    setDeskPopupCoords(calculatePopupCoordinates(deskPopup.anchorRect, popupRect));
-  }, [deskPopup, bookingDialogState, popupDeskState, dialogErrorMessage]);
+    schedulePopupLayout();
+  }, [deskPopup, bookingDialogState, popupDeskState, dialogErrorMessage, selectedDate, popupRoomBookingsList.length, popupRoomFreeSlotChips.length, roomBookingConflict, schedulePopupLayout]);
 
 
   useEffect(() => {
@@ -893,12 +877,13 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
 
     const frame = window.requestAnimationFrame(() => {
       refreshDeskPopupAnchorRect(deskPopup.deskId);
+      schedulePopupLayout();
     });
 
     return () => {
       window.cancelAnimationFrame(frame);
     };
-  }, [bookingVersion, deskPopup, refreshDeskPopupAnchorRect]);
+  }, [bookingVersion, deskPopup, refreshDeskPopupAnchorRect, schedulePopupLayout]);
 
   useEffect(() => {
     if (!deskPopup) return;
@@ -922,22 +907,20 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
       closePopup();
     };
 
-    const closeOnViewportChange = () => closePopup();
+    const recomputeOnViewportChange = () => schedulePopupLayout();
 
     window.addEventListener('keydown', closeOnEscape);
     window.addEventListener('mousedown', closeOnOutsideClick, true);
-    window.addEventListener('scroll', closeOnViewportChange, true);
-    window.addEventListener('wheel', closeOnViewportChange, { passive: true });
-    window.addEventListener('resize', closeOnViewportChange);
+    window.addEventListener('scroll', recomputeOnViewportChange, true);
+    window.addEventListener('resize', recomputeOnViewportChange);
 
     return () => {
       window.removeEventListener('keydown', closeOnEscape);
       window.removeEventListener('mousedown', closeOnOutsideClick, true);
-      window.removeEventListener('scroll', closeOnViewportChange, true);
-      window.removeEventListener('wheel', closeOnViewportChange);
-      window.removeEventListener('resize', closeOnViewportChange);
+      window.removeEventListener('scroll', recomputeOnViewportChange, true);
+      window.removeEventListener('resize', recomputeOnViewportChange);
     };
-  }, [deskPopup]);
+  }, [deskPopup, schedulePopupLayout]);
 
 
   const showRoomDebugInfo = useMemo(() => {
@@ -1006,12 +989,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
         const nextSlot = getDefaultSlotForDesk(desk);
         if (nextSlot) defaults.slot = nextSlot;
       } else {
-        const occupiedIntervals = mergeIntervals(normalizeDeskBookings(desk).flatMap((booking) => {
-          const start = toMinutes(booking.startTime);
-          const end = toMinutes(booking.endTime);
-          if (start === null || end === null || end <= start) return [];
-          return [{ start, end }];
-        }));
+        const occupiedIntervals = getRoomMergedIntervals(normalizeDeskBookings(desk), selectedDate, WORK_START, WORK_END);
         const freeIntervals = toFreeIntervals(occupiedIntervals);
         const firstFreeSlot = freeIntervals.find((interval) => interval.end > interval.start);
 
@@ -1590,9 +1568,9 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
         <section
           ref={popupRef}
           className="card desk-popup"
-          style={{ left: deskPopupCoords?.left ?? deskPopup.anchorRect.left, top: deskPopupCoords?.top ?? deskPopup.anchorRect.top, visibility: deskPopupCoords ? 'visible' : 'hidden' }}
+          style={{ left: deskPopupCoords?.left ?? deskPopup.anchorRect.left, top: deskPopupCoords?.top ?? deskPopup.anchorRect.top, maxHeight: `${deskPopupCoords?.maxHeight ?? Math.max(240, window.innerHeight - POPUP_MARGIN * 2)}px`, visibility: deskPopupCoords ? 'visible' : 'hidden' }}
           role="menu"
-          data-placement={deskPopupCoords?.placement ?? 'right'}
+          data-placement={deskPopupCoords?.placement ?? 'right-below'}
         >
           {popupDeskState === 'FREE' ? (
             <>
@@ -1603,41 +1581,45 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
                 </div>
                 <button type="button" className="btn btn-ghost desk-popup-close" aria-label="Popover schließen" onClick={closeBookingFlow}>✕</button>
               </div>
-              <BookingForm
-                values={bookingFormValues}
-                onChange={setBookingFormValues}
-                onCancel={closeBookingFlow}
-                onSubmit={handleBookingSubmit}
-                isSubmitting={bookingDialogState === 'SUBMITTING'}
-                disabled={bookingDialogState === 'SUBMITTING'}
-                errorMessage={dialogErrorMessage}
-                allowRecurring={popupDesk.effectiveAllowSeries !== false}
-                resourceKind={popupDesk.kind}
-                roomSchedule={isRoomResource(popupDesk)
-                  ? {
-                    bookings: popupRoomBookingsList.map((booking) => ({
-                      id: booking.id,
-                      label: booking.label,
-                      person: booking.person,
-                      isCurrentUser: booking.isCurrentUser,
-                      canCancel: booking.isCurrentUser && Boolean(booking.bookingId)
-                    })),
-                    freeSlots: popupRoomFreeSlotChips,
-                    isFullyBooked: popupRoomFreeSlotChips.length === 0,
-                    conflictMessage: roomBookingConflict,
-                    debugInfo: showRoomDebugInfo ? `bookings loaded: ${popupRoomBookingsList.length} · date: ${selectedDate} · room: ${popupDesk.name}` : undefined,
-                    onSelectFreeSlot: (startTime, endTime) => {
-                      setBookingFormValues((current) => ({ ...current, startTime, endTime }));
-                    },
-                    onBookingClick: handleRoomBookingCancel
-                  }
-                  : undefined}
-              />
+              <div className="desk-popup-content">
+                <BookingForm
+                  values={bookingFormValues}
+                  onChange={setBookingFormValues}
+                  onCancel={closeBookingFlow}
+                  onSubmit={handleBookingSubmit}
+                  isSubmitting={bookingDialogState === 'SUBMITTING'}
+                  disabled={bookingDialogState === 'SUBMITTING'}
+                  errorMessage={dialogErrorMessage}
+                  allowRecurring={popupDesk.effectiveAllowSeries !== false}
+                  resourceKind={popupDesk.kind}
+                  roomSchedule={isRoomResource(popupDesk)
+                    ? {
+                      bookings: popupRoomBookingsList.map((booking) => ({
+                        id: booking.id,
+                        label: booking.label,
+                        person: booking.person,
+                        isCurrentUser: booking.isCurrentUser,
+                        canCancel: booking.isCurrentUser && Boolean(booking.bookingId)
+                      })),
+                      freeSlots: popupRoomFreeSlotChips,
+                      isFullyBooked: popupRoomFreeSlotChips.length === 0,
+                      conflictMessage: roomBookingConflict,
+                      debugInfo: showRoomDebugInfo
+                        ? `window: ${ROOM_DAY_WINDOW.start}–${ROOM_DAY_WINDOW.end} · merged: ${popupRoomMergedLabel} · occupancy: ${popupRoomOccupancyPercent}% · raw bookings: ${popupRoomBookingsForSelectedDay.length}`
+                        : undefined,
+                      onSelectFreeSlot: (startTime, endTime) => {
+                        setBookingFormValues((current) => ({ ...current, startTime, endTime }));
+                      },
+                      onBookingClick: handleRoomBookingCancel
+                    }
+                    : undefined}
+                />
+              </div>
             </>
           ) : (
             <>
               <h3>{resourceKindLabel(popupDesk.kind)}: {popupDesk.name}</h3>
-              <div className="stack-sm">
+              <div className="stack-sm desk-popup-content">
                 <p className="muted">Datum: {new Date(`${selectedDate}T00:00:00.000Z`).toLocaleDateString('de-DE')}</p>
                 {!isRoomResource(popupDesk) && <p className="muted">Status: {deskAvailabilityLabel(popupDeskAvailability)}</p>}
                 {popupDeskBookings.map((booking) => (
@@ -1662,6 +1644,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
               </div>
             </>
           )}
+          {showRoomDebugInfo && deskPopupCoords && <div className="desk-popup-debug muted">placement: {deskPopupCoords.placement} · maxHeight: {Math.round(deskPopupCoords.maxHeight)}px</div>}
         </section>,
         document.body
       )}
