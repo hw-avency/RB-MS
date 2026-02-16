@@ -17,6 +17,7 @@ model User {
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
   sessions     Session[]
+  bookingsCreated Booking[] @relation("BookingCreatedBy")
 }
 
 model Session {
@@ -96,7 +97,10 @@ enum ResourceKind {
 model Booking {
   id        String   @id @default(cuid())
   deskId    String
-  userEmail String
+  userEmail String?
+  bookedFor BookedFor @default(SELF)
+  guestName String?
+  createdByUserId String
   date      DateTime @db.Date
   daySlot   DaySlot?
   startTime DateTime?
@@ -106,10 +110,17 @@ model Booking {
   endMinute Int?
   createdAt DateTime @default(now())
   desk      Desk     @relation(fields: [deskId], references: [id], onDelete: Cascade)
+  createdBy User @relation("BookingCreatedBy", fields: [createdByUserId], references: [id], onDelete: Restrict)
 
   @@index([userEmail, date])
   @@index([date])
   @@index([deskId])
+  @@index([createdByUserId])
+}
+
+enum BookedFor {
+  SELF
+  GUEST
 }
 
 enum DaySlot {
