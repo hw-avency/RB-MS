@@ -1221,7 +1221,13 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
   }, [bookingFormValues.slot, popupDesk, popupMyBookings]);
   const hasUnexpectedMultipleMyBookings = popupMyBookings.length > 1;
   const popupMode: 'create' | 'manage' = popupDesk && popupMyBookings.length > 0 ? 'manage' : 'create';
-  const popupDeskState = popupDesk ? (popupMode === 'manage' ? 'MINE' : popupDesk.isBookableForMe === false ? 'UNBOOKABLE' : !canBookDesk(popupDesk) ? 'TAKEN' : 'FREE') : null;
+  const popupDeskState = popupDesk ? (popupDesk.isBookableForMe === false ? 'UNBOOKABLE' : !canBookDesk(popupDesk) ? 'TAKEN' : 'FREE') : null;
+  const meEmployeeId = currentUser?.id;
+  const selectedBooking = popupMySelectedBooking;
+  const canCancelHere =
+    popupDeskState === 'TAKEN' &&
+    !!selectedBooking &&
+    selectedBooking.employeeId === meEmployeeId;
   const popupOwnBookingIsRecurring = useMemo(() => popupDeskBookings.some((booking) => booking.isCurrentUser && (Boolean(booking.recurringBookingId) || Boolean(booking.recurringGroupId))), [popupDeskBookings]);
   const manageSlotConflict = useMemo(() => {
     if (!popupDesk || !popupMySelectedBooking || isRoomResource(popupDesk)) return '';
@@ -1641,7 +1647,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
   }, []);
 
   const openCancelConfirm = () => {
-    if (!deskPopup || !popupDesk || popupDeskState !== 'MINE') return;
+    if (!deskPopup || !popupDesk || !canCancelHere) return;
     const ownBooking = normalizeDeskBookings(popupDesk).find((booking) => booking.isCurrentUser);
     if (!ownBooking) return;
     const bookingIds = ownBooking.sourceBookingIds?.length
@@ -2528,7 +2534,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
       {deskPopup && popupDesk && popupDeskState && cancelFlowState !== 'CANCEL_CONFIRM_OPEN' && createPortal(
         <div className="desk-popup-overlay" role="presentation">
           <section className="card desk-popup" role="dialog" aria-modal="true" aria-labelledby="booking-panel-title">
-          {(popupDeskState === 'FREE' || popupDeskState === 'MINE' || (isRoomResource(popupDesk) && popupDeskState !== 'UNBOOKABLE')) ? (
+          {(popupDeskState === 'FREE' || popupMode === 'manage' || (isRoomResource(popupDesk) && popupDeskState !== 'UNBOOKABLE')) ? (
             <>
               <div className="desk-popup-header">
                 <div className="stack-xxs">
@@ -2628,7 +2634,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
 
                 <footer className="desk-popup-footer-actions">
                   <button type="button" className="btn btn-outline" onClick={closeBookingFlow} disabled={isCancellingBooking}>Schließen</button>
-                  {popupDeskState === 'MINE' && (
+                  {canCancelHere && (
                     <button
                       type="button"
                       className="btn btn-danger"
