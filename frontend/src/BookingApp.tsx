@@ -2,7 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import type { MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent, WheelEvent as ReactWheelEvent } from 'react';
 import { createPortal } from 'react-dom';
 import { API_BASE, ApiError, checkBackendHealth, get, markBackendAvailable, post, put, resolveApiUrl } from './api';
-import { cancelBooking, cancelRecurringBookingInstances, createRoomBooking } from './api/bookings';
+import { cancelBooking, createRoomBooking } from './api/bookings';
 import { createMutationRequestId, logMutation, toBodySnippet } from './api/mutationLogger';
 import { Avatar } from './components/Avatar';
 import { BookingForm, createDefaultBookingFormValues } from './components/BookingForm';
@@ -103,7 +103,7 @@ type RecurringConflictState = {
   freeDates: string[];
 };
 type DeskPopupState = { deskId: string; anchorRect: DOMRect; openedAt: number };
-type CancelConfirmContext = DeskPopupState & { bookingIds: string[]; bookingLabel: string; recurringBookingId?: string | null; isRecurring: boolean; keepPopoverOpen: boolean };
+type CancelConfirmContext = DeskPopupState & { bookingIds: string[]; bookingLabel: string; recurringBookingId?: string | null; recurringGroupId?: string | null; isRecurring: boolean; keepPopoverOpen: boolean };
 type OccupancyBooking = NonNullable<OccupancyDesk['booking']>;
 type NormalizedOccupancyBooking = ReturnType<typeof normalizeDaySlotBookings<OccupancyBooking>>[number];
 type RoomAvailabilityBooking = { id: string; startTime: string | null; endTime: string | null; bookedFor?: 'SELF' | 'GUEST'; guestName?: string | null; employeeId?: string | null; userId?: string | null; user: { email?: string | null; name?: string | null; displayName?: string | null } | null; createdBy?: BookingActor; createdByUserId?: string; createdByEmployeeId?: string; recurringBookingId?: string | null; recurringGroupId?: string | null; type?: 'single' | 'recurring'; };
@@ -145,6 +145,7 @@ type RoomBookingListEntry = {
   createdByEmployeeId?: string;
   canCancel: boolean;
   recurringBookingId?: string | null;
+  recurringGroupId?: string | null;
 };
 type DeskSlotAvailability = 'FREE' | 'AM_BOOKED' | 'PM_BOOKED' | 'FULL_BOOKED';
 type PopupPlacement = 'top' | 'right' | 'bottom' | 'left';
@@ -1160,6 +1161,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
           userId: booking.userId,
           createdByEmployeeId: booking.createdByEmployeeId,
           recurringBookingId: booking.recurringBookingId,
+          recurringGroupId: booking.recurringGroupId,
           canCancel
         }];
       })
@@ -1290,7 +1292,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
   const hasUnexpectedMultipleMyBookings = popupMyBookings.length > 1;
   const popupMode: 'create' | 'manage' = popupDesk && popupMyBookings.length > 0 ? 'manage' : 'create';
   const popupDeskState = popupDesk ? (popupMode === 'manage' ? 'MINE' : !canBookDesk(popupDesk) ? 'TAKEN' : 'FREE') : null;
-  const popupOwnBookingIsRecurring = useMemo(() => popupDeskBookings.some((booking) => booking.isCurrentUser && booking.type === 'recurring'), [popupDeskBookings]);
+  const popupOwnBookingIsRecurring = useMemo(() => popupDeskBookings.some((booking) => booking.isCurrentUser && (Boolean(booking.recurringBookingId) || Boolean(booking.recurringGroupId))), [popupDeskBookings]);
   const manageSlotConflict = useMemo(() => {
     if (!popupDesk || !popupMySelectedBooking || isRoomResource(popupDesk)) return '';
     const conflict = popupDeskBookings.find((booking) => {
@@ -1309,6 +1311,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
   }, [manageTargetSlot, popupDesk, popupDeskBookings, popupMySelectedBooking]);
   const cancelConfirmDesk = useMemo(() => (cancelConfirmContext ? desks.find((desk) => desk.id === cancelConfirmContext.deskId) ?? null : null), [desks, cancelConfirmContext]);
   const cancelConfirmBookingLabel = cancelConfirmContext?.bookingLabel ?? bookingSlotLabel(cancelConfirmDesk?.booking);
+  const cancelConfirmIsSeries = Boolean(cancelConfirmContext?.recurringBookingId || cancelConfirmContext?.recurringGroupId);
   const calendarDays = useMemo(() => buildCalendarDays(visibleMonth), [visibleMonth]);
   const calendarRange = useMemo(() => ({
     from: toDateKey(calendarDays[0]),
@@ -1798,7 +1801,8 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
       bookingIds,
       bookingLabel: bookingSlotLabel(ownBooking),
       recurringBookingId: ownBooking.recurringBookingId ?? null,
-      isRecurring: normalizeDeskBookings(popupDesk).some((booking) => booking.isCurrentUser && booking.type === 'recurring'),
+      recurringGroupId: ownBooking.recurringGroupId ?? null,
+      isRecurring: normalizeDeskBookings(popupDesk).some((booking) => booking.isCurrentUser && (Boolean(booking.recurringBookingId) || Boolean(booking.recurringGroupId))),
       keepPopoverOpen: true
     });
     setCancelDialogError('');
@@ -2152,6 +2156,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
       bookingIds: [selectedBooking.bookingId],
       bookingLabel: selectedBooking.label,
       recurringBookingId: selectedBooking.recurringBookingId ?? null,
+      recurringGroupId: selectedBooking.recurringGroupId ?? null,
       isRecurring: selectedBooking.isRecurring,
       keepPopoverOpen: true
     });
@@ -2163,7 +2168,6 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
 
   const cancelBookingWithRefresh = async ({
     bookingId,
-    recurringBookingId,
     cancelMode,
     requestId,
     deskId,
@@ -2173,7 +2177,6 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
     isRoomCancel
   }: {
     bookingId: string;
-    recurringBookingId?: string | null;
     cancelMode: 'SINGLE' | 'SERIES_ALL';
     requestId: string;
     deskId: string;
@@ -2182,20 +2185,14 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
     popupDeskId: string;
     isRoomCancel: boolean;
   }) => {
-    const endpoint = cancelMode === 'SERIES_ALL' && recurringBookingId
-      ? `${API_BASE}/recurring-bookings/${recurringBookingId}/instances?mode=ALL`
-      : `${API_BASE}/bookings/${bookingId}`;
+    const endpoint = `${API_BASE}/bookings/${bookingId}/cancel`;
     updateCancelDebug({ lastAction: 'CANCEL_REQUEST', bookingId, endpoint, httpStatus: null, errorMessage: '' });
 
+    const scope = cancelMode === 'SERIES_ALL' ? 'series' : 'single';
     let deletedCount = 1;
     await runWithAppLoading(async () => {
-      if (cancelMode === 'SERIES_ALL' && recurringBookingId) {
-        const result = await cancelRecurringBookingInstances(recurringBookingId, 'ALL', undefined, { requestId });
-        deletedCount = result.deletedCount;
-        return;
-      }
-
-      await cancelBooking(bookingId, isRoomCancel ? { requestId } : undefined);
+      const result = await cancelBooking(bookingId, scope, isRoomCancel ? { requestId } : undefined);
+      deletedCount = result.deletedCount;
     });
 
     updateCancelDebug({ lastAction: 'CANCEL_SUCCESS', bookingId, endpoint, httpStatus: 200, errorMessage: '' });
@@ -2266,9 +2263,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
       return;
     }
 
-    const endpoint = cancelMode === 'SERIES_ALL' && cancelConfirmContext.recurringBookingId
-      ? `${API_BASE}/recurring-bookings/${cancelConfirmContext.recurringBookingId}/instances?mode=ALL`
-      : `${API_BASE}/bookings/${bookingId}`;
+    const endpoint = `${API_BASE}/bookings/${bookingId}/cancel`;
     updateCancelDebug({ lastAction: 'CANCEL_CLICK', bookingId, endpoint, httpStatus: null, errorMessage: '' });
     setCancelDialogError('');
     setIsCancellingBooking(true);
@@ -2278,7 +2273,6 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
     try {
       await cancelBookingWithRefresh({
         bookingId,
-        recurringBookingId: cancelConfirmContext.recurringBookingId ?? null,
         cancelMode,
         requestId,
         deskId: cancelConfirmDesk.id,
@@ -2886,8 +2880,8 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
             onMouseDown={(event) => { event.stopPropagation(); }}
             onClick={(event) => { event.stopPropagation(); }}
           >
-            <h3 id="cancel-booking-title">{cancelConfirmContext?.recurringBookingId ? 'Serienbuchung stornieren' : 'Buchung stornieren?'}</h3>
-            {cancelConfirmContext?.recurringBookingId
+            <h3 id="cancel-booking-title">{cancelConfirmIsSeries ? 'Serienbuchung stornieren' : 'Buchung stornieren?'}</h3>
+            {cancelConfirmIsSeries
               ? <p>Dieser Termin gehört zu einer Serienbuchung. Was möchtest du stornieren?</p>
               : <p>Möchtest du deine Buchung {cancelConfirmBookingLabel} stornieren?</p>}
             <p className="muted cancel-booking-subline">{resourceKindLabel(cancelConfirmDesk.kind)}: {cancelConfirmDesk.name} · {new Date(`${selectedDate}T00:00:00.000Z`).toLocaleDateString('de-DE')}</p>
@@ -2904,13 +2898,13 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
             )}
             <div className="inline-end">
               <button type="button" className="btn btn-outline" onMouseDown={(event) => { event.stopPropagation(); }} onClick={cancelCancelConfirm} disabled={isCancellingBooking} data-state={isCancellingBooking ? 'loading' : 'idle'}>Abbrechen</button>
-              {cancelConfirmContext?.recurringBookingId && (
+              {cancelConfirmIsSeries && (
                 <button type="button" className="btn btn-danger" onMouseDown={(event) => { event.stopPropagation(); }} onClick={(event) => void submitPopupCancel(event, 'SERIES_ALL')} disabled={isCancellingBooking} data-state={isCancellingBooking ? 'loading' : 'idle'}>
                   {isCancellingBooking && cancellingBookingId === cancelConfirmContext?.bookingIds[0] ? <><span className="btn-spinner" aria-hidden />Stornieren…</> : 'Ganze Serie stornieren'}
                 </button>
               )}
               <button type="button" className="btn btn-danger" onMouseDown={(event) => { event.stopPropagation(); }} onClick={(event) => void submitPopupCancel(event, 'SINGLE')} disabled={isCancellingBooking} data-state={isCancellingBooking ? 'loading' : 'idle'}>
-                {isCancellingBooking && cancellingBookingId === cancelConfirmContext?.bookingIds[0] ? <><span className="btn-spinner" aria-hidden />Stornieren…</> : (cancelConfirmContext?.recurringBookingId ? 'Nur diesen Termin stornieren' : 'Stornieren')}
+                {isCancellingBooking && cancellingBookingId === cancelConfirmContext?.bookingIds[0] ? <><span className="btn-spinner" aria-hidden />Stornieren…</> : (cancelConfirmIsSeries ? 'Nur diesen Termin stornieren' : 'Stornieren')}
               </button>
             </div>
           </section>

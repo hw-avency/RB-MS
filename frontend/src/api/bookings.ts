@@ -106,24 +106,26 @@ export async function createRoomBooking(payload: RoomCreatePayload, meta: Bookin
   }
 }
 
-export async function cancelBooking(bookingId: string, meta?: BookingMutationMeta): Promise<void> {
+export async function cancelBooking(bookingId: string, scope: 'single' | 'series' = 'single', meta?: BookingMutationMeta): Promise<{ deletedCount: number; scope: 'single' | 'series' }> {
   if (!bookingId) {
     throw new Error('Missing bookingId');
   }
 
-  const method = 'DELETE';
-  const path = `/bookings/${bookingId}`;
+  const method = 'POST';
+  const path = `/bookings/${bookingId}/cancel`;
   const url = `${API_BASE}${path}`;
+  const payload = { scope };
 
   if (meta) {
-    logMutation('ROOM_CANCEL_REQUEST', { requestId: meta.requestId, method, url, body: null });
+    logMutation('ROOM_CANCEL_REQUEST', { requestId: meta.requestId, method, url, body: payload });
   }
 
   const response = await fetch(url, {
     method,
     credentials: 'include',
     cache: 'no-store',
-    headers: buildHeaders()
+    headers: buildHeaders(),
+    body: JSON.stringify(payload)
   });
 
   const body = await readBodySafe(response);
@@ -136,6 +138,22 @@ export async function cancelBooking(bookingId: string, meta?: BookingMutationMet
   if (!response.ok) {
     throw new Error(extractMessage(body) || `HTTP ${response.status}`);
   }
+
+  if (
+    typeof body === 'object'
+    && body !== null
+    && 'deletedCount' in body
+    && typeof (body as { deletedCount?: unknown }).deletedCount === 'number'
+    && 'scope' in body
+    && ((body as { scope?: unknown }).scope === 'single' || (body as { scope?: unknown }).scope === 'series')
+  ) {
+    return {
+      deletedCount: (body as { deletedCount: number }).deletedCount,
+      scope: (body as { scope: 'single' | 'series' }).scope
+    };
+  }
+
+  return { deletedCount: 0, scope };
 }
 
 export async function cancelRecurringBookingInstances(recurringBookingId: string, mode: 'ALL' | 'FUTURE' = 'ALL', anchorDate?: string, meta?: BookingMutationMeta): Promise<{ deletedCount: number }> {

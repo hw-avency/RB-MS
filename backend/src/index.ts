@@ -2221,16 +2221,18 @@ app.put('/bookings/:id', async (req, res) => {
   res.status(200).json(mapBookingResponse(updated));
 });
 
-app.delete('/bookings/:id', async (req, res) => {
+type BookingCancelScope = 'single' | 'series';
+
+const parseBookingCancelScope = (value: unknown): BookingCancelScope | null => {
+  if (typeof value !== 'string') return null;
+  const normalized = value.trim().toLowerCase();
+  if (normalized === 'single' || normalized === 'series') return normalized;
+  return null;
+};
+
+const cancelBookingByScope = async ({ id, scope, req, res }: { id: string; scope: BookingCancelScope; req: express.Request; res: express.Response }) => {
   const requestId = req.requestId ?? 'unknown';
   const userId = req.authUser?.id ?? null;
-  const id = getRouteId(req.params.id);
-
-  if (!id) {
-    console.warn('BOOKING_CANCEL', { requestId, userId, bookingId: null, resourceType: null, status: 400, error: 'id is required' });
-    res.status(400).json({ error: 'validation', message: 'id is required' });
-    return;
-  }
 
   try {
     const existing = await prisma.booking.findUnique({
@@ -2248,6 +2250,14 @@ app.delete('/bookings/:id', async (req, res) => {
       res.status(401).json({ error: 'unauthorized', message: 'Authentication required' });
       return;
     }
+
+    console.info('[MUT] BOOKING_CANCEL_REQUEST', {
+      requestId,
+      bookingId: id,
+      scope,
+      recurringBookingId: existing.recurringBookingId ?? null,
+      recurringGroupId: existing.recurringGroupId ?? null
+    });
 
     let actorEmployee;
     try {
@@ -2290,14 +2300,66 @@ app.delete('/bookings/:id', async (req, res) => {
       return;
     }
 
-    await prisma.booking.delete({ where: { id } });
+    if (scope === 'series' && !existing.recurringBookingId && !existing.recurringGroupId) {
+      res.status(400).json({ error: 'validation', message: 'Booking is not part of a recurring series' });
+      return;
+    }
+
+    const deletedCount = await prisma.$transaction(async (tx) => {
+      if (scope === 'single') {
+        await tx.booking.delete({ where: { id } });
+        return 1;
+      }
+
+      const bookingWhere = existing.recurringBookingId
+        ? { recurringBookingId: existing.recurringBookingId }
+        : { recurringGroupId: existing.recurringGroupId };
+
+      const deleteBookingsResult = await tx.booking.deleteMany({ where: bookingWhere });
+      if (existing.recurringBookingId) {
+        await tx.recurringBooking.delete({ where: { id: existing.recurringBookingId } });
+      }
+      return deleteBookingsResult.count;
+    });
+
+    console.info('[MUT] BOOKING_CANCEL_DONE', { requestId, deletedCount, scope });
     console.info('BOOKING_CANCEL', { requestId, userId, bookingId: id, resourceType: existing.desk?.kind ?? null, status: 200, error: null });
-    res.status(200).json({ ok: true });
+    res.status(200).json({ deletedCount, scope });
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : 'Unexpected booking cancel error';
     console.error('BOOKING_CANCEL', { requestId, userId, bookingId: id, resourceType: null, status: 500, error: errorMessage });
     res.status(500).json({ error: 'internal_error', message: 'Booking cancel failed' });
   }
+};
+
+app.delete('/bookings/:id', async (req, res) => {
+  const id = getRouteId(req.params.id);
+
+  if (!id) {
+    const requestId = req.requestId ?? 'unknown';
+    const userId = req.authUser?.id ?? null;
+    console.warn('BOOKING_CANCEL', { requestId, userId, bookingId: null, resourceType: null, status: 400, error: 'id is required' });
+    res.status(400).json({ error: 'validation', message: 'id is required' });
+    return;
+  }
+
+  await cancelBookingByScope({ id, scope: 'single', req, res });
+});
+
+app.post('/bookings/:id/cancel', async (req, res) => {
+  const id = getRouteId(req.params.id);
+  if (!id) {
+    res.status(400).json({ error: 'validation', message: 'id is required' });
+    return;
+  }
+
+  const scope = parseBookingCancelScope((req.body as { scope?: unknown } | undefined)?.scope ?? 'single');
+  if (!scope) {
+    res.status(400).json({ error: 'validation', message: 'scope must be single or series' });
+    return;
+  }
+
+  await cancelBookingByScope({ id, scope, req, res });
 });
 
 
