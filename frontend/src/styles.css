@@ -221,7 +221,7 @@ input, select { border: 1px solid hsl(var(--border)); border-radius: 12px; paddi
 
 .summary-row{display:flex;justify-content:space-between;align-items:flex-start}
 .filter-row{display:flex;justify-content:space-between;align-items:center;gap:8px}
-.overview-view-select{padding-bottom:2px}.details-panel{padding-right:16px}
+.overview-view-select{padding-bottom:2px}.details-panel{padding-right:16px;display:flex;flex-direction:column;min-height:0}
 .table-wrap{max-height:380px;overflow:auto} table{width:100%;border-collapse:collapse} th,td{padding:8px 4px;border-bottom:1px solid hsl(var(--border));text-align:left;font-size:14px;vertical-align:top}
 .table-wrap tr{cursor:pointer;transition:background .15s ease}.table-wrap tr.row-active{background:hsl(var(--muted)/.7)}.table-wrap tr.row-highlighted{background:hsl(var(--primary)/.14)}.table-wrap tr:focus-visible{outline:2px solid hsl(var(--primary));outline-offset:-2px}
 td p{margin:2px 0 0}.occupant-card{border:1px solid hsl(var(--border));border-radius:12px;padding:14px;background:hsl(var(--muted)/.5)}
@@ -229,8 +229,8 @@ tr{cursor:pointer}.row-selected{background:hsl(var(--muted))}
 .people-list{list-style:none;padding:0;margin:0;display:grid;gap:6px}.people-list li{display:flex;justify-content:space-between;padding:8px;border-radius:12px;cursor:pointer}
 
 
-.occupancy-list{display:grid;gap:6px;max-height:300px;overflow-y:auto;overflow-x:hidden;padding-right:2px}
-.occupant-compact-card{display:flex;align-items:center;justify-content:flex-start;gap:12px;min-height:44px;padding:9px 10px;border-radius:10px;background:hsl(var(--muted)/.45);border:1px solid hsl(var(--border));transition:background .15s ease,border-color .15s ease;overflow-x:hidden}
+.occupancy-list{display:grid;gap:6px;flex:1;min-height:0;max-height:60vh;overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain;padding-right:2px}
+.occupant-compact-card{display:flex;align-items:center;justify-content:flex-start;gap:12px;min-height:44px;padding:9px 10px;border-radius:10px;background:hsl(var(--muted)/.45);border:1px solid hsl(var(--border));transition:background .15s ease,border-color .15s ease;overflow:hidden}
 .occupant-compact-card:hover,.occupant-compact-card.is-active{background:hsl(var(--muted)/.85)}
 .occupant-compact-card.is-highlighted{background:hsl(var(--primary)/.14);border-color:hsl(var(--primary)/.35)}
 .occupant-card-main{display:flex;align-items:center;gap:12px;min-width:0;flex:1}
