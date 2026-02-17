@@ -31,7 +31,7 @@ const parseMinutes = (value?: string | null): number | null => {
 const bookingBelongsToDay = (booking: RoomOccupancyBooking, day?: string): boolean => {
   if (!day) return true;
 
-  if (booking.date?.slice(0, 10) === day) return true;
+  if (booking.date) return booking.date.slice(0, 10) === day;
 
   if (!booking.startTime || HHMM_PATTERN.test(booking.startTime)) return true;
   const parsed = new Date(booking.startTime);
