@@ -1,5 +1,5 @@
 import type { RingSegment } from '../lib/bookingWindows';
-import { BUSINESS_START_ANGLE_DEGREES, BUSINESS_SWEEP_DEGREES, GAP_SWEEP_DEGREES, progressToBusinessAngleDegrees, toBusinessAngleDegrees } from '../lib/roomBusinessDayRing';
+import { BUSINESS_START_ANGLE_DEGREES, BUSINESS_SWEEP_DEGREES, NIGHT_SWEEP_DEGREES, progressToBusinessAngleDegrees, toBusinessAngleDegrees } from '../lib/roomBusinessDayRing';
 
 type RingTick = 'start' | 'twelve' | 'end';
 
@@ -23,6 +23,13 @@ const arcPath = (startDeg: number, endDeg: number, radius = RADIUS): string => {
   return `M ${start.x.toFixed(3)} ${start.y.toFixed(3)} A ${radius.toFixed(3)} ${radius.toFixed(3)} 0 ${largeArc} 1 ${end.x.toFixed(3)} ${end.y.toFixed(3)}`;
 };
 
+const segmentPath = (startDeg: number, endDeg: number, radius = RADIUS): string => {
+  const normalizedStart = ((startDeg % 360) + 360) % 360;
+  let normalizedEnd = ((endDeg % 360) + 360) % 360;
+  if (normalizedEnd <= normalizedStart) normalizedEnd += 360;
+  return arcPath(normalizedStart, normalizedEnd, radius);
+};
+
 const TICK_ANGLES = {
   start: BUSINESS_START_ANGLE_DEGREES,
   twelve: toBusinessAngleDegrees(12 * 60),
@@ -31,6 +38,7 @@ const TICK_ANGLES = {
 
 export function RoomBusinessDayRing({
   segments,
+  freeSegments,
   label = 'Raumbelegung im Geschäftsfenster 07:00 bis 18:00',
   className,
   strokeWidth = 10,
@@ -38,6 +46,7 @@ export function RoomBusinessDayRing({
   debugTitle
 }: {
   segments: RingSegment[];
+  freeSegments?: RingSegment[];
   label?: string;
   className?: string;
   strokeWidth?: number;
@@ -46,28 +55,39 @@ export function RoomBusinessDayRing({
 }) {
   const businessStart = BUSINESS_START_ANGLE_DEGREES;
   const businessEnd = businessStart + BUSINESS_SWEEP_DEGREES;
-  const gapStart = businessEnd;
-  const gapEnd = gapStart + GAP_SWEEP_DEGREES;
+  const nightStart = businessEnd;
+  const nightEnd = nightStart + NIGHT_SWEEP_DEGREES;
 
   return (
     <svg className={className} viewBox={`0 0 ${VIEWBOX_SIZE} ${VIEWBOX_SIZE}`} aria-label={label} role="img" shapeRendering="geometricPrecision">
       {debugTitle ? <title>{debugTitle}</title> : null}
-      <path
-        d={arcPath(businessStart, businessEnd)}
+      <circle
+        cx={CENTER}
+        cy={CENTER}
+        r={RADIUS}
         className="room-business-ring-track"
         style={{ strokeWidth }}
         aria-hidden="true"
       />
       <path
-        d={arcPath(gapStart, gapEnd)}
-        className="room-business-ring-gap"
+        d={segmentPath(nightStart, nightEnd)}
+        className="room-business-ring-night"
         style={{ strokeWidth }}
         aria-hidden="true"
       />
+      {(freeSegments ?? []).map((segment) => (
+        <path
+          key={`free-${segment.p0.toFixed(4)}-${segment.p1.toFixed(4)}`}
+          d={segmentPath(progressToBusinessAngleDegrees(segment.p0), progressToBusinessAngleDegrees(segment.p1))}
+          className="room-business-ring-free"
+          style={{ strokeWidth }}
+          aria-hidden="true"
+        />
+      ))}
       {segments.map((segment) => (
         <path
           key={`${segment.p0.toFixed(4)}-${segment.p1.toFixed(4)}`}
-          d={arcPath(progressToBusinessAngleDegrees(segment.p0), progressToBusinessAngleDegrees(segment.p1))}
+          d={segmentPath(progressToBusinessAngleDegrees(segment.p0), progressToBusinessAngleDegrees(segment.p1))}
           className="room-business-ring-booked"
           style={{ strokeWidth }}
           aria-hidden="true"

@@ -105,7 +105,8 @@ input, select { border: 1px solid hsl(var(--border)); border-radius: 12px; paddi
 .pin-ring-track{stroke:var(--resource-neutral);stroke-width:5;stroke-linecap:round}
 .pin-ring-arc{stroke-width:5;stroke-linecap:round}
 .room-business-ring-track{fill:none;stroke:hsl(var(--muted));stroke-linecap:round}
-.room-business-ring-gap{fill:none;stroke:hsl(var(--muted-foreground)/.35);stroke-linecap:round}
+.room-business-ring-night{fill:none;stroke:hsl(var(--muted-foreground)/.3);stroke-linecap:round}
+.room-business-ring-free{fill:none;stroke:var(--resource-free);stroke-linecap:round}
 .room-business-ring-booked{fill:none;stroke:var(--resource-busy);stroke-linecap:round}
 .desk-pin.is-own-desk .room-business-ring-booked{stroke:var(--resource-own)}
 .room-business-ring-tick{stroke:hsl(var(--muted-foreground)/.45);stroke-width:1.6}

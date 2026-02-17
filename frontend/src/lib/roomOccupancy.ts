@@ -1,4 +1,4 @@
-import { BOOKABLE_END, BOOKABLE_START, clampInterval, intervalsToSegments, mergeIntervals, toMinutes, type MinuteInterval, type RingSegment } from './bookingWindows';
+import { BOOKABLE_END, BOOKABLE_START, clampInterval, intervalsToSegments, invertIntervals, mergeIntervals, toMinutes, type MinuteInterval, type RingSegment } from './bookingWindows';
 import { BUSINESS_END_MINUTES, BUSINESS_START_MINUTES } from './roomBusinessDayRing';
 
 type RoomOccupancyBooking = {
@@ -42,7 +42,10 @@ const bookingBelongsToDay = (booking: RoomOccupancyBooking, day?: string): boole
 export type RoomOccupancyMetrics = {
   intervals: MinuteInterval[];
   segments: RingSegment[];
+  freeIntervals: MinuteInterval[];
+  freeSegments: RingSegment[];
   occupiedMinutes: number;
+  freeMinutes: number;
   windowMinutes: number;
   occupiedRatio: number;
 };
@@ -58,7 +61,7 @@ export const computeRoomOccupancy = (
   const winEnd = useDefaultWindow ? BUSINESS_END_MINUTES : toMinutes(end);
   const windowMinutes = Math.max(0, winEnd - winStart);
   if (!Number.isFinite(winStart) || !Number.isFinite(winEnd) || windowMinutes <= 0) {
-    return { intervals: [], segments: [], occupiedMinutes: 0, windowMinutes: 0, occupiedRatio: 0 };
+    return { intervals: [], segments: [], freeIntervals: [], freeSegments: [], occupiedMinutes: 0, freeMinutes: 0, windowMinutes: 0, occupiedRatio: 0 };
   }
 
   const intervals = mergeIntervals(bookings.flatMap((booking) => {
@@ -73,12 +76,18 @@ export const computeRoomOccupancy = (
   }));
 
   const occupiedMinutes = intervals.reduce((total, interval) => total + (interval.endMin - interval.startMin), 0);
+  const freeIntervals = invertIntervals(winStart, winEnd, intervals);
+  const freeMinutes = Math.max(0, windowMinutes - occupiedMinutes);
   const segments = intervalsToSegments(winStart, winEnd, intervals);
+  const freeSegments = intervalsToSegments(winStart, winEnd, freeIntervals);
 
   return {
     intervals,
     segments,
+    freeIntervals,
+    freeSegments,
     occupiedMinutes,
+    freeMinutes,
     windowMinutes,
     occupiedRatio: windowMinutes > 0 ? Math.min(1, Math.max(0, occupiedMinutes / windowMinutes)) : 0
   };
