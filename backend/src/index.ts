@@ -1219,7 +1219,16 @@ const getActiveEmployeesByEmail = async (emails: string[]) => {
 
 const getDeskContext = async (deskId: string) => prisma.desk.findUnique({
   where: { id: deskId },
-  select: { id: true, name: true, floorplanId: true, kind: true, allowSeriesOverride: true, tenantScope: true, deskTenants: { select: { tenantId: true } }, floorplan: { select: { defaultAllowSeries: true } } }
+  select: {
+    id: true,
+    name: true,
+    floorplanId: true,
+    kind: true,
+    allowSeriesOverride: true,
+    tenantScope: true,
+    deskTenants: { select: { tenantId: true } },
+    floorplan: { select: { defaultAllowSeries: true, tenantScope: true, floorplanTenants: { select: { tenantId: true } } } }
+  }
 });
 
 const resolveEffectiveAllowSeries = (desk: { allowSeriesOverride: boolean | null; floorplan?: { defaultAllowSeries: boolean } | null }): boolean => (
@@ -1236,6 +1245,21 @@ const isFloorplanVisibleForTenant = (floorplan: { tenantScope: FloorplanTenantSc
   if (floorplan.tenantScope === 'ALL') return true;
   if (!tenantDomainId) return false;
   return (floorplan.floorplanTenants ?? []).some((entry) => entry.tenantId === tenantDomainId);
+};
+
+const isDeskAccessibleForTenant = (
+  desk: {
+    tenantScope: DeskTenantScope;
+    deskTenants?: Array<{ tenantId: string }>;
+    floorplan?: { tenantScope?: FloorplanTenantScope; floorplanTenants?: Array<{ tenantId: string }> } | null;
+  },
+  tenantDomainId?: string | null
+): boolean => {
+  const floorplanVisible = desk.floorplan && desk.floorplan.tenantScope
+    ? isFloorplanVisibleForTenant({ tenantScope: desk.floorplan.tenantScope, floorplanTenants: desk.floorplan.floorplanTenants }, tenantDomainId)
+    : true;
+  if (!floorplanVisible) return false;
+  return isDeskBookableForTenant(desk, tenantDomainId);
 };
 
 
@@ -2152,14 +2176,41 @@ app.get('/floorplans', async (req, res) => {
 });
 
 app.get('/floorplans/:id', async (req, res) => {
-  const floorplan = await prisma.floorplan.findUnique({ where: { id: req.params.id } });
+  let actor: { role: EmployeeRole; tenantDomainId?: string | null } | null = null;
+  try {
+    actor = await requireActorEmployee(req);
+  } catch {
+    actor = null;
+  }
+
+  const floorplan = await prisma.floorplan.findUnique({
+    where: { id: req.params.id },
+    include: { floorplanTenants: { select: { tenantId: true } } }
+  });
 
   if (!floorplan) {
     res.status(404).json({ error: 'not_found', message: 'Floorplan not found' });
     return;
   }
 
-  res.status(200).json(floorplan);
+  const isAdmin = actor?.role === 'admin';
+  if (!isAdmin && !isFloorplanVisibleForTenant(floorplan, actor?.tenantDomainId ?? null)) {
+    res.status(403).json({ error: 'forbidden', message: 'Floorplan is not visible for current tenant' });
+    return;
+  }
+
+  res.status(200).json({
+    id: floorplan.id,
+    name: floorplan.name,
+    imageUrl: floorplan.imageUrl,
+    isDefault: floorplan.isDefault,
+    sortOrder: floorplan.sortOrder,
+    tenantScope: floorplan.tenantScope,
+    tenantIds: floorplan.floorplanTenants.map((entry) => entry.tenantId),
+    defaultResourceKind: floorplan.defaultResourceKind,
+    defaultAllowSeries: floorplan.defaultAllowSeries,
+    createdAt: floorplan.createdAt
+  });
 });
 
 app.get('/floorplans/:id/desks', async (req, res) => {
@@ -2191,7 +2242,11 @@ app.get('/floorplans/:id/desks', async (req, res) => {
     orderBy: { createdAt: 'asc' }
   });
 
-  res.status(200).json(desks.map((desk) => ({
+  const visibleDesks = isAdmin
+    ? desks
+    : desks.filter((desk) => isDeskBookableForTenant(desk, actor?.tenantDomainId ?? null));
+
+  res.status(200).json(visibleDesks.map((desk) => ({
     id: desk.id,
     floorplanId: desk.floorplanId,
     name: desk.name,
@@ -2268,7 +2323,7 @@ app.post('/bookings', async (req, res) => {
     return;
   }
 
-  if (!isDeskBookableForTenant(desk, actorEmployee.tenantDomainId)) {
+  if (!isDeskAccessibleForTenant(desk, actorEmployee.tenantDomainId)) {
     res.status(403).json({ error: 'forbidden', message: 'Für deinen Mandanten nicht buchbar' });
     return;
   }
@@ -2424,7 +2479,7 @@ app.put('/bookings/:id', async (req, res) => {
     return;
   }
 
-  if (!isDeskBookableForTenant(nextDesk, actorEmployee.tenantDomainId)) {
+  if (!isDeskAccessibleForTenant(nextDesk, actorEmployee.tenantDomainId)) {
     res.status(403).json({ error: 'forbidden', message: 'Für deinen Mandanten nicht buchbar' });
     return;
   }
@@ -2672,6 +2727,20 @@ app.post('/bookings/check-conflicts', async (req, res) => {
     return;
   }
 
+  let actorEmployee;
+  try {
+    actorEmployee = await requireActorEmployee(req);
+  } catch (error) {
+    const status = (error as Error & { status?: number }).status ?? 403;
+    res.status(status).json({ error: status === 401 ? 'unauthorized' : 'forbidden', message: (error as Error).message });
+    return;
+  }
+
+  if (!isDeskAccessibleForTenant(desk, actorEmployee.tenantDomainId)) {
+    res.status(403).json({ error: 'forbidden', message: 'Für deinen Mandanten nicht sichtbar oder buchbar' });
+    return;
+  }
+
   const requestWindowResult = resolveBookingWindow({ deskKind: desk.kind, daySlot, startTime, endTime });
   if (!requestWindowResult.ok) {
     res.status(400).json({ error: 'validation', message: requestWindowResult.message });
@@ -2754,7 +2823,7 @@ app.post('/bookings/range', async (req, res) => {
     return;
   }
 
-  const desk = await prisma.desk.findUnique({ where: { id: deskId }, select: { id: true, name: true, kind: true, floorplanId: true } });
+  const desk = await getDeskContext(deskId);
   if (!desk) {
     res.status(404).json({ error: 'not_found', message: 'Desk not found' });
     return;
@@ -2784,6 +2853,11 @@ app.post('/bookings/range', async (req, res) => {
   } catch (error) {
     const status = (error as Error & { status?: number }).status ?? 403;
     res.status(status).json({ error: status === 401 ? 'unauthorized' : 'forbidden', message: (error as Error).message });
+    return;
+  }
+
+  if (!isDeskAccessibleForTenant(desk, actorEmployee.tenantDomainId)) {
+    res.status(403).json({ error: 'forbidden', message: 'Für deinen Mandanten nicht sichtbar oder buchbar' });
     return;
   }
 
@@ -3057,33 +3131,60 @@ app.get('/occupancy', async (req, res) => {
     return;
   }
 
-  let actorTenantDomainId: string | null = null;
+  let actor: { role: EmployeeRole; tenantDomainId?: string | null } | null = null;
   try {
-    actorTenantDomainId = (await requireActorEmployee(req)).tenantDomainId ?? null;
+    actor = await requireActorEmployee(req);
   } catch {
-    actorTenantDomainId = null;
+    actor = null;
   }
 
+  const floorplan = await prisma.floorplan.findUnique({
+    where: { id: floorplanId },
+    select: { id: true, tenantScope: true, floorplanTenants: { select: { tenantId: true } } }
+  });
+
+  if (!floorplan) {
+    res.status(404).json({ error: 'not_found', message: 'Floorplan not found' });
+    return;
+  }
+
+  const isAdmin = actor?.role === 'admin';
+  if (!isAdmin && !isFloorplanVisibleForTenant(floorplan, actor?.tenantDomainId ?? null)) {
+    res.status(403).json({ error: 'forbidden', message: 'Floorplan is not visible for current tenant' });
+    return;
+  }
+
+  const actorTenantDomainId = actor?.tenantDomainId ?? null;
   const desks = await prisma.desk.findMany({
     where: { floorplanId },
     include: { floorplan: { select: { defaultAllowSeries: true } }, deskTenants: { select: { tenantId: true } } },
     orderBy: { createdAt: 'asc' }
   });
 
-  const deskIds = desks.map((desk) => desk.id);
+  const visibleDesks = isAdmin
+    ? desks
+    : desks.filter((desk) => isDeskBookableForTenant(desk, actorTenantDomainId));
+
+  const visibleDeskIds = new Set(visibleDesks.map((desk) => desk.id));
   const bookingsInRange = await getBookingsForDateRange(parsedDate, parsedDate, floorplanId);
-  const singleBookings = bookingsInRange.singleBookings
-    .filter((booking) => deskIds.includes(booking.deskId))
+  const visibleSingleBookings = bookingsInRange.singleBookings
+    .filter((booking) => visibleDeskIds.has(booking.deskId))
     .sort((left, right) => left.createdAt.getTime() - right.createdAt.getTime());
 
-  const recurringOccurrenceKeys = new Set(bookingsInRange.occurrences.map((occurrence) => `${occurrence.resourceId}|${occurrence.date}|${occurrence.createdByEmployeeId}`));
-  const employeesByEmail = await getActiveEmployeesByEmail(singleBookings.map((booking) => booking.userEmail).filter((email): email is string => Boolean(email)));
-  const bookingsByDeskId = new Map<string, typeof singleBookings>();
-  for (const booking of singleBookings) {
+  const visibleRecurringOccurrenceKeys = new Set(
+    bookingsInRange.occurrences
+      .filter((occurrence) => visibleDeskIds.has(occurrence.resourceId))
+      .map((occurrence) => `${occurrence.resourceId}|${occurrence.date}|${occurrence.createdByEmployeeId}`)
+  );
+
+  const recurringOccurrenceKeys = visibleRecurringOccurrenceKeys;
+  const employeesByEmail = await getActiveEmployeesByEmail(visibleSingleBookings.map((booking) => booking.userEmail).filter((email): email is string => Boolean(email)));
+  const bookingsByDeskId = new Map<string, typeof visibleSingleBookings>();
+  for (const booking of visibleSingleBookings) {
     bookingsByDeskId.set(booking.deskId, [...(bookingsByDeskId.get(booking.deskId) ?? []), booking]);
   }
 
-  const occupancyDesks = desks.map((desk) => {
+  const occupancyDesks = visibleDesks.map((desk) => {
     const deskBookings = bookingsByDeskId.get(desk.id) ?? [];
     const normalizedBookings = deskBookings.map((booking) => ({
       id: booking.id,

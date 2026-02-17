@@ -1368,6 +1368,14 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
       if (error instanceof ApiError && error.code === 'BACKEND_UNREACHABLE') {
         setBackendDown(true);
       }
+
+      if (error instanceof ApiError && error.status === 403) {
+        setOccupancy(null);
+        setFloorplanResources([]);
+        setSelectedDeskId('');
+        setSelectedFloorplanId((current) => (current === floorplanId ? '' : current));
+      }
+
       toast.error(getApiErrorMessage(error, 'Belegung konnte nicht geladen werden.'));
       return null;
     } finally {
@@ -1410,6 +1418,15 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
   useEffect(() => {
     loadInitial();
   }, [currentUserEmail]);
+
+  useEffect(() => {
+    if (!selectedFloorplanId) return;
+    if (floorplans.some((floorplan) => floorplan.id === selectedFloorplanId)) return;
+    setSelectedFloorplanId(floorplans.find((plan) => plan.isDefault)?.id || floorplans[0]?.id || '');
+    setSelectedDeskId('');
+    setFloorplanResources([]);
+    setOccupancy(null);
+  }, [floorplans, selectedFloorplanId]);
 
   useEffect(() => {
     if (selectedFloorplanId && !backendDown) {
