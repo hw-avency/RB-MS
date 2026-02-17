@@ -8,6 +8,7 @@ import { Avatar } from './components/Avatar';
 import { BookingForm, createDefaultBookingFormValues } from './components/BookingForm';
 import type { BookingFormSubmitPayload, BookingFormValues } from './components/BookingForm';
 import { UserMenu } from './components/UserMenu';
+import { FloatingPanel } from './components/ui/FloatingPanel';
 import { FloorplanCanvas } from './FloorplanCanvas';
 import { APP_TITLE, APP_VERSION, COMPANY_LOGO_URL } from './config';
 import type { AuthUser } from './auth/AuthProvider';
@@ -148,8 +149,6 @@ type RoomBookingListEntry = {
   recurringGroupId?: string | null;
 };
 type DeskSlotAvailability = 'FREE' | 'AM_BOOKED' | 'PM_BOOKED' | 'FULL_BOOKED';
-type PopupPlacement = 'top' | 'right' | 'bottom' | 'left';
-type PopupCoordinates = { left: number; top: number; placement: PopupPlacement; maxHeight: number };
 type FloorplanTransform = { scale: number; translateX: number; translateY: number };
 type FloorplanImageSize = { width: number; height: number };
 type FloorplanImageLoadState = 'loading' | 'loaded' | 'error';
@@ -172,9 +171,6 @@ const getInitialOverviewView = (): OverviewView => {
   return isOverviewView(queryValue) ? queryValue : 'presence';
 };
 
-const POPUP_OFFSET = 12;
-const POPUP_PADDING = 8;
-
 const clamp = (value: number, min: number, max: number): number => Math.min(max, Math.max(min, value));
 
 const FLOORPLAN_FIT_PADDING = 24;
@@ -185,75 +181,6 @@ const FLOORPLAN_DRAG_EPSILON = 0.001;
 const FLOORPLAN_VIEWPORT_HEIGHT = 'clamp(520px, 70vh, 680px)';
 
 const getFloorplanMinScale = (fitScale: number): number => Math.min(FLOORPLAN_MIN_SCALE, fitScale);
-
-const getCandidatePosition = (placement: PopupPlacement, anchorRect: DOMRect, popupWidth: number, popupHeight: number): { left: number; top: number } => {
-  const anchorCenterX = anchorRect.left + anchorRect.width / 2;
-  const anchorCenterY = anchorRect.top + anchorRect.height / 2;
-
-  if (placement === 'right') {
-    return { left: anchorRect.right + POPUP_OFFSET, top: anchorCenterY - popupHeight / 2 };
-  }
-  if (placement === 'left') {
-    return { left: anchorRect.left - popupWidth - POPUP_OFFSET, top: anchorCenterY - popupHeight / 2 };
-  }
-  if (placement === 'top') {
-    return { left: anchorCenterX - popupWidth / 2, top: anchorRect.top - popupHeight - POPUP_OFFSET };
-  }
-
-  return { left: anchorCenterX - popupWidth / 2, top: anchorRect.bottom + POPUP_OFFSET };
-};
-
-const calculatePopupCoordinates = (anchorRect: DOMRect, popupRect: DOMRect): PopupCoordinates => {
-  const viewportWidth = window.innerWidth;
-  const viewportHeight = window.innerHeight;
-  const spaces = {
-    right: viewportWidth - anchorRect.right,
-    left: anchorRect.left,
-    bottom: viewportHeight - anchorRect.bottom,
-    top: anchorRect.top,
-  };
-
-  const placements = (Object.keys(spaces) as PopupPlacement[]).sort((a, b) => spaces[b] - spaces[a]);
-  const minLeft = POPUP_PADDING;
-  const maxLeft = Math.max(POPUP_PADDING, viewportWidth - popupRect.width - POPUP_PADDING);
-  const minTop = POPUP_PADDING;
-  const maxTop = Math.max(POPUP_PADDING, viewportHeight - popupRect.height - POPUP_PADDING);
-
-  for (const placement of placements) {
-    const candidate = getCandidatePosition(placement, anchorRect, popupRect.width, popupRect.height);
-    const overflowLeft = Math.max(0, minLeft - candidate.left);
-    const overflowRight = Math.max(0, candidate.left + popupRect.width - (viewportWidth - POPUP_PADDING));
-    const overflowTop = Math.max(0, minTop - candidate.top);
-    const overflowBottom = Math.max(0, candidate.top + popupRect.height - (viewportHeight - POPUP_PADDING));
-    const overflow = overflowLeft + overflowRight + overflowTop + overflowBottom;
-
-    if (overflow <= 0.5) {
-      const clampedTop = clamp(candidate.top, minTop, maxTop);
-      return {
-        left: clamp(candidate.left, minLeft, maxLeft),
-        top: clampedTop,
-        placement,
-        maxHeight: Math.max(220, viewportHeight - clampedTop - POPUP_PADDING),
-      };
-    }
-  }
-
-  const fallback = getCandidatePosition(placements[0] ?? 'right', anchorRect, popupRect.width, popupRect.height);
-  const clampedTop = clamp(fallback.top, minTop, maxTop);
-  return {
-    left: clamp(fallback.left, minLeft, maxLeft),
-    top: clampedTop,
-    placement: placements[0] ?? 'right',
-    maxHeight: Math.max(220, viewportHeight - clampedTop - POPUP_PADDING),
-  };
-};
-
-const isPointInRect = (x: number, y: number, rect: DOMRect): boolean => (
-  x >= rect.left
-  && x <= rect.right
-  && y >= rect.top
-  && y <= rect.bottom
-);
 
 const toLocalDateKey = (value: Date): string => {
   const year = value.getFullYear();
@@ -667,10 +594,8 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
   }, [overviewView]);
 
   const [highlightedDeskId, setHighlightedDeskId] = useState('');
-  const [deskPopupCoords, setDeskPopupCoords] = useState<PopupCoordinates | null>(null);
   const occupantRowRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const highlightTimerRef = useRef<number | null>(null);
-  const popupRef = useRef<HTMLElement | null>(null);
   const cancelDialogRef = useRef<HTMLElement | null>(null);
   const recurringConflictDialogRef = useRef<HTMLElement | null>(null);
   const rebookDialogRef = useRef<HTMLElement | null>(null);
@@ -1508,35 +1433,6 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
     };
   }, []);
 
-  useLayoutEffect(() => {
-    if (!deskPopup || !popupRef.current) {
-      setDeskPopupCoords(null);
-      return;
-    }
-
-    const popupElement = popupRef.current;
-    const updatePopupCoordinates = () => {
-      const popupRect = popupElement.getBoundingClientRect();
-      setDeskPopupCoords(calculatePopupCoordinates(deskPopup.anchorRect, popupRect));
-    };
-
-    updatePopupCoordinates();
-
-    if (typeof ResizeObserver === 'undefined') {
-      return;
-    }
-
-    const observer = new ResizeObserver(() => {
-      updatePopupCoordinates();
-    });
-    observer.observe(popupElement);
-
-    return () => {
-      observer.disconnect();
-    };
-  }, [deskPopup, bookingDialogState, popupDeskState, dialogErrorMessage]);
-
-
   useEffect(() => {
     if (!deskPopup) return;
 
@@ -1548,70 +1444,6 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
       window.cancelAnimationFrame(frame);
     };
   }, [bookingVersion, deskPopup, refreshDeskPopupAnchorRect]);
-
-  useEffect(() => {
-    if (!deskPopup) return;
-
-    const closePopup = () => {
-      closeBookingFlow();
-    };
-
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (cancelFlowState === 'CANCEL_CONFIRM_OPEN') return;
-      if (event.key === 'Escape') {
-        closePopup();
-      }
-    };
-
-    const isViewportScrollbarInteraction = (event: globalThis.MouseEvent) => {
-      const root = document.documentElement;
-      return event.clientX >= root.clientWidth || event.clientY >= root.clientHeight;
-    };
-
-    const isPopupPointerInteraction = (event: globalThis.MouseEvent | globalThis.WheelEvent) => {
-      const popupElement = popupRef.current;
-      if (!popupElement) return false;
-      const target = event.target;
-      if (target instanceof Node && popupElement.contains(target)) return true;
-      return isPointInRect(event.clientX, event.clientY, popupElement.getBoundingClientRect());
-    };
-
-    const closeOnOutsideClick = (event: globalThis.MouseEvent) => {
-      if (cancelFlowState === 'CANCEL_CONFIRM_OPEN') return;
-      if (isViewportScrollbarInteraction(event)) return;
-      if (isPopupPointerInteraction(event)) return;
-      const target = event.target;
-      if (!(target instanceof Node)) return;
-      if (popupRef.current?.contains(target)) return;
-      if (cancelDialogRef.current?.contains(target)) return;
-      if (recurringConflictDialogRef.current?.contains(target)) return;
-      if (rebookDialogRef.current?.contains(target)) return;
-      const anchorElement = deskAnchorElementsRef.current.get(deskPopup.deskId);
-      if (anchorElement?.contains(target)) return;
-      closePopup();
-    };
-
-    const closeOnViewportChange = (event?: Event) => {
-      if (cancelFlowState === 'CANCEL_CONFIRM_OPEN') return;
-      if (event instanceof globalThis.WheelEvent && isPopupPointerInteraction(event)) return;
-      if (event instanceof globalThis.MouseEvent && isPopupPointerInteraction(event)) return;
-      closePopup();
-    };
-
-    window.addEventListener('keydown', closeOnEscape);
-    window.addEventListener('mousedown', closeOnOutsideClick, true);
-    window.addEventListener('scroll', closeOnViewportChange, true);
-    window.addEventListener('wheel', closeOnViewportChange, { passive: true });
-    window.addEventListener('resize', closeOnViewportChange);
-
-    return () => {
-      window.removeEventListener('keydown', closeOnEscape);
-      window.removeEventListener('mousedown', closeOnOutsideClick, true);
-      window.removeEventListener('scroll', closeOnViewportChange, true);
-      window.removeEventListener('wheel', closeOnViewportChange);
-      window.removeEventListener('resize', closeOnViewportChange);
-    };
-  }, [cancelFlowState, deskPopup]);
 
 
   useEffect(() => {
@@ -1767,7 +1599,6 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
     setBookingDialogState('IDLE');
     setDialogErrorMessage('');
     setIsRebooking(false);
-    setDeskPopupCoords(null);
     setCancelFlowState('NONE');
     setCancelConfirmContext(null);
     setIsCancellingBooking(false);
@@ -2081,7 +1912,6 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
 
       if (isUserBookingConflictError(error)) {
         setDeskPopup(null);
-        setDeskPopupCoords(null);
         setCancelFlowState('NONE');
         setCancelConfirmContext(null);
         setBookingDialogState('CONFLICT_REVIEW');
@@ -2535,35 +2365,6 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
     };
   }, []);
 
-  useLayoutEffect(() => {
-    if (!deskPopup || !popupRef.current) {
-      setDeskPopupCoords(null);
-      return;
-    }
-
-    const popupElement = popupRef.current;
-    const updatePopupCoordinates = () => {
-      const popupRect = popupElement.getBoundingClientRect();
-      setDeskPopupCoords(calculatePopupCoordinates(deskPopup.anchorRect, popupRect));
-    };
-
-    updatePopupCoordinates();
-
-    if (typeof ResizeObserver === 'undefined') {
-      return;
-    }
-
-    const observer = new ResizeObserver(() => {
-      updatePopupCoordinates();
-    });
-    observer.observe(popupElement);
-
-    return () => {
-      observer.disconnect();
-    };
-  }, [deskPopup, bookingDialogState, popupDeskState, dialogErrorMessage]);
-
-
   useEffect(() => {
     if (!deskPopup) return;
 
@@ -2575,70 +2376,6 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
       window.cancelAnimationFrame(frame);
     };
   }, [bookingVersion, deskPopup, refreshDeskPopupAnchorRect]);
-
-  useEffect(() => {
-    if (!deskPopup) return;
-
-    const closePopup = () => {
-      closeBookingFlow();
-    };
-
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (cancelFlowState === 'CANCEL_CONFIRM_OPEN') return;
-      if (event.key === 'Escape') {
-        closePopup();
-      }
-    };
-
-    const isViewportScrollbarInteraction = (event: globalThis.MouseEvent) => {
-      const root = document.documentElement;
-      return event.clientX >= root.clientWidth || event.clientY >= root.clientHeight;
-    };
-
-    const closeOnOutsideClick = (event: globalThis.MouseEvent) => {
-      if (cancelFlowState === 'CANCEL_CONFIRM_OPEN') return;
-      if (isViewportScrollbarInteraction(event)) return;
-      const target = event.target;
-      if (!(target instanceof Node)) return;
-      if (popupRef.current?.contains(target)) return;
-      if (cancelDialogRef.current?.contains(target)) return;
-      if (recurringConflictDialogRef.current?.contains(target)) return;
-      if (rebookDialogRef.current?.contains(target)) return;
-      const anchorElement = deskAnchorElementsRef.current.get(deskPopup.deskId);
-      if (anchorElement?.contains(target)) return;
-      closePopup();
-    };
-
-    const isPopupRelatedEventTarget = (target: EventTarget | null) => {
-      if (!(target instanceof Node)) return false;
-      if (popupRef.current?.contains(target)) return true;
-      if (cancelDialogRef.current?.contains(target)) return true;
-      if (recurringConflictDialogRef.current?.contains(target)) return true;
-      if (rebookDialogRef.current?.contains(target)) return true;
-      return false;
-    };
-
-    const closeOnViewportChange = (event: Event) => {
-      if (cancelFlowState === 'CANCEL_CONFIRM_OPEN') return;
-      if (isPopupRelatedEventTarget(event.target)) return;
-      closePopup();
-    };
-
-    window.addEventListener('keydown', closeOnEscape);
-    window.addEventListener('mousedown', closeOnOutsideClick, true);
-    window.addEventListener('scroll', closeOnViewportChange, true);
-    window.addEventListener('wheel', closeOnViewportChange, { passive: true });
-    window.addEventListener('resize', closeOnViewportChange);
-
-    return () => {
-      window.removeEventListener('keydown', closeOnEscape);
-      window.removeEventListener('mousedown', closeOnOutsideClick, true);
-      window.removeEventListener('scroll', closeOnViewportChange, true);
-      window.removeEventListener('wheel', closeOnViewportChange);
-      window.removeEventListener('resize', closeOnViewportChange);
-    };
-  }, [cancelFlowState, deskPopup]);
-
 
   if (backendDown) {
     return (
@@ -2747,18 +2484,14 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
         <aside className="right-col">{isBootstrapping ? <div className="card skeleton h-480" /> : dayOverviewPanel}</aside>
       </section>
 
-      {deskPopup && popupDesk && popupDeskState && cancelFlowState !== 'CANCEL_CONFIRM_OPEN' && createPortal(
-        <section
-          ref={popupRef}
+      {deskPopup && popupDesk && popupDeskState && cancelFlowState !== 'CANCEL_CONFIRM_OPEN' && (
+        <FloatingPanel
+          open
+          onClose={closeBookingFlow}
+          anchorElement={deskAnchorElementsRef.current.get(deskPopup.deskId) ?? null}
+          anchorRect={deskPopup.anchorRect}
           className="card desk-popup"
-          style={{
-            left: deskPopupCoords?.left ?? deskPopup.anchorRect.left,
-            top: deskPopupCoords?.top ?? deskPopup.anchorRect.top,
-            maxHeight: deskPopupCoords?.maxHeight,
-            visibility: deskPopupCoords ? 'visible' : 'hidden'
-          }}
-          role="menu"
-          data-placement={deskPopupCoords?.placement ?? 'right'}
+          repositionKey={`${bookingFormValues.type}-${bookingDialogState}-${popupDeskState}`}
         >
           {popupMode === 'create' || isRoomResource(popupDesk) ? (
             <>
@@ -2777,48 +2510,50 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
                   {hasUnexpectedMultipleMyBookings && <div>warning: multiple own bookings on resource/date</div>}
                 </div>
               )}
-              <BookingForm
-                values={bookingFormValues}
-                onChange={setBookingFormValues}
-                onCancel={closeBookingFlow}
-                onSubmit={handleBookingSubmit}
-                isSubmitting={bookingDialogState === 'SUBMITTING'}
-                disabled={bookingDialogState === 'SUBMITTING'}
-                errorMessage={dialogErrorMessage}
-                allowRecurring={popupDesk.effectiveAllowSeries !== false}
-                resourceKind={popupDesk.kind}
-                roomSchedule={isRoomResource(popupDesk)
-                  ? {
-                    bookings: popupRoomBookingsList.map((booking) => ({
-                      id: booking.id,
-                      label: booking.label,
-                      person: booking.person,
-                      isCurrentUser: booking.isCurrentUser,
-                      isSelfMine: booking.isCurrentUser && booking.bookedFor === 'SELF',
-                      isGuestMine: booking.isCurrentUser && booking.bookedFor === 'GUEST',
-                      canCancel: booking.canCancel && Boolean(booking.bookingId),
-                      debugMeta: showRoomDebugInfo
-                        ? `bookedFor=${booking.bookedFor ?? '-'} · employeeId=${booking.userId ?? '-'} · createdByEmployeeId=${booking.createdByEmployeeId ?? '-'} · canCancel=${booking.canCancel ? 'true' : 'false'}`
-                        : undefined
-                    })),
-                    freeSlots: popupRoomFreeSlotChips,
-                    occupiedSegments: popupRoomOccupiedSegments,
-                    isFullyBooked: popupRoomFreeSlotChips.length === 0,
-                    conflictMessage: popupRoomFreeSlotChips.length === 0 ? 'Heute vollständig belegt' : roomBookingConflict,
-                    debugInfo: roomDebugInfo,
-                    ringDebugTitle: popupRoomRingDebugTitle,
-                    onSelectFreeSlot: (startTime, endTime) => {
-                      setBookingFormValues((current) => ({ ...current, startTime, endTime }));
-                    },
-                    onBookingClick: handleRoomBookingCancel
-                  }
-                  : undefined}
-              />
+              <div className="desk-popup-body">
+                <BookingForm
+                  values={bookingFormValues}
+                  onChange={setBookingFormValues}
+                  onCancel={closeBookingFlow}
+                  onSubmit={handleBookingSubmit}
+                  isSubmitting={bookingDialogState === 'SUBMITTING'}
+                  disabled={bookingDialogState === 'SUBMITTING'}
+                  errorMessage={dialogErrorMessage}
+                  allowRecurring={popupDesk.effectiveAllowSeries !== false}
+                  resourceKind={popupDesk.kind}
+                  roomSchedule={isRoomResource(popupDesk)
+                    ? {
+                      bookings: popupRoomBookingsList.map((booking) => ({
+                        id: booking.id,
+                        label: booking.label,
+                        person: booking.person,
+                        isCurrentUser: booking.isCurrentUser,
+                        isSelfMine: booking.isCurrentUser && booking.bookedFor === 'SELF',
+                        isGuestMine: booking.isCurrentUser && booking.bookedFor === 'GUEST',
+                        canCancel: booking.canCancel && Boolean(booking.bookingId),
+                        debugMeta: showRoomDebugInfo
+                          ? `bookedFor=${booking.bookedFor ?? '-'} · employeeId=${booking.userId ?? '-'} · createdByEmployeeId=${booking.createdByEmployeeId ?? '-'} · canCancel=${booking.canCancel ? 'true' : 'false'}`
+                          : undefined
+                      })),
+                      freeSlots: popupRoomFreeSlotChips,
+                      occupiedSegments: popupRoomOccupiedSegments,
+                      isFullyBooked: popupRoomFreeSlotChips.length === 0,
+                      conflictMessage: popupRoomFreeSlotChips.length === 0 ? 'Heute vollständig belegt' : roomBookingConflict,
+                      debugInfo: roomDebugInfo,
+                      ringDebugTitle: popupRoomRingDebugTitle,
+                      onSelectFreeSlot: (startTime, endTime) => {
+                        setBookingFormValues((current) => ({ ...current, startTime, endTime }));
+                      },
+                      onBookingClick: handleRoomBookingCancel
+                    }
+                    : undefined}
+                />
+              </div>
             </>
           ) : (
             <>
               <h3>{resourceKindLabel(popupDesk.kind)}: {popupDesk.name}</h3>
-              <div className="stack-sm">
+              <div className="stack-sm desk-popup-body">
                 <p className="muted">Datum: {new Date(`${selectedDate}T00:00:00.000Z`).toLocaleDateString('de-DE')}</p>
                 {popupMode === 'manage' && popupMySelectedBooking
                   ? <p className="muted">Deine Buchung: {bookingSlotLabel(popupMySelectedBooking)}</p>
@@ -2876,8 +2611,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
               </div>
             </>
           )}
-        </section>,
-        document.body
+        </FloatingPanel>
       )}
 
       {cancelFlowState === 'CANCEL_CONFIRM_OPEN' && cancelConfirmDesk && createPortal(
