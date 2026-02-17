@@ -28,7 +28,7 @@ const mondayWeekday = (date: Date): number => (date.getUTCDay() === 0 ? 7 : date
 const mondayWeekStart = (date: Date): Date => addDays(date, -(mondayWeekday(date) - 1));
 const weekDiff = (start: Date, current: Date): number => Math.floor((mondayWeekStart(current).getTime() - mondayWeekStart(start).getTime()) / (7 * 24 * 60 * 60 * 1000));
 
-export const expandRecurrence = (definition: RecurrenceDefinition, cap = 200): string[] => {
+export const expandRecurrence = (definition: RecurrenceDefinition, cap = Number.MAX_SAFE_INTEGER): string[] => {
   const start = toDate(definition.startDate);
   const end = toDate(definition.endDate);
   if (!start || !end || end < start || definition.interval < 1) return [];

@@ -11,7 +11,7 @@ export type RecurrenceDefinition = {
   byMonth?: number | null;
 };
 
-export const MAX_RECURRING_OCCURRENCES = 200;
+export const MAX_SERIES_OCCURRENCES = 365;
 
 const toDateOnly = (value: string): Date | null => {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
@@ -74,7 +74,7 @@ export const validateRecurrenceDefinition = (definition: RecurrenceDefinition): 
   return null;
 };
 
-export const expandRecurrence = (definition: RecurrenceDefinition, maxOccurrences = MAX_RECURRING_OCCURRENCES): { dates: string[]; truncated: boolean } => {
+export const expandRecurrence = (definition: RecurrenceDefinition, maxOccurrences = MAX_SERIES_OCCURRENCES): { dates: string[]; truncated: boolean } => {
   const validationError = validateRecurrenceDefinition(definition);
   if (validationError) throw new Error(validationError);
 

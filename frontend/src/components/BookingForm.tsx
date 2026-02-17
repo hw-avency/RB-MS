@@ -65,7 +65,7 @@ const recurrenceIntervalUnitLabel = (patternType: BookingFormValues['recurrenceP
 };
 
 const calculateCountBasedEndDate = (values: BookingFormValues): string => {
-  const count = Math.min(200, Math.max(1, values.occurrenceCount));
+  const count = Math.max(1, values.occurrenceCount);
   const interval = Math.max(1, values.recurrenceInterval);
   const endProbeDate = values.recurrencePatternType === 'DAILY'
     ? addDaysToIsoDate(values.dateFrom, interval * count + 7)
@@ -175,7 +175,7 @@ export function BookingForm({ values, onChange, onSubmit, onCancel, isSubmitting
         if (!values.dateTo) nextErrors.dateTo = 'Enddatum ist erforderlich.';
         if (values.dateFrom && values.dateTo && values.dateFrom > values.dateTo) nextErrors.dateTo = 'Enddatum muss nach dem Startdatum liegen.';
       }
-      if (values.rangeMode === 'BY_COUNT' && (values.occurrenceCount < 1 || values.occurrenceCount > 200)) nextErrors.occurrenceCount = 'Anzahl muss zwischen 1 und 200 liegen.';
+      if (values.rangeMode === 'BY_COUNT' && values.occurrenceCount < 1) nextErrors.occurrenceCount = 'Anzahl muss mindestens 1 sein.';
       if (values.recurrenceInterval < 1) nextErrors.interval = 'Intervall muss mindestens 1 sein.';
       if (values.recurrencePatternType === 'WEEKLY' && values.weekdays.length === 0) nextErrors.weekdays = 'Bitte mindestens einen Wochentag auswählen.';
       if ((values.recurrencePatternType === 'MONTHLY' || values.recurrencePatternType === 'YEARLY') && (values.recurrenceMonthday < 1 || values.recurrenceMonthday > 31)) nextErrors.monthday = 'Tag muss zwischen 1 und 31 liegen.';
@@ -246,7 +246,7 @@ export function BookingForm({ values, onChange, onSubmit, onCancel, isSubmitting
           startDate: values.dateFrom,
           endDate: effectiveRecurrenceEndDate,
           rangeMode: values.rangeMode,
-          count: values.rangeMode === 'BY_COUNT' ? Math.min(200, Math.max(1, values.occurrenceCount)) : undefined,
+          count: values.rangeMode === 'BY_COUNT' ? Math.max(1, values.occurrenceCount) : undefined,
           patternType: values.recurrencePatternType,
           interval: values.recurrenceInterval,
           byWeekday: values.recurrencePatternType === 'WEEKLY' ? values.weekdays : undefined,
@@ -262,7 +262,7 @@ export function BookingForm({ values, onChange, onSubmit, onCancel, isSubmitting
           startDate: values.dateFrom,
           endDate: effectiveRecurrenceEndDate,
           rangeMode: values.rangeMode,
-          count: values.rangeMode === 'BY_COUNT' ? Math.min(200, Math.max(1, values.occurrenceCount)) : undefined,
+          count: values.rangeMode === 'BY_COUNT' ? Math.max(1, values.occurrenceCount) : undefined,
           patternType: values.recurrencePatternType,
           interval: values.recurrenceInterval,
           byWeekday: values.recurrencePatternType === 'WEEKLY' ? values.weekdays : undefined,
@@ -516,7 +516,7 @@ export function BookingForm({ values, onChange, onSubmit, onCancel, isSubmitting
             <label className="recurrence-range-row">
               <input type="radio" name="recurrence-range" checked={values.rangeMode === 'BY_COUNT'} disabled={disabled} onChange={() => onChange({ ...values, rangeMode: 'BY_COUNT' })} />
               <span>Endet nach</span>
-              <input type="number" min={1} max={200} value={values.occurrenceCount} disabled={disabled || values.rangeMode !== 'BY_COUNT'} onChange={(event) => onChange({ ...values, occurrenceCount: Math.min(200, Math.max(1, Number(event.target.value || 1))) })} />
+              <input type="number" min={1} value={values.occurrenceCount} disabled={disabled || values.rangeMode !== 'BY_COUNT'} onChange={(event) => onChange({ ...values, occurrenceCount: Math.max(1, Number(event.target.value || 1)) })} />
               <span>Terminen</span>
             </label>
             {fieldErrors.occurrenceCount && <p className="field-error" role="alert">{fieldErrors.occurrenceCount}</p>}
