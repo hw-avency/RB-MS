@@ -517,6 +517,9 @@ type DeskFilterMode = 'all' | 'assigned' | 'missing-position';
 function DeskTableToolbar({
   floorplanId,
   floorplans,
+  tenants,
+  tenantFilter,
+  onTenantFilterChange,
   searchValue,
   onSearchChange,
   onSearchClear,
@@ -531,6 +534,9 @@ function DeskTableToolbar({
 }: {
   floorplanId: string;
   floorplans: Floorplan[];
+  tenants: Tenant[];
+  tenantFilter: string;
+  onTenantFilterChange: (value: string) => void;
   searchValue: string;
   onSearchChange: (value: string) => void;
   onSearchClear: () => void;
@@ -549,6 +555,10 @@ function DeskTableToolbar({
         <select value={floorplanId} onChange={(event) => onFloorplanChange(event.target.value)} aria-label="Standort auswählen">
           <option value="">Floorplan wählen</option>
           {floorplans.map((plan) => <option key={plan.id} value={plan.id}>{plan.name}</option>)}
+        </select>
+        <select value={tenantFilter} onChange={(event) => onTenantFilterChange(event.target.value)} aria-label="Mandant filtern">
+          <option value="">Alle Mandanten</option>
+          {tenants.map((tenant) => <option key={tenant.id} value={tenant.id}>{tenant.name ? `${tenant.name} (${tenant.domain})` : tenant.domain}</option>)}
         </select>
         <div className="admin-search">
           <span aria-hidden="true">🔎</span>
@@ -612,6 +622,7 @@ function DesksPage({ path, navigate, onLogout, currentUser }: RouteProps) {
   const [floorplanId, setFloorplanId] = useState('');
   const [desks, setDesks] = useState<Desk[]>([]);
   const [tenants, setTenants] = useState<Tenant[]>([]);
+  const [tenantFilter, setTenantFilter] = useState('');
   const [query, setQuery] = useState('');
   const [filterMode, setFilterMode] = useState<DeskFilterMode>('all');
   const [editingDesk, setEditingDesk] = useState<Desk | null>(null);
@@ -687,16 +698,34 @@ function DesksPage({ path, navigate, onLogout, currentUser }: RouteProps) {
 
   const filtered = useMemo(() => {
     const search = debouncedQuery.trim().toLowerCase();
+    const tenantFilterActive = tenantFilter.trim().length > 0;
     return desks.filter((desk) => {
       const nameMatch = !search || desk.name.toLowerCase().includes(search) || resourceKindLabel(desk.kind).toLowerCase().includes(search);
+      const tenantMatch = !tenantFilterActive
+        ? true
+        : desk.tenantScope !== 'SELECTED' || (desk.tenantIds ?? []).includes(tenantFilter);
       const filterMatch = filterMode === 'all'
         ? true
         : filterMode === 'assigned'
           ? hasDeskPosition(desk)
           : !hasDeskPosition(desk);
-      return nameMatch && filterMatch;
+      return nameMatch && tenantMatch && filterMatch;
     });
-  }, [desks, debouncedQuery, filterMode]);
+  }, [desks, debouncedQuery, filterMode, tenantFilter]);
+
+  const tenantsById = useMemo(() => new Map(tenants.map((tenant) => [tenant.id, tenant])), [tenants]);
+  const getDeskTenantLabel = (desk: Desk): string => {
+    if (desk.tenantScope !== 'SELECTED') return 'Alle Mandanten';
+    const names = (desk.tenantIds ?? [])
+      .map((tenantId) => {
+        const tenant = tenantsById.get(tenantId);
+        if (!tenant) return null;
+        return tenant.name ? `${tenant.name} (${tenant.domain})` : tenant.domain;
+      })
+      .filter((label): label is string => Boolean(label));
+    if (names.length === 0) return 'Keine Mandanten';
+    return names.join(', ');
+  };
 
   const selectedDesk = desks.find((desk) => desk.id === selectedDeskId) ?? null;
   const isAllVisibleSelected = filtered.length > 0 && filtered.every((desk) => selectedDeskIds.has(desk.id));
@@ -815,7 +844,7 @@ function DesksPage({ path, navigate, onLogout, currentUser }: RouteProps) {
   const isSavePositionDialogOpen = canvasMode === 'CONFIRM_SAVE_POSITION' && Boolean(pendingRepositionDesk && pendingRepositionCoords);
 
   const tableBody = state.loading && !state.ready
-    ? <SkeletonRows columns={5} />
+    ? <SkeletonRows columns={6} />
     : (
       <tbody>
         {filtered.map((desk) => (
@@ -838,6 +867,7 @@ function DesksPage({ path, navigate, onLogout, currentUser }: RouteProps) {
             </td>
             <td className="truncate-cell">{desk.name}</td>
             <td>{resourceKindLabel(desk.kind)}</td>
+            <td className="truncate-cell" title={getDeskTenantLabel(desk)}>{getDeskTenantLabel(desk)}</td>
             <td>{formatDateTimeShort(desk.updatedAt ?? desk.createdAt)}</td>
             <td className="align-right">
               <RowMenu items={[
@@ -868,6 +898,9 @@ function DesksPage({ path, navigate, onLogout, currentUser }: RouteProps) {
       <DeskTableToolbar
         floorplanId={floorplanId}
         floorplans={floorplans}
+        tenants={tenants}
+        tenantFilter={tenantFilter}
+        onTenantFilterChange={setTenantFilter}
         searchValue={query}
         onSearchChange={setQuery}
         onSearchClear={() => setQuery('')}
@@ -904,6 +937,7 @@ function DesksPage({ path, navigate, onLogout, currentUser }: RouteProps) {
                   <th><input type="checkbox" checked={isAllVisibleSelected} onChange={toggleAllVisibleDesks} aria-label="Alle sichtbaren Ressourcen auswählen" /></th>
                   <th>Label</th>
                   <th>Art</th>
+                  <th>Mandant</th>
                   <th>Aktualisiert</th>
                   <th className="align-right">Aktionen</th>
                 </tr>
@@ -1249,7 +1283,87 @@ function BookingEditor({ booking, desks, employees, floorplans, onClose, onSaved
     }
   };
 
-  return <div className="overlay"><section className="card dialog stack-sm booking-editor-dialog"><h3>{booking ? 'Buchung bearbeiten' : 'Buchung anlegen'}</h3>{booking && <div className="booking-editor-meta">{booking.createdBy && <p className="muted">Gebucht von: <strong>{booking.createdBy.displayName?.trim() || booking.createdBy.email}</strong></p>}{booking.bookedFor === 'GUEST' && <p className="muted">Für Gast: <strong>{booking.guestName?.trim() || 'Unbekannt'}</strong></p>}</div>}<div className="booking-editor-layout"><form className="stack-sm" onSubmit={submit}><label className="field"><span>Floorplan</span><select required value={floorplanId} onChange={(e) => setFloorplanId(e.target.value)}>{floorplans.map((plan) => <option key={plan.id} value={plan.id}>{plan.name}</option>)}</select></label><label className="field"><span>Ressource</span><select required value={deskId} onChange={(e) => setDeskId(e.target.value)}>{floorDesks.map((desk) => <option key={desk.id} value={desk.id}>{desk.name}</option>)}</select></label><input required type="date" value={date} onChange={(e) => setDate(e.target.value)} />{isRoomDesk ? <div className="split"><input required type="time" value={startTime} onChange={(e) => setStartTime(e.target.value)} /><input required type="time" value={endTime} onChange={(e) => setEndTime(e.target.value)} /></div> : <select value={slot} onChange={(e) => setSlot(e.target.value as 'FULL_DAY' | 'MORNING' | 'AFTERNOON')}><option value="FULL_DAY">Ganzer Tag</option><option value="MORNING">Vormittag</option><option value="AFTERNOON">Nachmittag</option></select>}<select required value={userEmail} onChange={(e) => setUserEmail(e.target.value)}>{employees.map((employee) => <option key={employee.id} value={employee.email}>{employee.displayName} ({employee.email})</option>)}</select><div className="inline-end"><button className="btn btn-outline" type="button" onClick={onClose}>Abbrechen</button><button className="btn">Speichern</button></div></form><div className="booking-editor-plan">{selectedFloor ? <div className="canvas-body booking-editor-canvas"><FloorplanCanvas imageUrl={resolveApiUrl(selectedFloor.imageUrl) ?? selectedFloor.imageUrl} imageAlt={selectedFloor.name} desks={floorDesks.map((desk) => ({ id: desk.id, name: desk.name, kind: desk.kind, x: desk.x, y: desk.y, status: 'free' as const, booking: null, isSelected: desk.id === deskId, isHighlighted: desk.id === deskId }))} selectedDeskId={deskId} hoveredDeskId="" onHoverDesk={() => undefined} onSelectDesk={setDeskId} /></div> : <EmptyState text="Kein Floorplan ausgewählt." />}</div></div></section></div>;
+  return (
+    <div className="overlay">
+      <section className="card dialog stack-sm booking-editor-dialog">
+        <h3>{booking ? 'Buchung bearbeiten' : 'Buchung anlegen'}</h3>
+        {booking && (
+          <div className="booking-editor-meta">
+            {booking.createdBy && <p className="muted">Gebucht von: <strong>{booking.createdBy.displayName?.trim() || booking.createdBy.email}</strong></p>}
+            {booking.bookedFor === 'GUEST' && <p className="muted">Für Gast: <strong>{booking.guestName?.trim() || 'Unbekannt'}</strong></p>}
+          </div>
+        )}
+        <div className="booking-editor-layout">
+          <section className="booking-editor-form-section">
+            <form className="stack-sm" onSubmit={submit}>
+              <label className="field">
+                <span>Floorplan</span>
+                <select required value={floorplanId} onChange={(e) => setFloorplanId(e.target.value)}>
+                  {floorplans.map((plan) => <option key={plan.id} value={plan.id}>{plan.name}</option>)}
+                </select>
+              </label>
+              <label className="field">
+                <span>Ressource</span>
+                <select required value={deskId} onChange={(e) => setDeskId(e.target.value)}>
+                  {floorDesks.map((desk) => <option key={desk.id} value={desk.id}>{desk.name}</option>)}
+                </select>
+              </label>
+              <input required type="date" value={date} onChange={(e) => setDate(e.target.value)} />
+              {isRoomDesk ? (
+                <div className="split">
+                  <input required type="time" value={startTime} onChange={(e) => setStartTime(e.target.value)} />
+                  <input required type="time" value={endTime} onChange={(e) => setEndTime(e.target.value)} />
+                </div>
+              ) : (
+                <select value={slot} onChange={(e) => setSlot(e.target.value as 'FULL_DAY' | 'MORNING' | 'AFTERNOON')}>
+                  <option value="FULL_DAY">Ganzer Tag</option>
+                  <option value="MORNING">Vormittag</option>
+                  <option value="AFTERNOON">Nachmittag</option>
+                </select>
+              )}
+              <select required value={userEmail} onChange={(e) => setUserEmail(e.target.value)}>
+                {employees.map((employee) => <option key={employee.id} value={employee.email}>{employee.displayName} ({employee.email})</option>)}
+              </select>
+              <div className="inline-end">
+                <button className="btn btn-outline" type="button" onClick={onClose}>Abbrechen</button>
+                <button className="btn">Speichern</button>
+              </div>
+            </form>
+          </section>
+
+          <section className="booking-editor-plan-section">
+            <div className="booking-editor-plan">
+              {selectedFloor ? (
+                <div className="canvas-body booking-editor-canvas">
+                  <FloorplanCanvas
+                    imageUrl={resolveApiUrl(selectedFloor.imageUrl) ?? selectedFloor.imageUrl}
+                    imageAlt={selectedFloor.name}
+                    desks={floorDesks.map((desk) => ({
+                      id: desk.id,
+                      name: desk.name,
+                      kind: desk.kind,
+                      x: desk.x,
+                      y: desk.y,
+                      status: 'free' as const,
+                      booking: null,
+                      isSelected: desk.id === deskId,
+                      isHighlighted: desk.id === deskId
+                    }))}
+                    selectedDeskId={deskId}
+                    hoveredDeskId=""
+                    onHoverDesk={() => undefined}
+                    onSelectDesk={setDeskId}
+                  />
+                </div>
+              ) : (
+                <EmptyState text="Kein Floorplan ausgewählt." />
+              )}
+            </div>
+          </section>
+        </div>
+      </section>
+    </div>
+  );
 }
 
 function EmployeesPage({ path, navigate, onRoleStateChanged, onLogout, currentAdminEmail, currentUser }: RouteProps & { currentAdminEmail: string }) {

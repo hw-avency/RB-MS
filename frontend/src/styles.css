@@ -481,6 +481,9 @@ tr{cursor:pointer}.row-selected{background:hsl(var(--muted))}
 .booking-editor-meta{display:grid;gap:2px}
 .booking-editor-meta p{margin:0}
 .booking-editor-layout{display:grid;grid-template-columns:minmax(0,1fr) minmax(380px,.8fr);gap:16px;align-items:start}
+.booking-editor-form-section{position:relative;z-index:2;min-width:0}
+.booking-editor-plan-section{position:relative;min-width:0;overflow:hidden}
+.booking-editor-plan{position:relative;z-index:1}
 .booking-editor-plan .canvas-body{min-height:420px}
 .booking-editor-canvas{height:min(58vh,560px)}
 .booking-editor-canvas .floorplan-canvas{height:100%}
@@ -504,7 +507,7 @@ tr{cursor:pointer}.row-selected{background:hsl(var(--muted))}
 .inline-start{display:flex;align-items:center;gap:8px}
 .inline-end{display:flex;align-items:center;gap:8px;justify-content:flex-end}
 .desks-page-header{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}
-.desks-toolbar{display:grid;grid-template-columns:minmax(180px,220px) minmax(220px,1fr) minmax(160px,200px) auto;gap:8px;align-items:center}
+.desks-toolbar{display:grid;grid-template-columns:minmax(180px,220px) minmax(180px,220px) minmax(220px,1fr) minmax(160px,200px) auto;gap:8px;align-items:center}
 .table-scroll-area{max-height:560px;overflow:auto}
 .desks-table thead th{position:sticky;top:0;background:hsl(var(--card));z-index:2}
 .desks-table td,.desks-table th{padding-top:14px;padding-bottom:14px}
