@@ -55,3 +55,15 @@ Keine manuellen Shell-Schritte beim Nutzer voraussetzen.
 - Backend: startet ohne Prisma-Init-Fehler
 - `/health` liefert ok
 - CORS erlaubt Frontend → Backend Requests
+
+## Codex Runner: npm-Registry-403 Policy
+- Early Check zu Beginn jeder Frontend-Änderung (einmal pro Session):
+  - `curl -I https://registry.npmjs.org/react`
+  - `npm ping --registry=https://registry.npmjs.org/`
+- Wenn `403` / `E403` / `CONNECT tunnel failed` auftritt:
+  - Kein `npm install`, kein `npm ci`, kein `npm run build` im Codex-Runner.
+  - Keine Registry-Workarounds im Repo (`.npmrc` unverändert lassen, keine Tokens/Proxy-Bastelei).
+  - In Commit-/PR-Summary explizit aufnehmen:
+    - `Build in Codex runner not executable due to npm registry E403 / proxy policy. Render build is source of truth.`
+  - Keine lokalen Build-Erfolgsclaims (z. B. "build verified"). Stattdessen:
+    - `Changes are type-consistent by inspection; needs Render build to confirm.`
