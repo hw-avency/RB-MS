@@ -3533,6 +3533,7 @@ app.post('/recurring-bookings/resolve-conflicts', async (req, res) => {
         where: {
           date: bookingDate,
           desk: { kind: { in: ['TISCH', 'PARKPLATZ'] } },
+          deskId: { not: originalResourceId },
           ...(bookedFor === 'GUEST'
             ? { bookedFor: 'GUEST', createdByEmployeeId: actorEmployee.id }
             : { bookedFor: 'SELF', employeeId: actorEmployee.id })
