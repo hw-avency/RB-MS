@@ -1226,9 +1226,8 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
   const meEmployeeId = currentUser?.id;
   const selectedBooking = popupMySelectedBooking;
   const canCancelHere =
-    popupDeskState === 'TAKEN' &&
     !!selectedBooking &&
-    selectedBooking.employeeId === meEmployeeId;
+    canCancelBooking(selectedBooking, meEmployeeId);
   const popupOwnBookingIsRecurring = useMemo(() => popupDeskBookings.some((booking) => booking.isCurrentUser && (Boolean(booking.recurringBookingId) || Boolean(booking.recurringGroupId))), [popupDeskBookings]);
   const manageSlotConflict = useMemo(() => {
     if (!popupDesk || !popupMySelectedBooking || isRoomResource(popupDesk)) return '';
@@ -1526,6 +1525,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
   const selectDeskFromCanvas = (deskId: string, anchorEl?: HTMLElement) => {
     const desk = desks.find((entry) => entry.id === deskId);
     if (!desk || !anchorEl) return;
+    if (desk.isBookableForMe === false) return;
 
     const anchorRect = cloneRect(anchorEl.getBoundingClientRect());
 
@@ -2535,7 +2535,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
       {deskPopup && popupDesk && popupDeskState && cancelFlowState !== 'CANCEL_CONFIRM_OPEN' && createPortal(
         <div className="desk-popup-overlay" role="presentation">
           <section className="card desk-popup" role="dialog" aria-modal="true" aria-labelledby="booking-panel-title">
-          {(popupDeskState === 'FREE' || popupMode === 'manage' || (isRoomResource(popupDesk) && popupDeskState !== 'UNBOOKABLE')) ? (
+          {(popupDeskState === 'FREE' || (isRoomResource(popupDesk) && popupDeskState !== 'UNBOOKABLE')) ? (
             <>
               <div className="desk-popup-header">
                 <div className="stack-xxs">
