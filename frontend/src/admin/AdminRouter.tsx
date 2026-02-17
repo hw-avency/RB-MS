@@ -6,6 +6,7 @@ import { Avatar } from '../components/Avatar';
 import { UserMenu } from '../components/UserMenu';
 import { FloorplanCanvas } from '../FloorplanCanvas';
 import { useToast } from '../components/toast';
+import { Popover } from '../components/ui/Popover';
 import { RESOURCE_KIND_OPTIONS, resourceKindLabel, type ResourceKind } from '../resourceKinds';
 
 type SeriesPolicy = 'DEFAULT' | 'ALLOW' | 'DISALLOW';
@@ -132,104 +133,31 @@ function ConfirmDialog({
 type RowMenuItem = { label: string; onSelect: () => void; danger?: boolean };
 
 function RowMenu({ items }: { items: RowMenuItem[] }) {
-  const [open, setOpen] = useState(false);
-  const [position, setPosition] = useState({ left: 0, top: 0 });
-  const [activeIndex, setActiveIndex] = useState(0);
-  const triggerRef = useRef<HTMLButtonElement | null>(null);
-  const menuRef = useRef<HTMLDivElement | null>(null);
-
-  const syncPosition = () => {
-    if (!triggerRef.current || !menuRef.current) return;
-    const triggerRect = triggerRef.current.getBoundingClientRect();
-    const menuRect = menuRef.current.getBoundingClientRect();
-    const padding = 8;
-    const viewportWidth = window.innerWidth;
-    const viewportHeight = window.innerHeight;
-    const spaceBottom = viewportHeight - triggerRect.bottom;
-    const openAbove = spaceBottom < menuRect.height + padding;
-    const top = openAbove ? triggerRect.top - menuRect.height - 4 : triggerRect.bottom + 4;
-    const unclampedLeft = triggerRect.right - menuRect.width;
-    const left = Math.min(Math.max(unclampedLeft, padding), viewportWidth - menuRect.width - padding);
-    const clampedTop = Math.min(Math.max(top, padding), viewportHeight - menuRect.height - padding);
-    setPosition({ left, top: clampedTop });
-  };
-
-  useEffect(() => {
-    if (!open) return;
-    syncPosition();
-    const onWindowUpdate = () => syncPosition();
-    const onPointerDown = (event: MouseEvent) => {
-      const target = event.target as Node;
-      if (menuRef.current?.contains(target) || triggerRef.current?.contains(target)) return;
-      setOpen(false);
-    };
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        setOpen(false);
-        triggerRef.current?.focus();
-        return;
-      }
-      if (event.key === 'ArrowDown') {
-        event.preventDefault();
-        setActiveIndex((current) => (current + 1) % items.length);
-      }
-      if (event.key === 'ArrowUp') {
-        event.preventDefault();
-        setActiveIndex((current) => (current - 1 + items.length) % items.length);
-      }
-      if (event.key === 'Enter') {
-        event.preventDefault();
-        items[activeIndex]?.onSelect();
-        setOpen(false);
-      }
-    };
-    window.addEventListener('resize', onWindowUpdate);
-    window.addEventListener('scroll', onWindowUpdate, true);
-    window.addEventListener('mousedown', onPointerDown);
-    window.addEventListener('keydown', onKeyDown);
-    return () => {
-      window.removeEventListener('resize', onWindowUpdate);
-      window.removeEventListener('scroll', onWindowUpdate, true);
-      window.removeEventListener('mousedown', onPointerDown);
-      window.removeEventListener('keydown', onKeyDown);
-    };
-  }, [open, activeIndex, items]);
-
   return (
-    <>
-      <button
-        ref={triggerRef}
-        type="button"
-        className="btn btn-outline btn-icon"
-        aria-haspopup="menu"
-        aria-expanded={open}
-        onClick={() => {
-          setOpen((current) => !current);
-          setActiveIndex(0);
-        }}
-      >
-        ⋯
-      </button>
-      {open && createPortal(
-        <div ref={menuRef} className="row-menu-content row-menu-overlay" role="menu" style={{ left: position.left, top: position.top }}>
-          {items.map((item, index) => (
+    <Popover
+      trigger={<button type="button" className="btn btn-outline btn-icon" aria-label="Zeilenaktionen öffnen">⋯</button>}
+      className="row-menu-content row-menu-overlay"
+      placement="bottom-end"
+      zIndex={2000}
+    >
+      {({ close }) => (
+        <div role="menu">
+          {items.map((item) => (
             <button
               key={item.label}
               role="menuitem"
-              className={`btn btn-ghost row-menu-item ${item.danger ? 'btn-danger-text' : ''} ${activeIndex === index ? 'active' : ''}`}
-              onMouseEnter={() => setActiveIndex(index)}
+              className={`btn btn-ghost row-menu-item ${item.danger ? 'btn-danger-text' : ''}`}
               onClick={() => {
                 item.onSelect();
-                setOpen(false);
+                close();
               }}
             >
               {item.label}
             </button>
           ))}
-        </div>,
-        document.body
+        </div>
       )}
-    </>
+    </Popover>
   );
 }
 

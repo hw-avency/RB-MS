@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { API_BASE } from '../api';
+import { Popover } from './ui/Popover';
 
 type UserInfo = { id?: string; name?: string; displayName?: string; email: string; role: 'admin' | 'user' };
 
@@ -45,38 +46,46 @@ export function UserMenu({ user, onLogout, onOpenAdmin, showAdminAction = false 
   }, [userKey, displayName, user.email]);
 
   return (
-    <details className="user-menu">
-      <summary className="user-chip" aria-label={`User-Menü für ${displayName}`}>
-        <span className="avatar" aria-hidden>
-          {!photoFailed && <img key={`${userKey}-${displayName}`} src={`${API_BASE}/user/me/photo?v=${encodeURIComponent(`${userKey}-${displayName}-${user.email}`)}`} alt="Profilbild" onError={() => setPhotoFailed(true)} />}
-          {photoFailed && <span>{initials}</span>}
-        </span>
-        <strong className="user-chip-name">{displayName}</strong>
-        <ChevronDown size={14} className="user-chip-chevron" />
-      </summary>
-      <div className="user-menu-content" role="menu">
-        <div className="user-menu-summary" aria-hidden>
-          <span className="avatar avatar-sm">
-            {!photoFailed && <img key={`summary-${userKey}-${displayName}`} src={`${API_BASE}/user/me/photo?v=${encodeURIComponent(`${userKey}-${displayName}-${user.email}`)}`} alt="Profilbild" onError={() => setPhotoFailed(true)} />}
+    <Popover
+      trigger={
+        <button type="button" className="user-chip" aria-label={`User-Menü für ${displayName}`}>
+          <span className="avatar" aria-hidden>
+            {!photoFailed && <img key={`${userKey}-${displayName}`} src={`${API_BASE}/user/me/photo?v=${encodeURIComponent(`${userKey}-${displayName}-${user.email}`)}`} alt="Profilbild" onError={() => setPhotoFailed(true)} />}
             {photoFailed && <span>{initials}</span>}
           </span>
-          <div className="user-menu-meta">
-            <strong>{displayName}</strong>
-            <span className="muted user-menu-email" title={user.email}>{user.email}</span>
-          </div>
-        </div>
-        <hr className="user-menu-separator" />
-        {showAdminAction && user.role === 'admin' && onOpenAdmin && (
-          <button className="user-menu-item" role="menuitem" onClick={onOpenAdmin}>
-            <Shield size={16} />
-            <span>Admin</span>
-          </button>
-        )}
-        <button className="user-menu-item user-menu-item-danger" role="menuitem" onClick={() => void onLogout()}>
-          <LogOut size={16} />
-          <span>Logout</span>
+          <strong className="user-chip-name">{displayName}</strong>
+          <ChevronDown size={14} className="user-chip-chevron" />
         </button>
-      </div>
-    </details>
+      }
+      className="user-menu-content"
+      placement="bottom-end"
+      zIndex={2000}
+    >
+      {({ close }) => (
+        <>
+          <div className="user-menu-summary" aria-hidden>
+            <span className="avatar avatar-sm">
+              {!photoFailed && <img key={`summary-${userKey}-${displayName}`} src={`${API_BASE}/user/me/photo?v=${encodeURIComponent(`${userKey}-${displayName}-${user.email}`)}`} alt="Profilbild" onError={() => setPhotoFailed(true)} />}
+              {photoFailed && <span>{initials}</span>}
+            </span>
+            <div className="user-menu-meta">
+              <strong>{displayName}</strong>
+              <span className="muted user-menu-email" title={user.email}>{user.email}</span>
+            </div>
+          </div>
+          <hr className="user-menu-separator" />
+          {showAdminAction && user.role === 'admin' && onOpenAdmin && (
+            <button className="user-menu-item" role="menuitem" onClick={() => { close(); onOpenAdmin(); }}>
+              <Shield size={16} />
+              <span>Admin</span>
+            </button>
+          )}
+          <button className="user-menu-item user-menu-item-danger" role="menuitem" onClick={() => { close(); void onLogout(); }}>
+            <LogOut size={16} />
+            <span>Logout</span>
+          </button>
+        </>
+      )}
+    </Popover>
   );
 }

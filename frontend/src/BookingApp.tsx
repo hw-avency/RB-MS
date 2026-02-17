@@ -2921,19 +2921,46 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
 
       {recurringConflictState && popupDesk && createPortal(
         <div className="overlay" role="presentation">
-          <section ref={recurringConflictDialogRef} className="card dialog stack-sm rebook-dialog" role="dialog" aria-modal="true" aria-labelledby="series-conflict-title">
-            <h3 id="series-conflict-title">Konflikte gefunden</h3>
-            <p>An {recurringConflictState.conflictDates.length} Tagen bestehen bereits Buchungen. Wie möchtest du fortfahren?</p>
-            <p className="muted">
-              {recurringConflictState.conflictDates.slice(0, 5).join(', ')}
-              {recurringConflictState.conflictDates.length > 5 ? ` +${recurringConflictState.conflictDates.length - 5} weitere` : ''}
-            </p>
-            {dialogErrorMessage && <p className="error-banner">{dialogErrorMessage}</p>}
-            <div className="inline-end rebook-actions">
-              <button type="button" className="btn btn-outline" onClick={() => setRecurringConflictState(null)} disabled={isResolvingRecurringConflict}>Abbrechen</button>
-              <button type="button" className="btn" onClick={() => void runRecurringIgnoreConflicts()} disabled={isResolvingRecurringConflict}>Konflikte ignorieren</button>
-              <button type="button" className="btn btn-danger" onClick={() => void runRecurringReassign()} disabled={isResolvingRecurringConflict}>Konflikte umbuchen</button>
+          <section ref={recurringConflictDialogRef} className="card dialog recurring-conflict-dialog" role="dialog" aria-modal="true" aria-labelledby="series-conflict-title">
+            <header className="recurring-conflict-header inline-between">
+              <h3 id="series-conflict-title">Konflikte gefunden</h3>
+              <button type="button" className="btn btn-outline btn-icon" onClick={() => setRecurringConflictState(null)} disabled={isResolvingRecurringConflict} aria-label="Konflikt-Dialog schließen">✕</button>
+            </header>
+            <div className="recurring-conflict-body stack-sm">
+              <p><strong>{recurringConflictState.conflictDates.length} Konflikte</strong>: Ressource an diesen Tagen bereits belegt.</p>
+              <div className="recurring-conflict-table-wrap">
+                <table className="admin-table recurring-conflict-table">
+                  <thead>
+                    <tr>
+                      <th>Datum</th>
+                      <th>Grund</th>
+                      <th>Aktion</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {recurringConflictState.conflictDates.map((date) => (
+                      <tr key={date}>
+                        <td>{new Date(`${date}T00:00:00.000Z`).toLocaleDateString('de-DE')}</td>
+                        <td>Ressource belegt</td>
+                        <td>Überspringen oder umbuchen</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              {dialogErrorMessage && <p className="error-banner">{dialogErrorMessage}</p>}
             </div>
+            <footer className="recurring-conflict-footer inline-end rebook-actions">
+              <button type="button" className="btn btn-outline" onClick={() => setRecurringConflictState(null)} disabled={isResolvingRecurringConflict}>Abbrechen</button>
+              <div className="stack-xxs">
+                <button type="button" className="btn" onClick={() => void runRecurringIgnoreConflicts()} disabled={isResolvingRecurringConflict}>Nur freie Termine buchen</button>
+                <span className="muted">Ändert nichts an bestehenden Buchungen.</span>
+              </div>
+              <div className="stack-xxs">
+                <button type="button" className="btn btn-danger" onClick={() => void runRecurringReassign()} disabled={isResolvingRecurringConflict}>Umbuchen</button>
+                <span className="muted">Ändert bestehende eigene Buchungen an Konflikttagen.</span>
+              </div>
+            </footer>
           </section>
         </div>,
         document.body
