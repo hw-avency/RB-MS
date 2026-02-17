@@ -135,23 +135,23 @@ input, select { border: 1px solid hsl(var(--border)); border-radius: 12px; paddi
 .desk-popup-header{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;padding:16px 18px;border-bottom:1px solid hsl(var(--border));background:hsl(var(--card));flex:0 0 auto}
 .desk-popup-header .stack-xxs{flex:1;text-align:center}
 .desk-popup-header>h3{flex:1;text-align:center}
-.desk-popup-body{flex:1;min-height:0;overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain;padding:14px 18px 18px}
+.desk-popup-body{flex:1;min-height:0;overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain;padding:20px;display:flex;flex-direction:column;gap:16px}
 .desk-popup-close{width:30px;height:30px;border-radius:999px;padding:0;display:inline-flex;align-items:center;justify-content:center;color:hsl(var(--muted-foreground));flex-shrink:0}
-.desk-booking-form{display:flex;flex-direction:column;gap:12px;width:100%;min-width:0;height:100%;overflow:hidden;overflow-x:hidden}
+.desk-booking-form{display:flex;flex-direction:column;gap:16px;width:100%;min-width:0;height:100%;overflow:hidden;overflow-x:hidden}
 .split{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
 .desk-booking-form > *,.desk-booking-form .stack-xs,.desk-booking-form .stack-sm,.desk-booking-form .split,.desk-booking-form .weekday-toggle-group,.desk-booking-form-body{min-width:0;width:100%}
 .desk-booking-form input,.desk-booking-form select,.desk-booking-form textarea,.desk-booking-form .btn,.desk-booking-form .weekday-toggle,.desk-booking-form .free-slot-chip{max-width:100%;width:100%;box-sizing:border-box}
 .desk-booking-form .weekday-toggle{white-space:normal;word-break:break-word}
 
 .desk-booking-form-body{flex:1;min-height:0;overflow-y:auto;overflow-x:hidden;padding-right:2px}.desk-booking-form .weekday-toggle-group{display:flex;flex-wrap:wrap;gap:8px;max-height:none;overflow:visible;padding-right:0}.desk-booking-form .weekday-toggle{flex:0 1 auto;width:auto}
-.recurring-panel{border:1px solid hsl(var(--border));border-radius:10px;padding:10px;background:hsl(var(--card-2))}
+.recurring-panel{border:1px solid hsl(var(--border));border-radius:12px;padding:20px;background:hsl(var(--muted)/.25)}
 .recurrence-interval-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .recurrence-interval-row label{margin:0;flex:0 0 auto}
-.recurrence-interval-row input{flex:0 0 90px;min-width:90px}
+.recurrence-interval-row input{flex:0 0 80px;min-width:80px;max-width:80px}
 .recurrence-interval-row span{flex:0 0 auto;white-space:nowrap}
-.recurrence-range-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.recurrence-range-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:8px 0}
 .recurrence-range-row input[type="radio"]{flex:0 0 auto}
-.recurrence-range-row input[type="date"],.recurrence-range-row input[type="number"]{flex:1 1 160px;min-width:0}
+.recurrence-range-row input[type="date"],.recurrence-range-row input[type="number"]{flex:1 1 160px;min-width:0;max-width:220px}
 .desk-booking-form-footer{flex:0 0 auto;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;padding:12px 0 2px;border-top:1px solid hsl(var(--border));background:hsl(var(--card))}
 .desk-booking-form-footer .btn{justify-content:center;min-height:38px}
 .room-schedule-block{padding:10px;border-radius:10px;background:hsl(var(--muted)/.45);border:1px solid hsl(var(--border));gap:10px}
@@ -253,9 +253,9 @@ tr{cursor:pointer}.row-selected{background:hsl(var(--muted))}
 .recurring-conflict-table{width:100%;border-collapse:collapse}
 .recurring-conflict-table th,.recurring-conflict-table td{padding:10px 12px;text-align:left;border-bottom:1px solid hsl(var(--border));font-size:13px}
 .recurring-conflict-table tbody tr:last-child td{border-bottom:0}
-.recurring-conflict-footer{position:sticky;bottom:0;background:hsl(var(--card));border-top:1px solid hsl(var(--border));padding:14px 20px;align-items:flex-start;flex-wrap:wrap}
-.recurring-conflict-footer .stack-xxs{align-items:flex-start}
-.recurring-conflict-footer .muted{font-size:12px;line-height:1.3;max-width:240px}
+.recurring-conflict-footer{position:sticky;bottom:0;background:hsl(var(--card));border-top:1px solid hsl(var(--border));padding:14px 20px}
+.recurring-conflict-actions .btn{width:100%;justify-content:flex-start;min-height:44px}
+.recurring-conflict-footer .muted{font-size:12px;line-height:1.3}
 
 .rebook-actions .btn{min-height:38px}
 .cancel-booking-dialog{width:min(420px,100%);padding:22px;gap:10px}
@@ -266,7 +266,7 @@ tr{cursor:pointer}.row-selected{background:hsl(var(--muted))}
 .weekday-toggle-group{display:flex;gap:6px;flex-wrap:wrap}
 .weekday-toggle{border:1px solid hsl(var(--border));background:hsl(var(--card));padding:6px 10px;border-radius:999px;cursor:pointer}
 .weekday-toggle.active{background:hsl(var(--primary));border-color:hsl(var(--primary));color:hsl(var(--primary-foreground))}
-.recurring-section{border-top:1px solid hsl(var(--border));padding-top:8px}
+.recurring-section{border-top:1px solid hsl(var(--border));padding-top:12px}
 .recurrence-accordion-toggle{display:flex;flex-direction:column;align-items:flex-start;gap:2px;background:none;border:0;padding:0;cursor:pointer;text-align:left}
 .recurrence-preview summary{cursor:pointer;font-weight:600}
 .checkbox-label{display:flex;align-items:center;gap:8px;font-size:14px}
@@ -556,3 +556,16 @@ tr{cursor:pointer}.row-selected{background:hsl(var(--muted))}
   white-space: pre-wrap;
   word-break: break-word;
 }
+
+.recurrence-section-title{font-weight:600;font-size:13px}
+.recurrence-yearly-row{display:flex;gap:10px;flex-wrap:wrap}
+.recurrence-yearly-row>div{flex:1 1 180px}
+.recurrence-monthly-row input{max-width:120px}
+.recurrence-range-group{border:1px solid hsl(var(--border));border-radius:10px;padding:10px;background:hsl(var(--card))}
+.booking-details-panel{padding:20px;gap:16px}
+.booking-detail-card{border:1px solid hsl(var(--border));border-radius:12px;padding:12px;background:hsl(var(--card))}
+.booking-detail-card h4{margin:0 0 4px;font-size:14px}
+.booking-detail-card p{display:flex;flex-direction:column;gap:2px;font-size:14px}
+.booking-detail-card .muted{font-size:12px}
+.desk-popup-footer-actions{margin-top:auto;display:flex;justify-content:flex-end;gap:8px;border-top:1px solid hsl(var(--border));padding-top:12px}
+.cancel-options .btn{width:100%;justify-content:center;min-height:44px;flex-grow:0}
