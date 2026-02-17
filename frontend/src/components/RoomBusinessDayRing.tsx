@@ -30,6 +30,9 @@ const segmentPath = (startDeg: number, endDeg: number, radius = RADIUS): string 
   return arcPath(normalizedStart, normalizedEnd, radius);
 };
 
+const FULL_SEGMENT_EPSILON = 0.0001;
+const isFullSegment = (segment: RingSegment): boolean => (segment.p1 - segment.p0) >= (1 - FULL_SEGMENT_EPSILON);
+
 const TICK_ANGLES = {
   start: BUSINESS_START_ANGLE_DEGREES,
   twelve: toBusinessAngleDegrees(12 * 60),
@@ -79,26 +82,60 @@ export function RoomBusinessDayRing({
           aria-hidden="true"
         />
       ) : null}
-      {(freeSegments ?? []).map((segment) => (
-        <path
-          key={`free-${segment.p0.toFixed(4)}-${segment.p1.toFixed(4)}`}
-          d={segmentPath(progressToBusinessAngleDegrees(segment.p0), progressToBusinessAngleDegrees(segment.p1))}
-          className="room-business-ring-free"
-          style={{ strokeWidth }}
-          stroke="var(--resource-free)"
-          aria-hidden="true"
-        />
-      ))}
-      {segments.map((segment) => (
-        <path
-          key={`${segment.p0.toFixed(4)}-${segment.p1.toFixed(4)}`}
-          d={segmentPath(progressToBusinessAngleDegrees(segment.p0), progressToBusinessAngleDegrees(segment.p1))}
-          className="room-business-ring-booked"
-          style={{ strokeWidth }}
-          stroke="var(--resource-busy)"
-          aria-hidden="true"
-        />
-      ))}
+      {(freeSegments ?? []).map((segment) => {
+        const key = `free-${segment.p0.toFixed(4)}-${segment.p1.toFixed(4)}`;
+        if (isFullSegment(segment)) {
+          return (
+            <circle
+              key={key}
+              cx={CENTER}
+              cy={CENTER}
+              r={RADIUS}
+              className="room-business-ring-free"
+              style={{ strokeWidth }}
+              stroke="var(--resource-free)"
+              aria-hidden="true"
+            />
+          );
+        }
+        return (
+          <path
+            key={key}
+            d={segmentPath(progressToBusinessAngleDegrees(segment.p0), progressToBusinessAngleDegrees(segment.p1))}
+            className="room-business-ring-free"
+            style={{ strokeWidth }}
+            stroke="var(--resource-free)"
+            aria-hidden="true"
+          />
+        );
+      })}
+      {segments.map((segment) => {
+        const key = `${segment.p0.toFixed(4)}-${segment.p1.toFixed(4)}`;
+        if (isFullSegment(segment)) {
+          return (
+            <circle
+              key={key}
+              cx={CENTER}
+              cy={CENTER}
+              r={RADIUS}
+              className="room-business-ring-booked"
+              style={{ strokeWidth }}
+              stroke="var(--resource-busy)"
+              aria-hidden="true"
+            />
+          );
+        }
+        return (
+          <path
+            key={key}
+            d={segmentPath(progressToBusinessAngleDegrees(segment.p0), progressToBusinessAngleDegrees(segment.p1))}
+            className="room-business-ring-booked"
+            style={{ strokeWidth }}
+            stroke="var(--resource-busy)"
+            aria-hidden="true"
+          />
+        );
+      })}
       {showTicks && (Object.entries(TICK_ANGLES) as Array<[RingTick, number]>).map(([tick, deg]) => {
         const outer = polarToCartesian(deg, RADIUS + strokeWidth * 0.45);
         const inner = polarToCartesian(deg, RADIUS - strokeWidth * 0.45);
