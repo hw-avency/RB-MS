@@ -115,3 +115,8 @@
 - Backend: `npm run build`
 - Health: `GET /health` liefert `{ status: "ok", title: "..." }`
 - CORS + Cookie-Credentials für Frontend ↔ Backend aktiviert
+
+### Hinweis für CI/Codex-Runtime
+- Falls `curl -I https://registry.npmjs.org/react` oder `npm ping --registry=https://registry.npmjs.org/` mit **403** fehlschlägt, ist der Runner durch Netzwerk-/Policy-Vorgaben blockiert.
+- In dieser Situation keine lokalen Aussagen wie „Build verified“ treffen, wenn `npm ci`/`npm run build` nicht ausführbar sind.
+- In Commit/PR klar dokumentieren: `Build in Codex env not possible due to npm registry 403; Render build is source of truth.`
