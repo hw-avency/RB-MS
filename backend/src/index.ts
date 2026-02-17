@@ -863,6 +863,19 @@ const extractDomainFromEmail = (email: string): string | null => {
   const domain = normalizeTenantDomain(normalizedEmail.slice(atIndex + 1));
   return domain.length > 0 ? domain : null;
 };
+
+const resolveTenantIdForEmail = async (tx: Prisma.TransactionClient, email: string): Promise<string | null> => {
+  const domain = extractDomainFromEmail(email);
+  if (!domain) return null;
+
+  const tenant = await tx.tenant.upsert({
+    where: { domain },
+    update: {},
+    create: { domain, name: domain }
+  });
+
+  return tenant.id;
+};
 const hashPassword = async (value: string): Promise<string> => bcrypt.hash(value, PASSWORD_SALT_ROUNDS);
 
 type BookingTx = Prisma.TransactionClient;
@@ -1289,18 +1302,38 @@ const backfillLegacyBookingCreators = async () => {
   }
 };
 
+const ensureEmployeeTenantAssignments = async () => {
+  const employees = await prisma.employee.findMany({
+    select: { id: true, email: true, tenantDomainId: true }
+  });
+
+  if (employees.length === 0) return;
+
+  await prisma.$transaction(async (tx) => {
+    let updatedCount = 0;
+
+    for (const employee of employees) {
+      const tenantId = await resolveTenantIdForEmail(tx, employee.email);
+      if (tenantId === employee.tenantDomainId) continue;
+
+      await tx.employee.update({
+        where: { id: employee.id },
+        data: { tenantDomainId: tenantId }
+      });
+      updatedCount += 1;
+    }
+
+    if (updatedCount > 0) {
+      console.info('EMPLOYEE_TENANT_ASSIGNMENT_BACKFILL_DONE', { total: employees.length, updated: updatedCount });
+    }
+  });
+};
+
 const upsertEmployeeFromEntraLogin = async (claims: { oid: string; tid: string; email: string; name: string }) => {
   const normalizedEmail = normalizeEmail(claims.email);
-  const domain = extractDomainFromEmail(normalizedEmail);
 
   return prisma.$transaction(async (tx) => {
-    const tenant = domain
-      ? await tx.tenant.upsert({
-        where: { domain },
-        update: {},
-        create: { domain, name: domain }
-      })
-      : null;
+    const tenantId = await resolveTenantIdForEmail(tx, normalizedEmail);
 
     let employee = await tx.employee.findFirst({
       where: { OR: [{ entraOid: claims.oid }, { email: normalizedEmail }] }
@@ -1315,7 +1348,7 @@ const upsertEmployeeFromEntraLogin = async (claims: { oid: string; tid: string; 
           isActive: true,
           entraOid: claims.oid,
           entraTenantId: claims.tid,
-          tenantDomainId: tenant?.id ?? null,
+          tenantDomainId: tenantId,
           lastLoginAt: new Date()
         }
       });
@@ -1327,7 +1360,7 @@ const upsertEmployeeFromEntraLogin = async (claims: { oid: string; tid: string; 
           displayName: claims.name,
           entraOid: claims.oid,
           entraTenantId: claims.tid,
-          tenantDomainId: tenant?.id ?? null,
+          tenantDomainId: tenantId,
           lastLoginAt: new Date(),
           isActive: true
         }
@@ -1819,11 +1852,14 @@ app.post('/admin/employees', requireAdmin, async (req, res) => {
 
   try {
     const employee = await prisma.$transaction(async (tx) => {
+      const tenantId = await resolveTenantIdForEmail(tx, normalizedEmail);
+
       const createdEmployee = await tx.employee.create({
         data: {
           email: normalizedEmail,
           displayName: normalizedDisplayName,
           role: role ?? 'user',
+          tenantDomainId: tenantId,
           photoUrl: null
         },
         select: employeeSelect
@@ -4945,6 +4981,7 @@ app.delete('/recurring-bookings/:id', async (req, res) => {
 
 const start = async () => {
   await ensureBreakglassAdmin();
+  await ensureEmployeeTenantAssignments();
   await backfillLegacyBookingCreators();
   app.listen(port, '0.0.0.0', () => {
     console.log(`${APP_TITLE} API listening on ${port}`);
