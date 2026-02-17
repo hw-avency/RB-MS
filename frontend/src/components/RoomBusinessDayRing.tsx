@@ -58,7 +58,7 @@ export function RoomBusinessDayRing({
   showTicks?: boolean;
   debugTitle?: string;
 }) {
-  const bookedStrokeColor = (segment: BusySegment): string => (segment.tone === 'own' ? 'var(--resource-own)' : 'var(--resource-busy)');
+  const bookedStrokeColor = (_segment: BusySegment): string => 'var(--resource-busy)';
 
   const businessStart = BUSINESS_START_ANGLE_DEGREES;
   const businessEnd = businessStart + BUSINESS_SWEEP_DEGREES;
