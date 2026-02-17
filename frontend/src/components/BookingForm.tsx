@@ -136,6 +136,7 @@ export function BookingForm({ values, onChange, onSubmit, onCancel, isSubmitting
     bookings: RoomScheduleItem[];
     freeSlots: RoomFreeSlot[];
     occupiedSegments: RingSegment[];
+    freeSegments?: RingSegment[];
     isFullyBooked?: boolean;
     conflictMessage?: string;
     debugInfo?: string[];
@@ -358,6 +359,7 @@ export function BookingForm({ values, onChange, onSubmit, onCancel, isSubmitting
                   <strong className="room-schedule-title">Heute belegt</strong>
                   <RoomBusinessDayRing
                     segments={roomSchedule?.occupiedSegments ?? []}
+                    freeSegments={roomSchedule?.freeSegments ?? []}
                     className="room-schedule-ring"
                     strokeWidth={12}
                     debugTitle={roomSchedule?.ringDebugTitle}

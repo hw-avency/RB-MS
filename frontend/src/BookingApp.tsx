@@ -1061,8 +1061,9 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
   }, [popupDesk, popupDeskBookings, roomAvailability, selectedDate]);
   const popupRoomOccupancy = useMemo(() => computeRoomOccupancy(popupRoomBookingsForSelectedDay, selectedDate), [popupRoomBookingsForSelectedDay, selectedDate]);
   const popupRoomOccupiedIntervals = popupRoomOccupancy.intervals;
-  const popupRoomFreeIntervals = useMemo(() => invertIntervals(ROOM_WINDOW_START_MINUTES, ROOM_WINDOW_END_MINUTES, popupRoomOccupiedIntervals), [popupRoomOccupiedIntervals]);
+  const popupRoomFreeIntervals = popupRoomOccupancy.freeIntervals;
   const popupRoomOccupiedSegments = popupRoomOccupancy.segments;
+  const popupRoomFreeSegments = popupRoomOccupancy.freeSegments;
   const popupRoomBookingsList = useMemo<RoomBookingListEntry[]>(() => {
     const rendered = popupRoomBookingsForSelectedDay
       .flatMap((booking) => {
@@ -1125,10 +1126,11 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
 
     return [
       `business minutes booked: ${popupRoomOccupancy.occupiedMinutes}`,
+      `business minutes free: ${popupRoomOccupancy.freeMinutes}`,
       `segments: ${segmentList}`,
       `percent booked: ${(popupRoomOccupancy.occupiedRatio * 100).toFixed(1)}%`
     ].join('\n');
-  }, [popupDesk, popupRoomOccupancy.occupiedMinutes, popupRoomOccupancy.occupiedRatio, popupRoomOccupiedIntervals, showRoomDebugInfo]);
+  }, [popupDesk, popupRoomOccupancy.freeMinutes, popupRoomOccupancy.occupiedMinutes, popupRoomOccupancy.occupiedRatio, popupRoomOccupiedIntervals, showRoomDebugInfo]);
 
   const floorplanFitScaleForDebug = useMemo(() => {
     if (!floorplanImageSize?.width || !floorplanImageSize?.height) return null;
@@ -2538,6 +2540,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
                       })),
                       freeSlots: popupRoomFreeSlotChips,
                       occupiedSegments: popupRoomOccupiedSegments,
+                      freeSegments: popupRoomFreeSegments,
                       isFullyBooked: popupRoomFreeSlotChips.length === 0,
                       conflictMessage: popupRoomFreeSlotChips.length === 0 ? 'Heute vollständig belegt' : roomBookingConflict,
                       debugInfo: roomDebugInfo,
