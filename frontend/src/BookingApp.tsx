@@ -2026,7 +2026,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
     popupDeskId: string;
     isRoomCancel: boolean;
   }) => {
-    const endpoint = `${API_BASE}/bookings/${bookingId}/cancel`;
+    const endpoint = `${API_BASE}/bookings/${bookingId}?scope=${cancelMode === 'SERIES_ALL' ? 'series' : 'single'}`;
     updateCancelDebug({ lastAction: 'CANCEL_REQUEST', bookingId, endpoint, httpStatus: null, errorMessage: '' });
 
     const scope = cancelMode === 'SERIES_ALL' ? 'series' : 'single';
@@ -2104,7 +2104,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
       return;
     }
 
-    const endpoint = `${API_BASE}/bookings/${bookingId}/cancel`;
+    const endpoint = `${API_BASE}/bookings/${bookingId}?scope=${cancelMode === 'SERIES_ALL' ? 'series' : 'single'}`;
     updateCancelDebug({ lastAction: 'CANCEL_CLICK', bookingId, endpoint, httpStatus: null, errorMessage: '' });
     setCancelDialogError('');
     setIsCancellingBooking(true);
@@ -2530,6 +2530,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
                         isCurrentUser: booking.isCurrentUser,
                         isSelfMine: booking.isCurrentUser && booking.bookedFor === 'SELF',
                         isGuestMine: booking.isCurrentUser && booking.bookedFor === 'GUEST',
+                        isSeries: Boolean(booking.recurringBookingId || booking.recurringGroupId),
                         canCancel: booking.canCancel && Boolean(booking.bookingId),
                         debugMeta: showRoomDebugInfo
                           ? `bookedFor=${booking.bookedFor ?? '-'} · employeeId=${booking.userId ?? '-'} · createdByEmployeeId=${booking.createdByEmployeeId ?? '-'} · canCancel=${booking.canCancel ? 'true' : 'false'}`
@@ -2560,7 +2561,9 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
                   : !isRoomResource(popupDesk) && <p className="muted">Status: {deskAvailabilityLabel(popupDeskAvailability)}</p>}
                 {popupDeskBookings.map((booking) => (
                   <p key={booking.id ?? `${booking.userEmail ?? 'unknown'}-${bookingSlotLabel(booking)}`} className="muted">
-                    {bookingSlotLabel(booking)}: {bookingDisplayName(booking)}{booking.bookedFor === 'GUEST' ? ` · gebucht von ${getBookingCreatorName(booking)}` : ''}
+                    {bookingSlotLabel(booking)}: {bookingDisplayName(booking)}
+                    {(booking.recurringBookingId || booking.recurringGroupId) ? ' 🔁' : ''}
+                    {booking.bookedFor === 'GUEST' ? ` · gebucht von ${getBookingCreatorName(booking)}` : ''}
                   </p>
                 ))}
                 {showRoomDebugInfo && (

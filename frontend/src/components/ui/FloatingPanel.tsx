@@ -24,8 +24,8 @@ const computePosition = (anchor: DOMRect, floatingRect: DOMRect): PositionResult
   const availableWidth = Math.max(280, viewportWidth - VIEWPORT_PADDING * 2);
   const availableHeight = Math.max(240, viewportHeight - VIEWPORT_PADDING * 2);
 
-  const baseWidth = Math.max(320, Math.min(420, anchor.width || 420));
-  const maxWidth = Math.max(280, Math.min(420, availableWidth));
+  const baseWidth = Math.max(320, Math.min(560, anchor.width || 560));
+  const maxWidth = Math.max(320, Math.min(560, availableWidth));
   const width = Math.min(baseWidth, maxWidth);
   const height = floatingRect.height;
 

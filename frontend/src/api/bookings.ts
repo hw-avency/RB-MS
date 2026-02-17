@@ -111,21 +111,20 @@ export async function cancelBooking(bookingId: string, scope: 'single' | 'series
     throw new Error('Missing bookingId');
   }
 
-  const method = 'POST';
-  const path = `/bookings/${bookingId}/cancel`;
+  const method = 'DELETE';
+  const query = new URLSearchParams({ scope });
+  const path = `/bookings/${bookingId}?${query.toString()}`;
   const url = `${API_BASE}${path}`;
-  const payload = { scope };
 
   if (meta) {
-    logMutation('ROOM_CANCEL_REQUEST', { requestId: meta.requestId, method, url, body: payload });
+    logMutation('ROOM_CANCEL_REQUEST', { requestId: meta.requestId, method, url, body: null });
   }
 
   const response = await fetch(url, {
     method,
     credentials: 'include',
     cache: 'no-store',
-    headers: buildHeaders(),
-    body: JSON.stringify(payload)
+    headers: buildHeaders()
   });
 
   const body = await readBodySafe(response);

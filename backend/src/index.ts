@@ -2312,13 +2312,22 @@ const cancelBookingByScope = async ({ id, scope, req, res }: { id: string; scope
         return 1;
       }
 
-      const bookingWhere = existing.recurringBookingId
-        ? { recurringBookingId: existing.recurringBookingId }
-        : { recurringGroupId: existing.recurringGroupId };
+      const seriesWhereClauses: Array<{ recurringBookingId?: string; recurringGroupId?: string }> = [];
+      if (existing.recurringBookingId) seriesWhereClauses.push({ recurringBookingId: existing.recurringBookingId });
+      if (existing.recurringGroupId) seriesWhereClauses.push({ recurringGroupId: existing.recurringGroupId });
+      if (seriesWhereClauses.length === 0) return 0;
 
-      const deleteBookingsResult = await tx.booking.deleteMany({ where: bookingWhere });
-      if (existing.recurringBookingId) {
-        await tx.recurringBooking.delete({ where: { id: existing.recurringBookingId } });
+      const matchingBookings = await tx.booking.findMany({
+        where: { OR: seriesWhereClauses },
+        select: { recurringBookingId: true }
+      });
+      const recurringBookingIds = Array.from(new Set(matchingBookings
+        .map((booking) => booking.recurringBookingId)
+        .filter((value): value is string => Boolean(value))));
+
+      const deleteBookingsResult = await tx.booking.deleteMany({ where: { OR: seriesWhereClauses } });
+      if (recurringBookingIds.length > 0) {
+        await tx.recurringBooking.deleteMany({ where: { id: { in: recurringBookingIds } } });
       }
       return deleteBookingsResult.count;
     });
@@ -2344,7 +2353,13 @@ app.delete('/bookings/:id', async (req, res) => {
     return;
   }
 
-  await cancelBookingByScope({ id, scope: 'single', req, res });
+  const scope = parseBookingCancelScope(req.query.scope ?? 'single');
+  if (!scope) {
+    res.status(400).json({ error: 'validation', message: 'scope must be single or series' });
+    return;
+  }
+
+  await cancelBookingByScope({ id, scope, req, res });
 });
 
 app.post('/bookings/:id/cancel', async (req, res) => {

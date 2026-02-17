@@ -5,7 +5,7 @@ import { RoomBusinessDayRing } from './RoomBusinessDayRing';
 
 type BookingType = 'single' | 'recurring';
 type BookingSlot = 'FULL_DAY' | 'MORNING' | 'AFTERNOON';
-type RoomScheduleItem = { id: string; label: string; person: string; isCurrentUser?: boolean; isSelfMine?: boolean; isGuestMine?: boolean; canCancel?: boolean; debugMeta?: string };
+type RoomScheduleItem = { id: string; label: string; person: string; isCurrentUser?: boolean; isSelfMine?: boolean; isGuestMine?: boolean; canCancel?: boolean; isSeries?: boolean; debugMeta?: string };
 type RoomFreeSlot = { label: string; startTime: string; endTime: string };
 
 export type BookingFormValues = {
@@ -388,6 +388,7 @@ export function BookingForm({ values, onChange, onSubmit, onCancel, isSubmitting
                         <span className="room-booking-time">{booking.label}</span>
                         <span className="room-booking-meta">
                           <span className="room-booking-person">
+                            {booking.isSeries && <span className="room-booking-repeat" aria-label="Teil einer Serie" title="Serienbuchung">🔁</span>}
                             {booking.person}
                             {booking.isSelfMine && <em className="room-booking-badge">Du</em>}
                             {booking.isGuestMine && <em className="room-booking-badge">von Dir</em>}
