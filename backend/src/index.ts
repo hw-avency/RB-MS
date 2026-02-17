@@ -3064,7 +3064,7 @@ const buildRecurringPayload = ({
 });
 
 app.post('/recurring-bookings', async (req, res) => {
-  const { resourceId, startDate, endDate, rangeMode, count, patternType, interval, byWeekday, byMonthday, bySetPos, byMonth, bookedFor, guestName, period, startTime, endTime, allowPartial, explicitDates } = req.body as {
+  const { resourceId, startDate, endDate, rangeMode, count, patternType, interval, byWeekday, byMonthday, bySetPos, byMonth, bookedFor, guestName, period, startTime, endTime, allowPartial, explicitDates, conflictStrategy } = req.body as {
     resourceId?: string;
     startDate?: string;
     endDate?: string;
@@ -3083,6 +3083,7 @@ app.post('/recurring-bookings', async (req, res) => {
     endTime?: string | null;
     allowPartial?: boolean;
     explicitDates?: string[];
+    conflictStrategy?: 'abort' | 'ignore' | 'reschedule';
   };
 
   if (!resourceId || !startDate || !patternType) {
@@ -3209,119 +3210,172 @@ app.post('/recurring-bookings', async (req, res) => {
     return;
   }
 
-  const result = await prisma.$transaction(async (tx) => {
-    const resourceConflicts = await tx.booking.findMany({
-      where: { date: { in: targetDates }, deskId: resourceId },
-      include: { desk: { select: { name: true, kind: true } } }
-    });
+  const strategy: 'abort' | 'ignore' | 'reschedule' = conflictStrategy === 'abort' || conflictStrategy === 'ignore' || conflictStrategy === 'reschedule'
+    ? conflictStrategy
+    : (allowPartial ? 'ignore' : 'abort');
+  const requestId = req.requestId ?? 'unknown';
+  console.info('[MUT] RB_REQUEST', { requestId, employeeId: actorEmployee.id, deskId: resource.id, kind: resource.kind, strategy, occurrencesCount: targetDates.length });
 
-    const conflictDates = new Set(resourceConflicts
-      .filter((booking) => {
-        const candidateWindow = bookingToWindow(booking);
-        return candidateWindow ? windowsOverlap(recurrenceWindow, candidateWindow) : false;
-      })
-      .map((booking) => toISODateOnly(booking.date)));
+  const mapConflictsByDate = (bookings: Array<Prisma.BookingGetPayload<{ include: { desk: { select: { id: true; kind: true } } } }>>) => {
+    const conflictsByDate = new Map<string, { bookingId: string; startMinute: number | null; endMinute: number | null; slot: BookingSlot | null }[]>();
+    for (const booking of bookings) {
+      const candidateWindow = bookingToWindow(booking);
+      if (!candidateWindow || !windowsOverlap(recurrenceWindow, candidateWindow)) continue;
+      const dateKey = toISODateOnly(booking.date);
+      const next = conflictsByDate.get(dateKey) ?? [];
+      next.push({ bookingId: booking.id, startMinute: booking.startMinute, endMinute: booking.endMinute, slot: booking.slot });
+      conflictsByDate.set(dateKey, next);
+    }
+    return conflictsByDate;
+  };
 
-    if (resource.kind !== 'RAUM') {
-      const personalConflicts = await tx.booking.findMany({
+  const toConflictList = (conflictsByDate: Map<string, { bookingId: string; startMinute: number | null; endMinute: number | null; slot: BookingSlot | null }[]>) => Array
+    .from(conflictsByDate.entries())
+    .sort(([left], [right]) => left.localeCompare(right))
+    .flatMap(([date, entries]) => entries.map((entry) => ({ date, ...entry })));
+
+  try {
+    const result = await prisma.$transaction(async (tx) => {
+      const personalBookings = await tx.booking.findMany({
         where: {
           date: { in: targetDates },
-          desk: { kind: { in: ['TISCH', 'PARKPLATZ'] } },
-          ...(normalizedBookedFor === 'SELF'
-            ? { bookedFor: 'SELF', employeeId: actorEmployee.id }
-            : { bookedFor: 'GUEST', createdByEmployeeId: actorEmployee.id })
+          employeeId: actorEmployee.id,
+          bookedFor: 'SELF',
+          desk: { kind: resource.kind }
         },
-        include: { desk: { select: { id: true } } }
+        include: { desk: { select: { id: true, kind: true } } }
       });
 
-      for (const booking of personalConflicts) {
-        if (booking.deskId === resourceId) continue;
-        const candidateWindow = bookingToWindow(booking);
-        if (candidateWindow && windowsOverlap(recurrenceWindow, candidateWindow)) {
-          conflictDates.add(toISODateOnly(booking.date));
+      const conflictsByDate = mapConflictsByDate(personalBookings);
+      const conflictList = toConflictList(conflictsByDate);
+      const sortedConflictDates = Array.from(conflictsByDate.keys()).sort();
+      console.info('[MUT] RB_CONFLICTS', { requestId, conflictsCount: conflictList.length });
+
+      if (strategy === 'abort' && conflictList.length > 0) {
+        return {
+          kind: 'conflict' as const,
+          code: 'SERIES_CONFLICT' as const,
+          message: 'Recurring series conflicts with existing bookings',
+          details: { resourceId, conflicts: conflictList, conflictDates: sortedConflictDates }
+        };
+      }
+
+      const recurringBooking = await tx.recurringBooking.create({
+        data: {
+          resourceId,
+          createdByEmployeeId: actorEmployee.id,
+          startDate: toDateOnly(startDate)!,
+          endDate: toDateOnly(resolvedEndDate)!,
+          patternType,
+          interval: recurrenceDefinition.interval,
+          byWeekday: recurrenceDefinition.byWeekday ?? [],
+          byMonthday: recurrenceDefinition.byMonthday,
+          bySetPos: recurrenceDefinition.bySetPos,
+          byMonth: recurrenceDefinition.byMonth,
+          bookedFor: normalizedBookedFor,
+          guestName: normalizedBookedFor === 'GUEST' ? normalizedGuestName : null,
+          period: recurrenceWindow.mode === 'day' ? recurrenceWindow.daySlot : null,
+          startTime: recurrenceWindow.mode === 'time' ? startTime : null,
+          endTime: recurrenceWindow.mode === 'time' ? endTime : null
+        }
+      });
+
+      let createdCount = 0;
+      let movedCount = 0;
+      const skippedDates: string[] = [];
+
+      for (const targetDate of targetDates) {
+        const dateKey = toISODateOnly(targetDate);
+        const conflictEntries = conflictsByDate.get(dateKey) ?? [];
+        if (conflictEntries.length > 0 && strategy === 'ignore') {
+          skippedDates.push(dateKey);
+          continue;
+        }
+
+        if (conflictEntries.length > 0 && strategy === 'reschedule') {
+          for (const entry of conflictEntries) {
+            await tx.booking.update({
+              where: { id: entry.bookingId },
+              data: {
+                deskId: resourceId,
+                recurringBookingId: recurringBooking.id,
+                recurringGroupId: recurringBooking.groupId
+              }
+            });
+            movedCount += 1;
+          }
+          continue;
+        }
+
+        await tx.booking.create({
+          data: {
+            deskId: resourceId,
+            userEmail: normalizedBookedFor === 'SELF' ? actorEmployee.email : null,
+            employeeId: normalizedBookedFor === 'SELF' ? actorEmployee.id : null,
+            bookedFor: normalizedBookedFor,
+            guestName: normalizedBookedFor === 'GUEST' ? normalizedGuestName : null,
+            createdByEmployeeId: actorEmployee.id,
+            createdByUserId: req.authUser?.source === 'local' ? req.authUser.id : null,
+            createdByEmail: req.authUser?.email ?? null,
+            recurringBookingId: recurringBooking.id,
+            recurringGroupId: recurringBooking.groupId,
+            date: targetDate,
+            daySlot: recurrenceWindow.mode === 'day' ? recurrenceWindow.daySlot : null,
+            slot: recurrenceWindow.mode === 'day' ? (recurrenceWindow.daySlot === 'FULL' ? 'FULL_DAY' : recurrenceWindow.daySlot === 'AM' ? 'MORNING' : 'AFTERNOON') : 'CUSTOM',
+            startMinute: recurrenceWindow.mode === 'time' ? recurrenceWindow.startMinute : null,
+            endMinute: recurrenceWindow.mode === 'time' ? recurrenceWindow.endMinute : null,
+            startTime: recurrenceWindow.mode === 'time' ? new Date(Date.UTC(targetDate.getUTCFullYear(), targetDate.getUTCMonth(), targetDate.getUTCDate(), Math.floor(recurrenceWindow.startMinute / 60), recurrenceWindow.startMinute % 60, 0, 0)) : null,
+            endTime: recurrenceWindow.mode === 'time' ? new Date(Date.UTC(targetDate.getUTCFullYear(), targetDate.getUTCMonth(), targetDate.getUTCDate(), Math.floor(recurrenceWindow.endMinute / 60), recurrenceWindow.endMinute % 60, 0, 0)) : null
+          }
+        });
+        createdCount += 1;
+      }
+
+      if (strategy === 'reschedule') {
+        const finalBookings = await tx.booking.findMany({
+          where: {
+            date: { in: targetDates },
+            employeeId: actorEmployee.id,
+            bookedFor: 'SELF',
+            desk: { kind: resource.kind }
+          },
+          include: { desk: { select: { id: true, kind: true } } }
+        });
+        const finalConflictsByDate = mapConflictsByDate(finalBookings);
+        for (const [date, entries] of finalConflictsByDate.entries()) {
+          if (entries.length > 1) {
+            return {
+              kind: 'conflict' as const,
+              code: 'SERIES_CONFLICT_REMAINS' as const,
+              message: 'Series conflict remains after reschedule',
+              details: { resourceId, conflictDate: date, conflicts: toConflictList(finalConflictsByDate) }
+            };
+          }
         }
       }
-    }
 
-    const sortedConflictDates = Array.from(conflictDates).sort();
-    const datesToCreate = targetDates.filter((value) => !conflictDates.has(toISODateOnly(value)));
-
-    if (sortedConflictDates.length > 0 && !allowPartial) {
-      return {
-        kind: 'conflict' as const,
-        message: 'Recurring series conflicts with existing bookings',
-        details: { resourceId, conflictDates: sortedConflictDates }
-      };
-    }
-
-    if (datesToCreate.length === 0) {
+      console.info('[MUT] RB_DONE', { requestId, recurringBookingId: recurringBooking.id, createdCount, movedCount, skippedCount: skippedDates.length });
       return {
         kind: 'ok' as const,
         payload: {
-          recurringBookings: [],
-          createdCount: 0,
-          skippedConflicts: sortedConflictDates,
-          skippedCount: sortedConflictDates.length,
-          conflicts: sortedConflictDates,
-          truncated: false
+          ...buildRecurringPayload({ recurringBooking, createdCount, conflicts: sortedConflictDates }),
+          movedCount,
+          skippedDates
         }
       };
-    }
-
-    const recurringBooking = await tx.recurringBooking.create({
-      data: {
-        resourceId,
-        createdByEmployeeId: actorEmployee.id,
-        startDate: toDateOnly(startDate)!,
-        endDate: toDateOnly(resolvedEndDate)!,
-        patternType,
-        interval: recurrenceDefinition.interval,
-        byWeekday: recurrenceDefinition.byWeekday ?? [],
-        byMonthday: recurrenceDefinition.byMonthday,
-        bySetPos: recurrenceDefinition.bySetPos,
-        byMonth: recurrenceDefinition.byMonth,
-        bookedFor: normalizedBookedFor,
-        guestName: normalizedBookedFor === 'GUEST' ? normalizedGuestName : null,
-        period: recurrenceWindow.mode === 'day' ? recurrenceWindow.daySlot : null,
-        startTime: recurrenceWindow.mode === 'time' ? startTime : null,
-        endTime: recurrenceWindow.mode === 'time' ? endTime : null
-      }
     });
 
-    await Promise.all(datesToCreate.map((targetDate) => tx.booking.create({
-      data: {
-        deskId: resourceId,
-        userEmail: normalizedBookedFor === 'SELF' ? actorEmployee.email : null,
-        employeeId: normalizedBookedFor === 'SELF' ? actorEmployee.id : null,
-        bookedFor: normalizedBookedFor,
-        guestName: normalizedBookedFor === 'GUEST' ? normalizedGuestName : null,
-        createdByEmployeeId: actorEmployee.id,
-        createdByUserId: req.authUser?.source === 'local' ? req.authUser.id : null,
-        createdByEmail: req.authUser?.email ?? null,
-        recurringBookingId: recurringBooking.id,
-        recurringGroupId: recurringBooking.groupId,
-        date: targetDate,
-        daySlot: recurrenceWindow.mode === 'day' ? recurrenceWindow.daySlot : null,
-        slot: recurrenceWindow.mode === 'day' ? (recurrenceWindow.daySlot === 'FULL' ? 'FULL_DAY' : recurrenceWindow.daySlot === 'AM' ? 'MORNING' : 'AFTERNOON') : 'CUSTOM',
-        startMinute: recurrenceWindow.mode === 'time' ? recurrenceWindow.startMinute : null,
-        endMinute: recurrenceWindow.mode === 'time' ? recurrenceWindow.endMinute : null,
-        startTime: recurrenceWindow.mode === 'time' ? new Date(Date.UTC(targetDate.getUTCFullYear(), targetDate.getUTCMonth(), targetDate.getUTCDate(), Math.floor(recurrenceWindow.startMinute / 60), recurrenceWindow.startMinute % 60, 0, 0)) : null,
-        endTime: recurrenceWindow.mode === 'time' ? new Date(Date.UTC(targetDate.getUTCFullYear(), targetDate.getUTCMonth(), targetDate.getUTCDate(), Math.floor(recurrenceWindow.endMinute / 60), recurrenceWindow.endMinute % 60, 0, 0)) : null
-      }
-    })));
+    if (result.kind === 'conflict') {
+      console.error('[MUT] RB_ERROR', { requestId, message: result.message });
+      res.status(409).json({ error: 'conflict', code: result.code, message: result.message, details: result.details });
+      return;
+    }
 
-    return {
-      kind: 'ok' as const,
-      payload: buildRecurringPayload({ recurringBooking, createdCount: datesToCreate.length, conflicts: sortedConflictDates })
-    };
-  });
-
-  if (result.kind === 'conflict') {
-    sendConflict(res, result.message, result.details);
-    return;
+    res.status(201).json(result.payload);
+  } catch (error) {
+    console.error('[MUT] RB_ERROR', { requestId, message: error instanceof Error ? error.message : 'Unknown recurring booking error' });
+    throw error;
   }
-
-  res.status(201).json(result.payload);
 });
 
 
