@@ -149,9 +149,14 @@ input, select { border: 1px solid hsl(var(--border)); border-radius: 12px; paddi
 .recurrence-interval-row label{margin:0;flex:0 0 auto}
 .recurrence-interval-row input{flex:0 0 80px;min-width:80px;max-width:80px}
 .recurrence-interval-row span{flex:0 0 auto;white-space:nowrap}
-.recurrence-range-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:8px 0}
-.recurrence-range-row input[type="radio"]{flex:0 0 auto}
-.recurrence-range-row input[type="date"],.recurrence-range-row input[type="number"]{flex:1 1 160px;min-width:0;max-width:220px}
+.end-option-row{display:grid;grid-template-columns:20px 120px 1fr;align-items:center;gap:12px;padding:6px 0;cursor:pointer}
+.end-option-row input[type="radio"]{margin:0;align-self:center}
+.end-option-label{font-size:14px}
+.end-option-control{width:100%;min-width:0}
+.end-option-control-with-suffix{display:flex;align-items:center;gap:8px;width:100%}
+.end-option-control-with-suffix .end-option-control{flex:1 1 auto}
+.end-option-suffix{flex:0 0 auto;white-space:nowrap;color:hsl(var(--muted-foreground));font-size:13px}
+.end-option-control:disabled{opacity:.6}
 .desk-booking-form-footer{flex:0 0 auto;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;padding:12px 0 2px;border-top:1px solid hsl(var(--border));background:hsl(var(--card))}
 .desk-booking-form-footer .btn{justify-content:center;min-height:38px}
 .room-schedule-block{padding:10px;border-radius:10px;background:hsl(var(--muted)/.45);border:1px solid hsl(var(--border));gap:10px}
@@ -562,6 +567,11 @@ tr{cursor:pointer}.row-selected{background:hsl(var(--muted))}
 .recurrence-yearly-row>div{flex:1 1 180px}
 .recurrence-monthly-row input{max-width:120px}
 .recurrence-range-group{border:1px solid hsl(var(--border));border-radius:10px;padding:10px;background:hsl(var(--card))}
+
+@media (max-width: 480px){
+  .end-option-row{grid-template-columns:20px 1fr}
+  .end-option-control,.end-option-control-with-suffix{grid-column:2 / -1}
+}
 .booking-details-panel{padding:20px;gap:16px}
 .booking-detail-card{border:1px solid hsl(var(--border));border-radius:12px;padding:12px;background:hsl(var(--card))}
 .booking-detail-card h4{margin:0 0 4px;font-size:14px}

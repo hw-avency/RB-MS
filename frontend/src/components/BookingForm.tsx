@@ -460,7 +460,7 @@ export function BookingForm({ values, onChange, onSubmit, onCancel, isSubmitting
           {showRecurrenceDetails && (
             <>
               <div className="stack-xs">
-                <label className="recurrence-section-title">Terminzeit</label>
+                {isRoom && <label className="recurrence-section-title">Terminzeit</label>}
                 {isRoom ? (
                   <>
                     <div className="split">
@@ -538,8 +538,19 @@ export function BookingForm({ values, onChange, onSubmit, onCancel, isSubmitting
                 </div>
                 <div className="stack-xs recurrence-range-group">
                   <strong>Ende</strong>
-                  <label className="recurrence-range-row"><input type="radio" name="recurrence-range" checked={values.rangeMode === 'BY_DATE'} disabled={disabled} onChange={() => onChange({ ...values, rangeMode: 'BY_DATE' })} /><span>Am Datum</span><input id="booking-date-to" type="date" value={values.dateTo} disabled={disabled || values.rangeMode !== 'BY_DATE'} onChange={(event) => onChange({ ...values, dateTo: event.target.value, endDateTouched: true })} /></label>
-                  <label className="recurrence-range-row"><input type="radio" name="recurrence-range" checked={values.rangeMode === 'BY_COUNT'} disabled={disabled} onChange={() => onChange({ ...values, rangeMode: 'BY_COUNT' })} /><span>Nach Anzahl</span><input type="number" min={1} value={values.occurrenceCount} disabled={disabled || values.rangeMode !== 'BY_COUNT'} onChange={(event) => onChange({ ...values, occurrenceCount: Math.max(1, Number(event.target.value || 1)) })} /><span>Termine</span></label>
+                  <label className="end-option-row">
+                    <input type="radio" name="recurrence-range" checked={values.rangeMode === 'BY_DATE'} disabled={disabled} onChange={() => onChange({ ...values, rangeMode: 'BY_DATE' })} />
+                    <span className="end-option-label">Am Datum</span>
+                    <input className="end-option-control" id="booking-date-to" type="date" value={values.dateTo} disabled={disabled || values.rangeMode !== 'BY_DATE'} onChange={(event) => onChange({ ...values, dateTo: event.target.value, endDateTouched: true })} />
+                  </label>
+                  <label className="end-option-row">
+                    <input type="radio" name="recurrence-range" checked={values.rangeMode === 'BY_COUNT'} disabled={disabled} onChange={() => onChange({ ...values, rangeMode: 'BY_COUNT' })} />
+                    <span className="end-option-label">Nach Anzahl</span>
+                    <div className="end-option-control-with-suffix">
+                      <input className="end-option-control" type="number" min={1} value={values.occurrenceCount} disabled={disabled || values.rangeMode !== 'BY_COUNT'} onChange={(event) => onChange({ ...values, occurrenceCount: Math.max(1, Number(event.target.value || 1)) })} />
+                      <span className="end-option-suffix">Termine</span>
+                    </div>
+                  </label>
                 </div>
                 {fieldErrors.dateTo && <p className="field-error" role="alert">{fieldErrors.dateTo}</p>}
                 {fieldErrors.occurrenceCount && <p className="field-error" role="alert">{fieldErrors.occurrenceCount}</p>}
