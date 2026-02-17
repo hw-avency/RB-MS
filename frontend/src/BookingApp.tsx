@@ -2101,6 +2101,17 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
         return;
       }
 
+      if (error instanceof ApiError && error.backendCode === 'RECURRENCE_LIMIT_EXCEEDED') {
+        const details = (typeof error.details === 'object' && error.details !== null ? error.details : null) as { max?: number; count?: number; message?: string } | null;
+        const max = typeof details?.max === 'number' ? details.max : 365;
+        const count = typeof details?.count === 'number' ? details.count : undefined;
+        setBookingDialogState('BOOKING_OPEN');
+        setDialogErrorMessage(details?.message ?? (typeof count === 'number'
+          ? `Serienbuchung überschreitet das Maximum von ${max} Terminen (berechnet: ${count}).`
+          : `Serienbuchung überschreitet das Maximum von ${max} Terminen.`));
+        return;
+      }
+
       setBookingDialogState('BOOKING_OPEN');
       setDialogErrorMessage(error instanceof Error ? error.message : 'Buchung fehlgeschlagen.');
     } finally {

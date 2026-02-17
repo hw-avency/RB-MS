@@ -5,7 +5,7 @@ import crypto from 'crypto';
 import bcrypt from 'bcryptjs';
 import { BookedFor, BookingSlot, DaySlot, Prisma, RecurrencePatternType, RecurringBooking, ResourceKind } from '@prisma/client';
 import { prisma } from './prisma';
-import { expandRecurrence, MAX_RECURRING_OCCURRENCES, type RecurrenceDefinition, validateRecurrenceDefinition } from './recurrence';
+import { expandRecurrence, MAX_SERIES_OCCURRENCES, type RecurrenceDefinition, validateRecurrenceDefinition } from './recurrence';
 
 const app = express();
 const port = Number(process.env.PORT ?? 3000);
@@ -73,6 +73,7 @@ const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const RESOURCE_KINDS = new Set<ResourceKind>(['TISCH', 'PARKPLATZ', 'RAUM', 'SONSTIGES']);
 const BOOKED_FOR_VALUES = new Set<BookedFor>(['SELF', 'GUEST']);
 const RECURRENCE_PATTERN_VALUES = new Set<RecurrencePatternType>(['DAILY', 'WEEKLY', 'MONTHLY', 'YEARLY']);
+const SERIES_BOOKING_CHUNK_SIZE = 100;
 
 const parseResourceKind = (value: unknown): ResourceKind | null => {
   if (typeof value !== 'string') return null;
@@ -3079,32 +3080,33 @@ const resolveRecurringOccurrenceDates = ({
 }: {
   recurrenceDefinition: RecurrenceDefinition;
   explicitDates?: string[];
-}): { dates: Date[]; truncated: boolean; error?: string } => {
-  const { dates: generatedDates, truncated } = expandRecurrence(recurrenceDefinition, MAX_RECURRING_OCCURRENCES);
-  if (truncated) {
-    return { dates: [], truncated: true, error: `Recurrence exceeds the maximum of ${MAX_RECURRING_OCCURRENCES} occurrences. Please reduce the range.` };
+}): { dates: Date[]; count: number; error?: string; limitExceeded?: boolean } => {
+  const { dates: generatedDates, truncated } = expandRecurrence(recurrenceDefinition, MAX_SERIES_OCCURRENCES + 1);
+  if (truncated || generatedDates.length > MAX_SERIES_OCCURRENCES) {
+    return { dates: [], count: generatedDates.length, limitExceeded: true };
   }
 
   const generatedDateSet = new Set(generatedDates);
   const parsedGeneratedDates = generatedDates.map((value) => toDateOnly(value)).filter((value): value is Date => Boolean(value));
   if (!explicitDates || explicitDates.length === 0) {
-    return { dates: parsedGeneratedDates, truncated: false };
+    return { dates: parsedGeneratedDates, count: parsedGeneratedDates.length };
   }
 
   const normalizedExplicitDates = Array.from(new Set(explicitDates.map((value) => value.trim()).filter(Boolean))).sort();
-  if (normalizedExplicitDates.length > MAX_RECURRING_OCCURRENCES) {
-    return { dates: [], truncated: true, error: `Recurrence exceeds the maximum of ${MAX_RECURRING_OCCURRENCES} occurrences. Please reduce the range.` };
+  if (normalizedExplicitDates.length > MAX_SERIES_OCCURRENCES) {
+    return { dates: [], count: normalizedExplicitDates.length, limitExceeded: true };
   }
 
   for (const explicitDate of normalizedExplicitDates) {
     if (!generatedDateSet.has(explicitDate)) {
-      return { dates: [], truncated: false, error: `explicitDates contains ${explicitDate}, which is outside of the recurrence definition` };
+      return { dates: [], count: normalizedExplicitDates.length, error: `explicitDates contains ${explicitDate}, which is outside of the recurrence definition` };
     }
   }
 
+  const parsedExplicitDates = normalizedExplicitDates.map((value) => toDateOnly(value)).filter((value): value is Date => Boolean(value));
   return {
-    dates: normalizedExplicitDates.map((value) => toDateOnly(value)).filter((value): value is Date => Boolean(value)),
-    truncated: false
+    dates: parsedExplicitDates,
+    count: parsedExplicitDates.length
   };
 };
 
@@ -3161,7 +3163,7 @@ app.post('/recurring-bookings', async (req, res) => {
   const normalizedCount = Number.isInteger(count) ? Number(count) : null;
 
   let resolvedEndDate = endDate;
-  if (!resolvedEndDate && rangeMode === 'BY_COUNT' && normalizedCount && normalizedCount >= 1 && normalizedCount <= MAX_RECURRING_OCCURRENCES) {
+  if (!resolvedEndDate && rangeMode === 'BY_COUNT' && normalizedCount && normalizedCount >= 1) {
     const intervalDays = patternType === 'DAILY' ? normalizedInterval : patternType === 'WEEKLY' ? normalizedInterval * 7 : 0;
     let horizonDate = toDateOnly(startDate);
     if (horizonDate) {
@@ -3212,6 +3214,16 @@ app.post('/recurring-bookings', async (req, res) => {
   }
 
   const occurrenceResolution = resolveRecurringOccurrenceDates({ recurrenceDefinition, explicitDates });
+  if (occurrenceResolution.limitExceeded) {
+    res.status(400).json({
+      error: 'validation',
+      code: 'RECURRENCE_LIMIT_EXCEEDED',
+      max: MAX_SERIES_OCCURRENCES,
+      count: occurrenceResolution.count,
+      message: `Serienbuchung überschreitet das Maximum von ${MAX_SERIES_OCCURRENCES} Terminen. Bitte Zeitraum oder Muster anpassen.`
+    });
+    return;
+  }
   if (occurrenceResolution.error) {
     res.status(400).json({ error: 'validation', message: occurrenceResolution.error });
     return;
@@ -3342,9 +3354,9 @@ app.post('/recurring-bookings', async (req, res) => {
         }
       });
 
-      let createdCount = 0;
       let movedCount = 0;
       const skippedDates: string[] = [];
+      const bookingRows: Prisma.BookingCreateManyInput[] = [];
 
       for (const targetDate of targetDates) {
         const dateKey = toISODateOnly(targetDate);
@@ -3369,29 +3381,33 @@ app.post('/recurring-bookings', async (req, res) => {
           continue;
         }
 
-        await tx.booking.create({
-          data: {
-            deskId: resourceId,
-            userEmail: normalizedBookedFor === 'SELF' ? actorEmployee.email : null,
-            employeeId: normalizedBookedFor === 'SELF' ? actorEmployee.id : null,
-            bookedFor: normalizedBookedFor,
-            guestName: normalizedBookedFor === 'GUEST' ? normalizedGuestName : null,
-            createdByEmployeeId: actorEmployee.id,
-            createdByUserId: req.authUser?.source === 'local' ? req.authUser.id : null,
-            createdByEmail: req.authUser?.email ?? null,
-            recurringBookingId: recurringBooking.id,
-            recurringGroupId: recurringBooking.groupId,
-            date: targetDate,
-            daySlot: recurrenceWindow.mode === 'day' ? recurrenceWindow.daySlot : null,
-            slot: recurrenceWindow.mode === 'day' ? (recurrenceWindow.daySlot === 'FULL' ? 'FULL_DAY' : recurrenceWindow.daySlot === 'AM' ? 'MORNING' : 'AFTERNOON') : 'CUSTOM',
-            startMinute: recurrenceWindow.mode === 'time' ? recurrenceWindow.startMinute : null,
-            endMinute: recurrenceWindow.mode === 'time' ? recurrenceWindow.endMinute : null,
-            startTime: recurrenceWindow.mode === 'time' ? new Date(Date.UTC(targetDate.getUTCFullYear(), targetDate.getUTCMonth(), targetDate.getUTCDate(), Math.floor(recurrenceWindow.startMinute / 60), recurrenceWindow.startMinute % 60, 0, 0)) : null,
-            endTime: recurrenceWindow.mode === 'time' ? new Date(Date.UTC(targetDate.getUTCFullYear(), targetDate.getUTCMonth(), targetDate.getUTCDate(), Math.floor(recurrenceWindow.endMinute / 60), recurrenceWindow.endMinute % 60, 0, 0)) : null
-          }
+        bookingRows.push({
+          deskId: resourceId,
+          userEmail: normalizedBookedFor === 'SELF' ? actorEmployee.email : null,
+          employeeId: normalizedBookedFor === 'SELF' ? actorEmployee.id : null,
+          bookedFor: normalizedBookedFor,
+          guestName: normalizedBookedFor === 'GUEST' ? normalizedGuestName : null,
+          createdByEmployeeId: actorEmployee.id,
+          createdByUserId: req.authUser?.source === 'local' ? req.authUser.id : null,
+          createdByEmail: req.authUser?.email ?? null,
+          recurringBookingId: recurringBooking.id,
+          recurringGroupId: recurringBooking.groupId,
+          date: targetDate,
+          daySlot: recurrenceWindow.mode === 'day' ? recurrenceWindow.daySlot : null,
+          slot: recurrenceWindow.mode === 'day' ? (recurrenceWindow.daySlot === 'FULL' ? 'FULL_DAY' : recurrenceWindow.daySlot === 'AM' ? 'MORNING' : 'AFTERNOON') : 'CUSTOM',
+          startMinute: recurrenceWindow.mode === 'time' ? recurrenceWindow.startMinute : null,
+          endMinute: recurrenceWindow.mode === 'time' ? recurrenceWindow.endMinute : null,
+          startTime: recurrenceWindow.mode === 'time' ? new Date(Date.UTC(targetDate.getUTCFullYear(), targetDate.getUTCMonth(), targetDate.getUTCDate(), Math.floor(recurrenceWindow.startMinute / 60), recurrenceWindow.startMinute % 60, 0, 0)) : null,
+          endTime: recurrenceWindow.mode === 'time' ? new Date(Date.UTC(targetDate.getUTCFullYear(), targetDate.getUTCMonth(), targetDate.getUTCDate(), Math.floor(recurrenceWindow.endMinute / 60), recurrenceWindow.endMinute % 60, 0, 0)) : null
         });
-        createdCount += 1;
       }
+
+      for (let startIndex = 0; startIndex < bookingRows.length; startIndex += SERIES_BOOKING_CHUNK_SIZE) {
+        const chunk = bookingRows.slice(startIndex, startIndex + SERIES_BOOKING_CHUNK_SIZE);
+        if (chunk.length === 0) continue;
+        await tx.booking.createMany({ data: chunk });
+      }
+      const createdCount = bookingRows.length;
 
       if (strategy === 'reschedule') {
         const finalBookings = await tx.booking.findMany({
@@ -3466,7 +3482,7 @@ app.post('/recurring-bookings/preview', async (req, res) => {
   const normalizedInterval = Number.isInteger(interval) ? Number(interval) : 1;
   const normalizedCount = Number.isInteger(count) ? Number(count) : null;
   let resolvedEndDate = endDate;
-  if (!resolvedEndDate && rangeMode === 'BY_COUNT' && normalizedCount && normalizedCount >= 1 && normalizedCount <= MAX_RECURRING_OCCURRENCES) {
+  if (!resolvedEndDate && rangeMode === 'BY_COUNT' && normalizedCount && normalizedCount >= 1) {
     const probe = expandRecurrence({
       startDate,
       endDate: toISODateOnly(new Date(Date.UTC(new Date(`${startDate}T00:00:00.000Z`).getUTCFullYear() + 2, 0, 1))),
@@ -3528,6 +3544,16 @@ app.post('/recurring-bookings/preview', async (req, res) => {
   }
 
   const occurrenceResolution = resolveRecurringOccurrenceDates({ recurrenceDefinition });
+  if (occurrenceResolution.limitExceeded) {
+    res.status(400).json({
+      error: 'validation',
+      code: 'RECURRENCE_LIMIT_EXCEEDED',
+      max: MAX_SERIES_OCCURRENCES,
+      count: occurrenceResolution.count,
+      message: `Serienbuchung überschreitet das Maximum von ${MAX_SERIES_OCCURRENCES} Terminen. Bitte Zeitraum oder Muster anpassen.`
+    });
+    return;
+  }
   if (occurrenceResolution.error) {
     res.status(400).json({ error: 'validation', message: occurrenceResolution.error });
     return;
