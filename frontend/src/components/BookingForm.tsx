@@ -206,8 +206,8 @@ export function BookingForm({ values, onChange, onSubmit, onCancel, isSubmitting
     return values.rangeMode === 'BY_COUNT' ? calculateCountBasedEndDate(values) : values.dateTo;
   }, [values]);
 
-  const recurrencePreview = useMemo(() => {
-    if (values.type !== 'recurring' || !values.dateFrom || !effectiveRecurrenceEndDate) return [];
+  const recurrencePreviewCount = useMemo(() => {
+    if (values.type !== 'recurring' || !values.dateFrom || !effectiveRecurrenceEndDate) return 0;
     return expandRecurrence({
       startDate: values.dateFrom,
       endDate: effectiveRecurrenceEndDate,
@@ -216,7 +216,7 @@ export function BookingForm({ values, onChange, onSubmit, onCancel, isSubmitting
       byWeekday: values.recurrencePatternType === 'WEEKLY' ? values.weekdays : undefined,
       byMonthday: values.recurrencePatternType === 'MONTHLY' || values.recurrencePatternType === 'YEARLY' ? values.recurrenceMonthday : undefined,
       byMonth: values.recurrencePatternType === 'YEARLY' ? values.recurrenceYearMonth : undefined
-    }, 5);
+    }).length;
   }, [effectiveRecurrenceEndDate, values]);
 
   const recurrenceSummary = useMemo(() => {
@@ -452,30 +452,101 @@ export function BookingForm({ values, onChange, onSubmit, onCancel, isSubmitting
       )}
 
       {values.type === 'recurring' && (
-        <section className="stack-sm recurring-panel recurring-section"> 
-          <button type="button" className="recurrence-accordion-toggle" onClick={() => setShowRecurrenceDetails((current) => !current)}><strong>Serienbuchung</strong><span className="muted">{recurrenceSummary}</span></button>
-          {showRecurrenceDetails && <>
-            <div className="stack-xs">
-              <label>Terminzeit</label>
-              {isRoom ? (
-                <>
-                  <div className="split">
-                    <div className="stack-xs"><label htmlFor="booking-recurring-start-time">Von</label><input id="booking-recurring-start-time" type="time" min="06:00" max="18:00" value={values.startTime} disabled={disabled} onChange={(event) => onChange({ ...values, startTime: event.target.value })} />{fieldErrors.startTime && <p className="field-error" role="alert">{fieldErrors.startTime}</p>}</div>
-                    <div className="stack-xs"><label htmlFor="booking-recurring-end-time">Bis</label><input id="booking-recurring-end-time" type="time" min="06:00" max="18:00" value={values.endTime} disabled={disabled} onChange={(event) => onChange({ ...values, endTime: event.target.value })} />{fieldErrors.endTime && <p className="field-error" role="alert">{fieldErrors.endTime}</p>}</div>
-                  </div>
-                  <p className="muted room-bookable-hours">Buchbare Zeit 06:00 - 18:00 Uhr</p>
-                </>
-              ) : (
-                <div className="stack-xs"><label htmlFor="booking-recurring-slot">Zeitraum</label><select id="booking-recurring-slot" value={values.slot} disabled={disabled} onChange={(event) => onChange({ ...values, slot: event.target.value as BookingSlot })}><option value="FULL_DAY">Ganztag</option><option value="MORNING">Vormittag</option><option value="AFTERNOON">Nachmittag</option></select></div>
-              )}
-            </div>
-            <div className="stack-xs"><label>Wiederholungsmuster</label><div className="weekday-toggle-group" role="group" aria-label="Wiederholungsmuster">{(['DAILY', 'WEEKLY', 'MONTHLY', 'YEARLY'] as const).map((pattern) => (<button key={pattern} type="button" className={`weekday-toggle ${values.recurrencePatternType === pattern ? 'active' : ''}`} disabled={disabled} onClick={() => onChange({ ...values, recurrencePatternType: pattern, dateTo: values.endDateTouched ? values.dateTo : suggestedRecurringEndDate(values.dateFrom, pattern) })}>{pattern === 'DAILY' ? 'Täglich' : pattern === 'WEEKLY' ? 'Wöchentlich' : pattern === 'MONTHLY' ? 'Monatlich' : 'Jährlich'}</button>))}</div><div className="recurrence-interval-row" role="group" aria-label="Wiederholungsintervall"><label htmlFor="recurrence-interval">Alle</label><input id="recurrence-interval" type="number" min={1} value={values.recurrenceInterval} disabled={disabled} onChange={(event) => onChange({ ...values, recurrenceInterval: Math.max(1, Number(event.target.value || 1)) })} /><span className="muted">{recurrenceIntervalUnitLabel(values.recurrencePatternType)}</span></div>{fieldErrors.interval && <p className="field-error" role="alert">{fieldErrors.interval}</p>}
+        <section className="stack-sm recurring-panel recurring-section">
+          <button type="button" className="recurrence-accordion-toggle" onClick={() => setShowRecurrenceDetails((current) => !current)}>
+            <strong>Serienbuchung</strong>
+            <span className="muted">{recurrenceSummary}</span>
+          </button>
+          {showRecurrenceDetails && (
+            <>
+              <div className="stack-xs">
+                <label className="recurrence-section-title">Terminzeit</label>
+                {isRoom ? (
+                  <>
+                    <div className="split">
+                      <div className="stack-xs"><label htmlFor="booking-recurring-start-time">Von</label><input id="booking-recurring-start-time" type="time" min="06:00" max="18:00" value={values.startTime} disabled={disabled} onChange={(event) => onChange({ ...values, startTime: event.target.value })} />{fieldErrors.startTime && <p className="field-error" role="alert">{fieldErrors.startTime}</p>}</div>
+                      <div className="stack-xs"><label htmlFor="booking-recurring-end-time">Bis</label><input id="booking-recurring-end-time" type="time" min="06:00" max="18:00" value={values.endTime} disabled={disabled} onChange={(event) => onChange({ ...values, endTime: event.target.value })} />{fieldErrors.endTime && <p className="field-error" role="alert">{fieldErrors.endTime}</p>}</div>
+                    </div>
+                    <p className="muted room-bookable-hours">Buchbare Zeit 06:00 - 18:00 Uhr</p>
+                  </>
+                ) : (
+                  <div className="stack-xs"><label htmlFor="booking-recurring-slot">Zeitraum</label><select id="booking-recurring-slot" value={values.slot} disabled={disabled} onChange={(event) => onChange({ ...values, slot: event.target.value as BookingSlot })}><option value="FULL_DAY">Ganztag</option><option value="MORNING">Vormittag</option><option value="AFTERNOON">Nachmittag</option></select></div>
+                )}
+              </div>
+
+              <div className="stack-xs">
+                <label className="recurrence-section-title">Wiederholung</label>
+                <div className="weekday-toggle-group" role="group" aria-label="Wiederholungsmuster">
+                  {(['DAILY', 'WEEKLY', 'MONTHLY', 'YEARLY'] as const).map((pattern) => (
+                    <button
+                      key={pattern}
+                      type="button"
+                      className={`weekday-toggle ${values.recurrencePatternType === pattern ? 'active' : ''}`}
+                      disabled={disabled}
+                      onClick={() => onChange({ ...values, recurrencePatternType: pattern, dateTo: values.endDateTouched ? values.dateTo : suggestedRecurringEndDate(values.dateFrom, pattern) })}
+                    >
+                      {pattern === 'DAILY' ? 'Täglich' : pattern === 'WEEKLY' ? 'Wöchentlich' : pattern === 'MONTHLY' ? 'Monatlich' : 'Jährlich'}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="stack-xs">
+                <label className="recurrence-section-title" htmlFor="recurrence-interval">Intervall</label>
+                <div className="recurrence-interval-row" role="group" aria-label="Wiederholungsintervall">
+                  <span>Alle</span>
+                  <input id="recurrence-interval" type="number" min={1} value={values.recurrenceInterval} disabled={disabled} onChange={(event) => onChange({ ...values, recurrenceInterval: Math.max(1, Number(event.target.value || 1)) })} />
+                  <span className="muted">{recurrenceIntervalUnitLabel(values.recurrencePatternType)}</span>
+                </div>
+                {fieldErrors.interval && <p className="field-error" role="alert">{fieldErrors.interval}</p>}
+              </div>
+
               {values.recurrencePatternType === 'WEEKLY' && <div className="stack-xs"><label>Wochentage</label><div className="weekday-toggle-group" role="group" aria-label="Wochentage">{weekdayButtons.map((weekday) => <button key={weekday.value} type="button" className={`weekday-toggle ${values.weekdays.includes(weekday.value) ? 'active' : ''}`} disabled={disabled} onClick={() => toggleWeekday(weekday.value)}>{weekday.label}</button>)}</div>{fieldErrors.weekdays && <p className="field-error" role="alert">{fieldErrors.weekdays}</p>}</div>}
-              {(values.recurrencePatternType === 'MONTHLY' || values.recurrencePatternType === 'YEARLY') && <div className="split"><div className="stack-xs"><label htmlFor="recurrence-monthday">Tag</label><input id="recurrence-monthday" type="number" min={1} max={31} value={values.recurrenceMonthday} disabled={disabled} onChange={(event) => onChange({ ...values, recurrenceMonthday: Number(event.target.value || 1) })} />{fieldErrors.monthday && <p className="field-error" role="alert">{fieldErrors.monthday}</p>}</div>{values.recurrencePatternType === 'YEARLY' && <div className="stack-xs"><label htmlFor="recurrence-year-month">Monat</label><input id="recurrence-year-month" type="number" min={1} max={12} value={values.recurrenceYearMonth} disabled={disabled} onChange={(event) => onChange({ ...values, recurrenceYearMonth: Number(event.target.value || 1) })} />{fieldErrors.yearmonth && <p className="field-error" role="alert">{fieldErrors.yearmonth}</p>}</div>}</div>}
-            </div>
-          </>}
-          <div className="stack-xs"><strong>Zeitraum der Serie</strong><div className="stack-xs"><label htmlFor="booking-date-from">Start</label><input id="booking-date-from" type="date" value={values.dateFrom} disabled={disabled} onChange={(event) => onChange({ ...values, dateFrom: event.target.value, recurrenceMonthday: new Date(`${event.target.value || values.dateFrom}T00:00:00.000Z`).getUTCDate(), recurrenceYearMonth: new Date(`${event.target.value || values.dateFrom}T00:00:00.000Z`).getUTCMonth() + 1 })} />{fieldErrors.dateFrom && <p className="field-error" role="alert">{fieldErrors.dateFrom}</p>}</div><label className="recurrence-range-row"><input type="radio" name="recurrence-range" checked={values.rangeMode === 'BY_DATE'} disabled={disabled} onChange={() => onChange({ ...values, rangeMode: 'BY_DATE' })} /><span>Ende am</span><input id="booking-date-to" type="date" value={values.dateTo} disabled={disabled || values.rangeMode !== 'BY_DATE'} onChange={(event) => onChange({ ...values, dateTo: event.target.value, endDateTouched: true })} /></label>{fieldErrors.dateTo && <p className="field-error" role="alert">{fieldErrors.dateTo}</p>}<label className="recurrence-range-row"><input type="radio" name="recurrence-range" checked={values.rangeMode === 'BY_COUNT'} disabled={disabled} onChange={() => onChange({ ...values, rangeMode: 'BY_COUNT' })} /><span>Endet nach</span><input type="number" min={1} value={values.occurrenceCount} disabled={disabled || values.rangeMode !== 'BY_COUNT'} onChange={(event) => onChange({ ...values, occurrenceCount: Math.max(1, Number(event.target.value || 1)) })} /><span>Terminen</span></label>{fieldErrors.occurrenceCount && <p className="field-error" role="alert">{fieldErrors.occurrenceCount}</p>}</div>
-          {recurrencePreview.length > 0 && <details className="recurrence-preview" open={showRecurrencePreview} onToggle={(event) => setShowRecurrencePreview((event.target as HTMLDetailsElement).open)}><summary>Vorschau anzeigen</summary><p className="muted">Erste Termine: {recurrencePreview.map((date) => date.slice(8, 10) + '.' + date.slice(5, 7)).join(', ')}{recurrencePreview.length === 5 ? ' …' : ''}</p></details>}
+
+              {values.recurrencePatternType === 'MONTHLY' && (
+                <div className="stack-xs recurrence-monthly-row">
+                  <label htmlFor="recurrence-monthday">Am Tag</label>
+                  <input id="recurrence-monthday" type="number" min={1} max={31} value={values.recurrenceMonthday} disabled={disabled} onChange={(event) => onChange({ ...values, recurrenceMonthday: Number(event.target.value || 1) })} />
+                  {fieldErrors.monthday && <p className="field-error" role="alert">{fieldErrors.monthday}</p>}
+                </div>
+              )}
+
+              {values.recurrencePatternType === 'YEARLY' && (
+                <div className="stack-xs">
+                  <label>Am</label>
+                  <div className="recurrence-yearly-row">
+                    <div className="stack-xs">
+                      <label htmlFor="recurrence-monthday">Tag</label>
+                      <input id="recurrence-monthday" type="number" min={1} max={31} value={values.recurrenceMonthday} disabled={disabled} onChange={(event) => onChange({ ...values, recurrenceMonthday: Number(event.target.value || 1) })} />
+                    </div>
+                    <div className="stack-xs">
+                      <label htmlFor="recurrence-year-month">Monat</label>
+                      <input id="recurrence-year-month" type="number" min={1} max={12} value={values.recurrenceYearMonth} disabled={disabled} onChange={(event) => onChange({ ...values, recurrenceYearMonth: Number(event.target.value || 1) })} />
+                    </div>
+                  </div>
+                  {fieldErrors.monthday && <p className="field-error" role="alert">{fieldErrors.monthday}</p>}
+                  {fieldErrors.yearmonth && <p className="field-error" role="alert">{fieldErrors.yearmonth}</p>}
+                </div>
+              )}
+
+              <div className="stack-xs">
+                <strong className="recurrence-section-title">Zeitraum</strong>
+                <div className="stack-xs">
+                  <label htmlFor="booking-date-from">Startdatum</label>
+                  <input id="booking-date-from" type="date" value={values.dateFrom} disabled={disabled} onChange={(event) => onChange({ ...values, dateFrom: event.target.value, recurrenceMonthday: new Date(`${event.target.value || values.dateFrom}T00:00:00.000Z`).getUTCDate(), recurrenceYearMonth: new Date(`${event.target.value || values.dateFrom}T00:00:00.000Z`).getUTCMonth() + 1 })} />
+                  {fieldErrors.dateFrom && <p className="field-error" role="alert">{fieldErrors.dateFrom}</p>}
+                </div>
+                <div className="stack-xs recurrence-range-group">
+                  <strong>Ende</strong>
+                  <label className="recurrence-range-row"><input type="radio" name="recurrence-range" checked={values.rangeMode === 'BY_DATE'} disabled={disabled} onChange={() => onChange({ ...values, rangeMode: 'BY_DATE' })} /><span>Am Datum</span><input id="booking-date-to" type="date" value={values.dateTo} disabled={disabled || values.rangeMode !== 'BY_DATE'} onChange={(event) => onChange({ ...values, dateTo: event.target.value, endDateTouched: true })} /></label>
+                  <label className="recurrence-range-row"><input type="radio" name="recurrence-range" checked={values.rangeMode === 'BY_COUNT'} disabled={disabled} onChange={() => onChange({ ...values, rangeMode: 'BY_COUNT' })} /><span>Nach Anzahl</span><input type="number" min={1} value={values.occurrenceCount} disabled={disabled || values.rangeMode !== 'BY_COUNT'} onChange={(event) => onChange({ ...values, occurrenceCount: Math.max(1, Number(event.target.value || 1)) })} /><span>Termine</span></label>
+                </div>
+                {fieldErrors.dateTo && <p className="field-error" role="alert">{fieldErrors.dateTo}</p>}
+                {fieldErrors.occurrenceCount && <p className="field-error" role="alert">{fieldErrors.occurrenceCount}</p>}
+              </div>
+            </>
+          )}
+          {recurrencePreviewCount > 0 && <details className="recurrence-preview" open={showRecurrencePreview} onToggle={(event) => setShowRecurrencePreview((event.target as HTMLDetailsElement).open)}><summary>Vorschau anzeigen</summary><p className="muted">Diese Serie erzeugt {recurrencePreviewCount} Termine.</p></details>}
         </section>
       )}
 

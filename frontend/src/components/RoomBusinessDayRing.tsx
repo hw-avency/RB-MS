@@ -67,6 +67,7 @@ export function RoomBusinessDayRing({
         r={RADIUS}
         className="room-business-ring-track"
         style={{ strokeWidth }}
+        stroke="hsl(var(--muted))"
         aria-hidden="true"
       />
       {NIGHT_SWEEP_DEGREES > 0.1 ? (
@@ -74,6 +75,7 @@ export function RoomBusinessDayRing({
           d={segmentPath(nightStart, nightEnd)}
           className="room-business-ring-night"
           style={{ strokeWidth }}
+          stroke="hsl(var(--muted-foreground) / 0.3)"
           aria-hidden="true"
         />
       ) : null}
@@ -83,6 +85,7 @@ export function RoomBusinessDayRing({
           d={segmentPath(progressToBusinessAngleDegrees(segment.p0), progressToBusinessAngleDegrees(segment.p1))}
           className="room-business-ring-free"
           style={{ strokeWidth }}
+          stroke="var(--resource-free)"
           aria-hidden="true"
         />
       ))}
@@ -92,6 +95,7 @@ export function RoomBusinessDayRing({
           d={segmentPath(progressToBusinessAngleDegrees(segment.p0), progressToBusinessAngleDegrees(segment.p1))}
           className="room-business-ring-booked"
           style={{ strokeWidth }}
+          stroke="var(--resource-busy)"
           aria-hidden="true"
         />
       ))}
@@ -106,6 +110,7 @@ export function RoomBusinessDayRing({
             x2={inner.x}
             y2={inner.y}
             className="room-business-ring-tick"
+            stroke="hsl(var(--muted-foreground) / 0.45)"
             aria-hidden="true"
           />
         );

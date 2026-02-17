@@ -2570,18 +2570,29 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
                 <h3 id="booking-panel-title">{resourceKindLabel(popupDesk.kind)}: {popupDesk.name}</h3>
                 <button type="button" className="btn btn-ghost desk-popup-close" aria-label="Popover schließen" onClick={closeBookingFlow} disabled={isCancellingBooking}>✕</button>
               </div>
-              <div className="stack-sm desk-popup-body">
-                <p className="muted">Datum: {new Date(`${selectedDate}T00:00:00.000Z`).toLocaleDateString('de-DE')}</p>
-                {popupMode === 'manage' && popupMySelectedBooking
-                  ? <p className="muted">Deine Buchung: {bookingSlotLabel(popupMySelectedBooking)}</p>
-                  : !isRoomResource(popupDesk) && <p className="muted">Status: {deskAvailabilityLabel(popupDeskAvailability)}</p>}
-                {popupDeskBookings.map((booking) => (
-                  <p key={booking.id ?? `${booking.userEmail ?? 'unknown'}-${bookingSlotLabel(booking)}`} className="muted">
-                    {bookingSlotLabel(booking)}: {bookingDisplayName(booking)}
-                    {(booking.recurringBookingId || booking.recurringGroupId) ? ' 🔁' : ''}
-                    {booking.bookedFor === 'GUEST' ? ` · gebucht von ${getBookingCreatorName(booking)}` : ''}
-                  </p>
-                ))}
+              <div className="desk-popup-body booking-details-panel">
+                <section className="booking-detail-card stack-xs">
+                  <h4>Buchungsdetails</h4>
+                  <p><span className="muted">Datum</span><strong>{new Date(`${selectedDate}T00:00:00.000Z`).toLocaleDateString('de-DE')}</strong></p>
+                  {popupMode === 'manage' && popupMySelectedBooking
+                    ? <p><span className="muted">Zeitraum</span><strong>{bookingSlotLabel(popupMySelectedBooking)}</strong></p>
+                    : !isRoomResource(popupDesk) && <p><span className="muted">Status</span><strong>{deskAvailabilityLabel(popupDeskAvailability)}</strong></p>}
+                  {popupDeskBookings.map((booking) => (
+                    <p key={booking.id ?? `${booking.userEmail ?? 'unknown'}-${bookingSlotLabel(booking)}`}>
+                      <span className="muted">Gebucht für</span>
+                      <strong>{bookingDisplayName(booking)}{booking.bookedFor === 'GUEST' ? ` · gebucht von ${getBookingCreatorName(booking)}` : ''}</strong>
+                    </p>
+                  ))}
+                  <p><span className="muted">Ressource</span><strong>{resourceKindLabel(popupDesk.kind)}: {popupDesk.name}</strong></p>
+                </section>
+
+                {popupOwnBookingIsRecurring && (
+                  <section className="booking-detail-card stack-xs">
+                    <h4>Hinweis</h4>
+                    <p>🔁 Diese Buchung ist Teil einer Serie.</p>
+                  </section>
+                )}
+
                 {showRoomDebugInfo && (
                   <div className="muted" style={{ fontSize: 12, border: '1px solid hsl(var(--border))', borderRadius: 8, padding: 8 }}>
                     <div>mode: {popupMode}</div>
@@ -2590,31 +2601,8 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
                     {hasUnexpectedMultipleMyBookings && <div>warning: multiple own bookings on resource/date</div>}
                   </div>
                 )}
-                {popupMode === 'manage' && popupMySelectedBooking && !popupOwnBookingIsRecurring && (
-                  <div className="stack-xs">
-                    {!isManageEditOpen ? (
-                      <button type="button" className="btn" onClick={() => setIsManageEditOpen(true)} disabled={bookingDialogState === 'SUBMITTING'}>Ändern</button>
-                    ) : (
-                      <>
-                        <label className="stack-xs">
-                          <span className="field-label">Zeitraum ändern</span>
-                          <select value={manageTargetSlot} onChange={(event) => setManageTargetSlot(event.target.value as BookingFormValues['slot'])} disabled={bookingDialogState === 'SUBMITTING'}>
-                            <option value="MORNING">Vormittag</option>
-                            <option value="AFTERNOON">Nachmittag</option>
-                            <option value="FULL_DAY">Ganztag</option>
-                          </select>
-                        </label>
-                        {manageSlotConflict && <p className="field-error" role="alert">{manageSlotConflict}</p>}
-                        {dialogErrorMessage && <p className="error-banner" role="alert">{dialogErrorMessage}</p>}
-                        <div className="inline-end">
-                          <button type="button" className="btn btn-outline" onClick={() => { setIsManageEditOpen(false); setDialogErrorMessage(''); }} disabled={bookingDialogState === 'SUBMITTING'}>Abbrechen</button>
-                          <button type="button" className="btn" onClick={() => void updateExistingDeskBooking()} disabled={bookingDialogState === 'SUBMITTING' || Boolean(manageSlotConflict)}>{bookingDialogState === 'SUBMITTING' ? 'Speichern…' : 'Speichern'}</button>
-                        </div>
-                      </>
-                    )}
-                  </div>
-                )}
-                <div className="inline-end">
+
+                <footer className="desk-popup-footer-actions">
                   <button type="button" className="btn btn-outline" onClick={closeBookingFlow} disabled={isCancellingBooking}>Schließen</button>
                   {popupDeskState === 'MINE' && (
                     <button
@@ -2626,7 +2614,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
                       Stornieren
                     </button>
                   )}
-                </div>
+                </footer>
               </div>
             </>
           )}
@@ -2646,9 +2634,9 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
             onMouseDown={(event) => { event.stopPropagation(); }}
             onClick={(event) => { event.stopPropagation(); }}
           >
-            <h3 id="cancel-booking-title">{cancelConfirmIsSeries ? 'Serienbuchung löschen' : 'Buchung stornieren?'}</h3>
+            <h3 id="cancel-booking-title">{cancelConfirmIsSeries ? 'Diese Buchung ist Teil einer Serie.' : 'Buchung stornieren?'}</h3>
             {cancelConfirmIsSeries
-              ? <p>Dieser Termin gehört zu einer Serienbuchung. Was möchtest du stornieren?</p>
+              ? <p>Wie möchtest du fortfahren?</p>
               : <p>Möchtest du deine Buchung {cancelConfirmBookingLabel} stornieren?</p>}
             <p className="muted cancel-booking-subline">{resourceKindLabel(cancelConfirmDesk.kind)}: {cancelConfirmDesk.name} · {new Date(`${selectedDate}T00:00:00.000Z`).toLocaleDateString('de-DE')}</p>
             {cancelDialogError && <p className="error-banner">{cancelDialogError}</p>}
@@ -2662,16 +2650,22 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
                 <div>errorMessage: {cancelDebugState.errorMessage || '—'}</div>
               </div>
             )}
-            <div className="inline-end">
-              <button type="button" className="btn btn-outline" onMouseDown={(event) => { event.stopPropagation(); }} onClick={cancelCancelConfirm} disabled={isCancellingBooking} data-state={isCancellingBooking ? 'loading' : 'idle'}>Abbrechen</button>
-              {cancelConfirmIsSeries && (
-                <button type="button" className="btn btn-danger" onMouseDown={(event) => { event.stopPropagation(); }} onClick={(event) => void submitPopupCancel(event, 'SERIES_ALL')} disabled={isCancellingBooking} data-state={isCancellingBooking ? 'loading' : 'idle'}>
-                  {isCancellingBooking && cancellingBookingId === cancelConfirmContext?.bookingIds[0] ? <><span className="btn-spinner" aria-hidden />Löschen…</> : 'Ganze Serie löschen'}
+            <div className="stack-xs cancel-options">
+              {cancelConfirmIsSeries ? (
+                <>
+                  <button type="button" className="btn btn-danger" onMouseDown={(event) => { event.stopPropagation(); }} onClick={(event) => void submitPopupCancel(event, 'SINGLE')} disabled={isCancellingBooking} data-state={isCancellingBooking ? 'loading' : 'idle'}>
+                    {isCancellingBooking && cancellingBookingId === cancelConfirmContext?.bookingIds[0] ? <><span className="btn-spinner" aria-hidden />Löschen…</> : 'Nur diesen Termin löschen'}
+                  </button>
+                  <button type="button" className="btn btn-danger" onMouseDown={(event) => { event.stopPropagation(); }} onClick={(event) => void submitPopupCancel(event, 'SERIES_ALL')} disabled={isCancellingBooking} data-state={isCancellingBooking ? 'loading' : 'idle'}>
+                    {isCancellingBooking && cancellingBookingId === cancelConfirmContext?.bookingIds[0] ? <><span className="btn-spinner" aria-hidden />Löschen…</> : 'Ganze Serie löschen'}
+                  </button>
+                </>
+              ) : (
+                <button type="button" className="btn btn-danger" onMouseDown={(event) => { event.stopPropagation(); }} onClick={(event) => void submitPopupCancel(event, 'SINGLE')} disabled={isCancellingBooking} data-state={isCancellingBooking ? 'loading' : 'idle'}>
+                  {isCancellingBooking && cancellingBookingId === cancelConfirmContext?.bookingIds[0] ? <><span className="btn-spinner" aria-hidden />Löschen…</> : 'Stornieren'}
                 </button>
               )}
-              <button type="button" className="btn btn-danger" onMouseDown={(event) => { event.stopPropagation(); }} onClick={(event) => void submitPopupCancel(event, 'SINGLE')} disabled={isCancellingBooking} data-state={isCancellingBooking ? 'loading' : 'idle'}>
-                {isCancellingBooking && cancellingBookingId === cancelConfirmContext?.bookingIds[0] ? <><span className="btn-spinner" aria-hidden />Löschen…</> : (cancelConfirmIsSeries ? 'Einzelne Buchung löschen' : 'Stornieren')}
-              </button>
+              <button type="button" className="btn btn-outline" onMouseDown={(event) => { event.stopPropagation(); }} onClick={cancelCancelConfirm} disabled={isCancellingBooking} data-state={isCancellingBooking ? 'loading' : 'idle'}>Abbrechen</button>
             </div>
           </section>
         </div>,
@@ -2683,23 +2677,21 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
         <div className="overlay" role="presentation">
           <section ref={recurringConflictDialogRef} className="card dialog recurring-conflict-dialog" role="dialog" aria-modal="true" aria-labelledby="series-conflict-title">
             <header className="recurring-conflict-header inline-between">
-              <h3 id="series-conflict-title">Konflikte gefunden</h3>
+              <h3 id="series-conflict-title">Konflikte in der Serie</h3>
               <button type="button" className="btn btn-outline btn-icon" onClick={() => setRecurringConflictState(null)} disabled={isResolvingRecurringConflict} aria-label="Konflikt-Dialog schließen">✕</button>
             </header>
             <div className="recurring-conflict-body stack-sm">
-              <p>Es gibt Konflikte innerhalb der Serie (z.B. Ressource bereits belegt oder du hast an manchen Tagen bereits eine Ressource dieses Typs gebucht). Wähle, wie wir mit allen Konflikttagen umgehen sollen.</p>
-              <p><strong>Konflikttage: {recurringConflictState.conflictDates.length}</strong></p>
+              <p>Einige Termine der Serie stehen im Konflikt mit bestehenden Buchungen.</p>
+              <p><strong>Betroffene Termine: {recurringConflictState.conflictDates.length}</strong></p>
               {dialogErrorMessage && <p className="error-banner">{dialogErrorMessage}</p>}
             </div>
-            <footer className="recurring-conflict-footer inline-end rebook-actions">
-              <button type="button" className="btn btn-outline" onClick={() => setRecurringConflictState(null)} disabled={isResolvingRecurringConflict}>Abbrechen</button>
-              <div className="stack-xxs">
+            <footer className="recurring-conflict-footer">
+              <div className="stack-xs recurring-conflict-actions">
                 <button type="button" className="btn" onClick={() => void runRecurringIgnoreConflicts()} disabled={isResolvingRecurringConflict}>Nur freie Termine buchen</button>
-                <span className="muted">Ändert nichts an bestehenden Buchungen.</span>
-              </div>
-              <div className="stack-xxs">
+                <span className="muted">Bestehende Buchungen bleiben unverändert.</span>
                 <button type="button" className="btn btn-danger" onClick={() => void runRecurringReassign()} disabled={isResolvingRecurringConflict}>Umbuchen und freie Termine buchen</button>
-                <span className="muted">Ändert bestehende eigene Buchungen an Konflikttagen.</span>
+                <span className="muted">Eigene bestehende Buchungen an Konflikttagen werden ersetzt.</span>
+                <button type="button" className="btn btn-outline" onClick={() => setRecurringConflictState(null)} disabled={isResolvingRecurringConflict}>Abbrechen</button>
               </div>
             </footer>
           </section>
