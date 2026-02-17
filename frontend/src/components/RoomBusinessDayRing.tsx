@@ -39,7 +39,7 @@ const TICK_ANGLES = {
 export function RoomBusinessDayRing({
   segments,
   freeSegments,
-  label = 'Raumbelegung im Geschäftsfenster 07:00 bis 18:00',
+  label = 'Raumbelegung im Geschäftsfenster 06:00 bis 18:00',
   className,
   strokeWidth = 10,
   showTicks = true,
@@ -69,12 +69,14 @@ export function RoomBusinessDayRing({
         style={{ strokeWidth }}
         aria-hidden="true"
       />
-      <path
-        d={segmentPath(nightStart, nightEnd)}
-        className="room-business-ring-night"
-        style={{ strokeWidth }}
-        aria-hidden="true"
-      />
+      {NIGHT_SWEEP_DEGREES > 0.1 ? (
+        <path
+          d={segmentPath(nightStart, nightEnd)}
+          className="room-business-ring-night"
+          style={{ strokeWidth }}
+          aria-hidden="true"
+        />
+      ) : null}
       {(freeSegments ?? []).map((segment) => (
         <path
           key={`free-${segment.p0.toFixed(4)}-${segment.p1.toFixed(4)}`}

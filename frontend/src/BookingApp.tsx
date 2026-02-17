@@ -1635,7 +1635,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
       recurringBookingId: ownBooking.recurringBookingId ?? null,
       recurringGroupId: ownBooking.recurringGroupId ?? null,
       isRecurring: normalizeDeskBookings(popupDesk).some((booking) => booking.isCurrentUser && (Boolean(booking.recurringBookingId) || Boolean(booking.recurringGroupId))),
-      keepPopoverOpen: true
+      keepPopoverOpen: false
     });
     setCancelDialogError('');
     setIsCancellingBooking(false);
@@ -2017,7 +2017,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
       recurringBookingId: selectedBooking.recurringBookingId ?? null,
       recurringGroupId: selectedBooking.recurringGroupId ?? null,
       isRecurring: selectedBooking.isRecurring,
-      keepPopoverOpen: true
+      keepPopoverOpen: false
     });
     setCancelDialogError('');
     setIsCancellingBooking(false);

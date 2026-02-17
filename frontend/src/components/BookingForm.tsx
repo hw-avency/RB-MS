@@ -426,15 +426,16 @@ export function BookingForm({ values, onChange, onSubmit, onCancel, isSubmitting
               <div className="split">
                 <div className="stack-xs">
                   <label htmlFor="booking-start-time">Von</label>
-                  <input id="booking-start-time" type="time" value={values.startTime} disabled={disabled} onChange={(event) => onChange({ ...values, startTime: event.target.value })} />
+                  <input id="booking-start-time" type="time" min="06:00" max="18:00" value={values.startTime} disabled={disabled} onChange={(event) => onChange({ ...values, startTime: event.target.value })} />
                   {fieldErrors.startTime && <p className="field-error" role="alert">{fieldErrors.startTime}</p>}
                 </div>
                 <div className="stack-xs">
                   <label htmlFor="booking-end-time">Bis</label>
-                  <input id="booking-end-time" type="time" value={values.endTime} disabled={disabled} onChange={(event) => onChange({ ...values, endTime: event.target.value })} />
+                  <input id="booking-end-time" type="time" min="06:00" max="18:00" value={values.endTime} disabled={disabled} onChange={(event) => onChange({ ...values, endTime: event.target.value })} />
                   {fieldErrors.endTime && <p className="field-error" role="alert">{fieldErrors.endTime}</p>}
                 </div>
               </div>
+              <p className="muted room-bookable-hours">Buchbare Zeit 06:00 - 18:00 Uhr</p>
               {roomSchedule?.conflictMessage && <p className="field-error room-conflict-hint" role="alert">{roomSchedule.conflictMessage}</p>}
             </>
           ) : (
@@ -457,10 +458,13 @@ export function BookingForm({ values, onChange, onSubmit, onCancel, isSubmitting
             <div className="stack-xs">
               <label>Terminzeit</label>
               {isRoom ? (
-                <div className="split">
-                  <div className="stack-xs"><label htmlFor="booking-recurring-start-time">Von</label><input id="booking-recurring-start-time" type="time" value={values.startTime} disabled={disabled} onChange={(event) => onChange({ ...values, startTime: event.target.value })} />{fieldErrors.startTime && <p className="field-error" role="alert">{fieldErrors.startTime}</p>}</div>
-                  <div className="stack-xs"><label htmlFor="booking-recurring-end-time">Bis</label><input id="booking-recurring-end-time" type="time" value={values.endTime} disabled={disabled} onChange={(event) => onChange({ ...values, endTime: event.target.value })} />{fieldErrors.endTime && <p className="field-error" role="alert">{fieldErrors.endTime}</p>}</div>
-                </div>
+                <>
+                  <div className="split">
+                    <div className="stack-xs"><label htmlFor="booking-recurring-start-time">Von</label><input id="booking-recurring-start-time" type="time" min="06:00" max="18:00" value={values.startTime} disabled={disabled} onChange={(event) => onChange({ ...values, startTime: event.target.value })} />{fieldErrors.startTime && <p className="field-error" role="alert">{fieldErrors.startTime}</p>}</div>
+                    <div className="stack-xs"><label htmlFor="booking-recurring-end-time">Bis</label><input id="booking-recurring-end-time" type="time" min="06:00" max="18:00" value={values.endTime} disabled={disabled} onChange={(event) => onChange({ ...values, endTime: event.target.value })} />{fieldErrors.endTime && <p className="field-error" role="alert">{fieldErrors.endTime}</p>}</div>
+                  </div>
+                  <p className="muted room-bookable-hours">Buchbare Zeit 06:00 - 18:00 Uhr</p>
+                </>
               ) : (
                 <div className="stack-xs"><label htmlFor="booking-recurring-slot">Zeitraum</label><select id="booking-recurring-slot" value={values.slot} disabled={disabled} onChange={(event) => onChange({ ...values, slot: event.target.value as BookingSlot })}><option value="FULL_DAY">Ganztag</option><option value="MORNING">Vormittag</option><option value="AFTERNOON">Nachmittag</option></select></div>
               )}
