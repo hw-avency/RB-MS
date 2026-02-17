@@ -1132,8 +1132,19 @@ const employeeSelect = {
   displayName: true,
   role: true,
   isActive: true,
-  photoUrl: true
+  photoUrl: true,
+  photoUpdatedAt: true
 } satisfies Prisma.EmployeeSelect;
+
+const resolveEmployeePhotoUrl = (employee: { id: string; photoUrl: string | null; photoUpdatedAt: Date | null }): string | null => {
+  if (!employee.photoUpdatedAt) return null;
+  return employee.photoUrl ?? getEmployeePhotoUrl(employee.id);
+};
+
+const toEmployeeResponse = <T extends { id: string; photoUrl: string | null; photoUpdatedAt: Date | null }>(employee: T) => {
+  const { photoUpdatedAt, ...rest } = employee;
+  return { ...rest, photoUrl: resolveEmployeePhotoUrl(employee) };
+};
 
 const getActiveEmployeesByEmail = async (emails: string[]) => {
   if (emails.length === 0) {
@@ -1150,11 +1161,12 @@ const getActiveEmployeesByEmail = async (emails: string[]) => {
       id: true,
       email: true,
       displayName: true,
-      photoUrl: true
+      photoUrl: true,
+      photoUpdatedAt: true
     }
   });
 
-  return new Map(employees.map((employee) => [employee.email, { id: employee.id, displayName: employee.displayName, photoUrl: employee.photoUrl ?? getEmployeePhotoUrl(employee.id) }]));
+  return new Map(employees.map((employee) => [employee.email, { id: employee.id, displayName: employee.displayName, photoUrl: resolveEmployeePhotoUrl(employee) }]));
 };
 
 const getDeskContext = async (deskId: string) => prisma.desk.findUnique({
@@ -1685,10 +1697,7 @@ app.get('/admin/employees', requireAdmin, async (_req, res) => {
     orderBy: [{ isActive: 'desc' }, { displayName: 'asc' }, { email: 'asc' }]
   });
 
-  res.status(200).json(employees.map((employee) => ({
-    ...employee,
-    photoUrl: employee.photoUrl ?? getEmployeePhotoUrl(employee.id)
-  })));
+  res.status(200).json(employees.map((employee) => toEmployeeResponse(employee)));
 });
 
 app.get('/employees', async (_req, res) => {
@@ -1698,15 +1707,13 @@ app.get('/employees', async (_req, res) => {
       id: true,
       email: true,
       displayName: true,
-      photoUrl: true
+      photoUrl: true,
+      photoUpdatedAt: true
     },
     orderBy: [{ displayName: 'asc' }, { email: 'asc' }]
   });
 
-  res.status(200).json(employees.map((employee) => ({
-    ...employee,
-    photoUrl: employee.photoUrl ?? getEmployeePhotoUrl(employee.id)
-  })));
+  res.status(200).json(employees.map((employee) => toEmployeeResponse(employee)));
 });
 
 
@@ -1789,7 +1796,7 @@ app.post('/admin/employees', requireAdmin, async (req, res) => {
       return;
     }
 
-    res.status(201).json({ ...createdEmployee, photoUrl: createdEmployee.photoUrl ?? getEmployeePhotoUrl(createdEmployee.id) });
+    res.status(201).json(toEmployeeResponse(createdEmployee));
   } catch (error) {
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
       sendConflict(res, 'Employee email already exists', { email: normalizedEmail });
@@ -1861,7 +1868,7 @@ app.patch('/admin/employees/:id', requireAdmin, async (req, res) => {
       req.authUser.isActive = updated.isActive;
     }
 
-    res.status(200).json(updated);
+    res.status(200).json(toEmployeeResponse(updated));
   } catch (error) {
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2025') {
       res.status(404).json({ error: 'not_found', message: 'Employee not found' });
@@ -1900,7 +1907,7 @@ app.delete('/admin/employees/:id', requireAdmin, async (req, res) => {
       select: employeeSelect
     });
 
-    res.status(200).json(updated);
+    res.status(200).json(toEmployeeResponse(updated));
   } catch (error) {
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2025') {
       res.status(404).json({ error: 'not_found', message: 'Employee not found' });
