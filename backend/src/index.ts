@@ -648,6 +648,12 @@ const overlapsDaySlot = (a: DaySlot, b: DaySlot): boolean => {
   return a === b;
 };
 
+const daySlotToMinuteRange = (slot: DaySlot): { startMinute: number; endMinute: number } => {
+  if (slot === 'AM') return { startMinute: 0, endMinute: 12 * 60 };
+  if (slot === 'PM') return { startMinute: 12 * 60, endMinute: 24 * 60 };
+  return { startMinute: 0, endMinute: 24 * 60 };
+};
+
 const parseTimeToMinute = (value: unknown): number | null => {
   if (typeof value !== 'string') return null;
   const m = value.match(/^(\d{2}):(\d{2})$/);
@@ -689,7 +695,10 @@ const windowsOverlap = (left: BookingWindowInput, right: BookingWindowInput): bo
   if (left.mode === 'time' && right.mode === 'time') {
     return left.startMinute < right.endMinute && right.startMinute < left.endMinute;
   }
-  return false;
+
+  const normalizedLeft = left.mode === 'day' ? daySlotToMinuteRange(left.daySlot) : left;
+  const normalizedRight = right.mode === 'day' ? daySlotToMinuteRange(right.daySlot) : right;
+  return normalizedLeft.startMinute < normalizedRight.endMinute && normalizedRight.startMinute < normalizedLeft.endMinute;
 };
 
 const resolveBookingWindow = ({ deskKind, daySlot, slot, startTime, endTime }: { deskKind: ResourceKind; daySlot?: unknown; slot?: unknown; startTime?: unknown; endTime?: unknown }): { ok: true; value: BookingWindowInput } | { ok: false; message: string } => {
