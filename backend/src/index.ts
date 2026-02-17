@@ -844,7 +844,7 @@ const normalizeEmail = (value: string): string => value.trim().toLowerCase();
 const hashPassword = async (value: string): Promise<string> => bcrypt.hash(value, PASSWORD_SALT_ROUNDS);
 
 type BookingTx = Prisma.TransactionClient;
-type BookingIdentity = { normalizedEmail: string; userKey: string; entraOid: string | null; emailAliases: string[] };
+type BookingIdentity = { normalizedEmail: string; userKey: string; entraOid: string | null; employeeId: string | null; emailAliases: string[] };
 type BookingWithDeskContext = Prisma.BookingGetPayload<{ include: { desk: { select: { name: true; kind: true } } } }>;
 type BookingWithCreator = Prisma.BookingGetPayload<{ include: { createdByEmployee: { select: { id: true; displayName: true; email: true } } } }>;
 type CreatorSummary = { id: string; displayName: string; email: string };
@@ -881,7 +881,7 @@ const acquireBookingLock = async (tx: BookingTx, key: string) => {
 
 const findBookingIdentity = async (userEmail: string): Promise<BookingIdentity> => {
   const normalizedEmail = normalizeEmail(userEmail);
-  const employee = await prisma.employee.findUnique({ where: { email: normalizedEmail }, select: { entraOid: true } });
+  const employee = await prisma.employee.findUnique({ where: { email: normalizedEmail }, select: { id: true, entraOid: true } });
   const entraOid = employee?.entraOid ?? null;
   const aliasRows = entraOid
     ? await prisma.employee.findMany({ where: { entraOid }, select: { email: true } })
@@ -891,6 +891,7 @@ const findBookingIdentity = async (userEmail: string): Promise<BookingIdentity> 
     normalizedEmail,
     userKey: entraOid ?? normalizedEmail,
     entraOid,
+    employeeId: employee?.id ?? null,
     emailAliases
   };
 };
@@ -2094,7 +2095,7 @@ app.post('/bookings', async (req, res) => {
       data: {
         deskId,
         userEmail: bookingMode === 'SELF' ? (identity?.normalizedEmail ?? actorEmployee.email) : null,
-        employeeId: bookingMode === 'SELF' ? actorEmployee.id : null,
+        employeeId: bookingMode === 'SELF' ? (identity?.employeeId ?? null) : null,
         bookedFor: bookingMode,
         guestName: bookingMode === 'GUEST' ? normalizedGuestName : null,
         createdByEmployeeId: actorEmployee.id,
