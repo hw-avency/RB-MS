@@ -2008,7 +2008,10 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
     if (!popupDesk || !recurringConflictState) return;
     setIsResolvingRecurringConflict(true);
     try {
-      const result = await submitPopupBooking(popupDesk.id, recurringConflictState.payload, { allowPartial: true });
+      const result = await submitPopupBooking(popupDesk.id, recurringConflictState.payload, {
+        allowPartial: true,
+        explicitDates: recurringConflictState.freeDates
+      });
       const created = (result as BulkBookingResponse | undefined)?.createdCount ?? 0;
       const skipped = (result as BulkBookingResponse | undefined)?.skippedConflicts?.length ?? recurringConflictState.conflictDates.length;
       toast.success(`${created} Termine erstellt, ${skipped} übersprungen (Konflikte).`);
