@@ -51,7 +51,7 @@ export function Avatar({ displayName, email, photoUrl, size = 24 }: AvatarProps)
   } satisfies CSSProperties;
 
   return (
-    <span className="app-avatar" style={style} aria-hidden>
+    <span className={`app-avatar ${showImage ? '' : 'app-avatar--fallback'}`.trim()} style={style} aria-hidden>
       {showImage && <img src={resolvedPhotoUrl} alt="" loading="lazy" referrerPolicy="no-referrer" onError={() => setImageFailed(true)} />}
       {!showImage && <span>{initials}</span>}
     </span>
