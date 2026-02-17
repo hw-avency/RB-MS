@@ -477,14 +477,18 @@ tr{cursor:pointer}.row-selected{background:hsl(var(--muted))}
 .floor-thumb-btn{border:0;background:transparent;padding:0;cursor:pointer}
 .floor-thumb{width:120px;height:80px;object-fit:cover;border-radius:8px;border:1px solid hsl(var(--border));display:block}
 .admin-split-floor-preview .canvas-body{min-height:380px}
-.booking-editor-dialog{max-width:min(1240px,96vw)}
+.booking-editor-dialog{width:min(1240px,96vw);max-width:min(1240px,96vw)}
 .booking-editor-meta{display:grid;gap:2px}
 .booking-editor-meta p{margin:0}
-.booking-editor-layout{display:grid;grid-template-columns:minmax(0,1fr) minmax(380px,.8fr);gap:16px;align-items:start}
+.booking-editor-layout{display:grid;grid-template-columns:minmax(320px,1fr) minmax(320px,1fr);gap:16px;align-items:start}
+.booking-editor-layout > *{min-width:0}
+.booking-editor-form-section{min-width:0}
+.booking-editor-plan-section{min-width:0;overflow:hidden}
+.booking-editor-plan{min-width:0}
 .booking-editor-plan .canvas-body{min-height:420px}
 .booking-editor-canvas{height:min(58vh,560px)}
 .booking-editor-canvas .floorplan-canvas{height:100%}
-@media (max-width: 1024px){.admin-split-layout,.booking-editor-layout{grid-template-columns:1fr}.admin-floor-canvas{min-height:360px}.booking-editor-plan .canvas-body{min-height:340px}}
+@media (max-width: 1024px){.admin-split-layout,.booking-editor-layout{grid-template-columns:1fr}.booking-editor-plan-section{order:2}.admin-floor-canvas{min-height:360px}.booking-editor-plan .canvas-body{min-height:340px}}
 
 @media (max-width: 1024px){
   .bookings-layout{grid-template-columns:1fr;grid-template-areas:"filters" "floor" "list"}
@@ -504,7 +508,7 @@ tr{cursor:pointer}.row-selected{background:hsl(var(--muted))}
 .inline-start{display:flex;align-items:center;gap:8px}
 .inline-end{display:flex;align-items:center;gap:8px;justify-content:flex-end}
 .desks-page-header{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}
-.desks-toolbar{display:grid;grid-template-columns:minmax(180px,220px) minmax(220px,1fr) minmax(160px,200px) auto;gap:8px;align-items:center}
+.desks-toolbar{display:grid;grid-template-columns:minmax(180px,220px) minmax(180px,220px) minmax(220px,1fr) minmax(160px,200px) auto;gap:8px;align-items:center}
 .table-scroll-area{max-height:560px;overflow:auto}
 .desks-table thead th{position:sticky;top:0;background:hsl(var(--card));z-index:2}
 .desks-table td,.desks-table th{padding-top:14px;padding-bottom:14px}
