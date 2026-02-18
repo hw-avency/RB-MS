@@ -21,7 +21,8 @@
       "Der Button \"Feature Request / Bug melden\" wurde aus der Karte \"Datum & Ansicht\" herausgelöst und separat darunter platziert.",
       "Zwischen Kalenderbereich und Feedback-Button wurde zusätzlicher Abstand eingefügt, damit der Bereich klarer getrennt ist.",
       "Der Feedback-Button verwendet jetzt den primären blauen Button-Stil wie die übrigen Hauptaktionen."
-    },
+    ]
+  },
   {
     "version": "1.5.12",
     "date": "2026-02-18",
