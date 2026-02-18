@@ -1997,14 +1997,14 @@ app.post('/auth/login', async (req, res) => {
     });
 
     if (!user || !user.isActive) {
-      console.log('LOGIN_FAIL_USER_NOT_FOUND', { requestId, email: normalizedEmail });
+      console.warn('LOGIN_FAIL_USER_NOT_FOUND', { requestId, email: normalizedEmail });
       res.status(401).json({ code: 'USER_NOT_FOUND', message: 'Invalid credentials' });
       return;
     }
 
     const passwordMatches = await bcrypt.compare(password, user.passwordHash);
     if (!passwordMatches) {
-      console.log('LOGIN_FAIL_PASSWORD_MISMATCH', { requestId, userId: user.id });
+      console.warn('LOGIN_FAIL_PASSWORD_MISMATCH', { requestId, userId: user.id });
       res.status(401).json({ code: 'PASSWORD_MISMATCH', message: 'Invalid credentials' });
       return;
     }
@@ -2027,7 +2027,7 @@ app.post('/auth/login', async (req, res) => {
       });
     }
 
-    console.log('LOGIN_SUCCESS', { requestId, userId: user.id, role: user.role });
+    console.info('LOGIN_SUCCESS', { requestId, userId: user.id, role: user.role });
 
     res.status(200).json({
       user: {
