@@ -30,7 +30,7 @@
    - Client secret erzeugen, **Secret Value** sichern
 6. API Permissions:
    - Für OIDC Login reichen Scopes `openid profile email`
-   - Optional Microsoft Graph `User.Read` (delegated), falls später benötigt
+   - Microsoft Graph `User.Read` (delegated) ist erforderlich für den Profil-Refresh (Name/E-Mail/Telefon)
 
 ### Tenant-Allowlist (Source of Truth)
 - Das Backend verwendet bei `GET /auth/entra/callback` die Tenant-ID aus dem `tid` Claim.

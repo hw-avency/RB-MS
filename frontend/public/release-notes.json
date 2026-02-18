@@ -2,7 +2,7 @@
   {
     "version": "1.5.3",
     "date": "2026-02-18",
-    "type": "feature",
+    "type": "feature","bugfix"
     "title": "Feedback-Meldungen mit Status, Detailansicht und Löschfunktion",
     "summary": "Im Admin-Bereich können Feature-Requests und Bugmeldungen jetzt aktiv bearbeitet werden: mit Status, großer Detailansicht und kompletter Löschoption.",
     "items": [
