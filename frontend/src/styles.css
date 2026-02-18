@@ -208,6 +208,9 @@ input, select { border: 1px solid hsl(var(--border)); border-radius: 12px; paddi
 .brand-logo{width:28px;height:28px;border-radius:8px;object-fit:contain;background:hsl(var(--muted));padding:2px}
 .field-inline{display:flex;align-items:center;gap:8px;font-size:12px;color:hsl(var(--muted-foreground))}
 .field-inline select{min-width:160px}
+.feedback-callout{padding-top:4px}
+.feedback-callout-btn{width:100%}
+
 .compact-card{padding:20px}
 .today-compact-panel{padding:12px 16px}
 .today-summary-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;gap:10px}
