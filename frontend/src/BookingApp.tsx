@@ -2972,7 +2972,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
             </label>
             <div className="inline-end">
               <button className="btn btn-outline" onClick={() => setFeedbackDialogOpen(false)} disabled={isSubmittingFeedback}>Abbrechen</button>
-              <button className="btn" onClick={() => void submitFeedbackReport()} disabled={isSubmittingFeedback || feedbackMessage.trim().length < 10}>
+              <button className="btn" onClick={() => void submitFeedbackReport()} disabled={isSubmittingFeedback}>
                 {isSubmittingFeedback ? 'Sende…' : 'Meldung absenden'}
               </button>
             </div>
