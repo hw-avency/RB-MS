@@ -596,7 +596,8 @@ tr{cursor:pointer}.row-selected{background:hsl(var(--muted))}
 .booking-info-period{display:inline-flex;align-self:flex-start;font-size:12px;font-weight:700;color:hsl(var(--muted-foreground));background:hsl(var(--muted));padding:2px 8px;border-radius:999px}
 .booking-info-person{display:flex;align-items:center;gap:12px}
 .booking-info-person-text strong{line-height:1.2}
-.booking-info-call-btn{justify-content:center}
+.booking-info-contact-actions{display:flex;flex-wrap:wrap;gap:8px}
+.booking-info-contact-btn{justify-content:center;flex:1 1 110px}
 .booking-detail-card{border:1px solid hsl(var(--border));border-radius:12px;padding:12px;background:hsl(var(--card))}
 .booking-detail-card h4{margin:0 0 4px;font-size:14px}
 .booking-detail-card p{display:flex;flex-direction:column;gap:2px;font-size:14px}

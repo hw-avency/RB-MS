@@ -333,6 +333,18 @@ const getDialablePhone = (phone?: string | null): string | null => {
 
 const toTeamsCallUrl = (dialablePhone: string): string => `https://teams.microsoft.com/l/call/0/0?users=${encodeURIComponent(dialablePhone)}`;
 
+const getContactEmail = (email?: string | null): string | null => {
+  if (!email) return null;
+  const trimmed = email.trim();
+  return trimmed ? trimmed : null;
+};
+
+const toMailtoUrl = (email: string): string => `mailto:${encodeURIComponent(email)}`;
+
+const toTeamsChatUrl = (email: string): string => `https://teams.microsoft.com/l/chat/0/0?users=${encodeURIComponent(email)}`;
+
+const toTeamsChatClientUrl = (email: string): string => `msteams:/l/chat/0/0?users=${encodeURIComponent(email)}`;
+
 const callLabelForBooking = (booking: OccupancyBooking): string => {
   if (booking.daySlot === 'AM' || booking.slot === 'MORNING') return 'Vormittags';
   if (booking.daySlot === 'PM' || booking.slot === 'AFTERNOON') return 'Nachmittags';
@@ -1329,6 +1341,22 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
     window.setTimeout(() => {
       window.location.href = telUrl;
     }, 600);
+  }, []);
+  const handleEmailPerson = useCallback((email?: string | null) => {
+    const contactEmail = getContactEmail(email);
+    if (!contactEmail) return;
+    window.location.href = toMailtoUrl(contactEmail);
+  }, []);
+  const handleChatWithPerson = useCallback((email?: string | null) => {
+    const contactEmail = getContactEmail(email);
+    if (!contactEmail) return;
+
+    const teamsWebUrl = toTeamsChatUrl(contactEmail);
+    const teamsClientUrl = toTeamsChatClientUrl(contactEmail);
+    const openedWindow = window.open(teamsWebUrl, '_blank', 'noopener,noreferrer');
+    if (!openedWindow) {
+      window.location.href = teamsClientUrl;
+    }
   }, []);
   const manageSlotConflict = useMemo(() => {
     if (!popupDesk || !popupMySelectedBooking || isRoomResource(popupDesk)) return '';
@@ -2808,6 +2836,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
                       ? `Gast: ${booking.guestName?.trim() || 'Unbekannt'}`
                       : (booking.employee?.displayName ?? booking.userDisplayName ?? booking.userEmail ?? 'Unbekannt');
                     const personEmail = booking.bookedFor === 'GUEST' ? undefined : (booking.employee?.email ?? booking.userEmail ?? undefined);
+                    const contactEmail = getContactEmail(personEmail);
                     const personPhone = booking.bookedFor === 'GUEST' ? null : (booking.employee?.phone ?? booking.userPhone ?? null);
                     const dialablePhone = getDialablePhone(personPhone);
                     const personPhotoUrl = booking.bookedFor === 'GUEST' ? undefined : (booking.employee?.photoUrl ?? booking.userPhotoUrl ?? undefined);
@@ -2829,7 +2858,11 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
                           </div>
                         </div>
                         <p><span className="muted">Zeitraum: </span><strong>{bookingSlotLabel(booking)}</strong></p>
-                        <button type="button" className="btn btn-outline booking-info-call-btn" onClick={() => handleCallPerson(personPhone)} disabled={!dialablePhone}>📞 Anrufen</button>
+                        <div className="booking-info-contact-actions">
+                          <button type="button" className="btn btn-outline booking-info-contact-btn" onClick={() => handleCallPerson(personPhone)} disabled={!dialablePhone} title={!dialablePhone ? 'Keine Telefonnummer hinterlegt' : undefined}>📞 Anrufen</button>
+                          <button type="button" className="btn btn-outline booking-info-contact-btn" onClick={() => handleEmailPerson(contactEmail)} disabled={!contactEmail} title={!contactEmail ? 'Keine E-Mail hinterlegt' : undefined}>✉️ Email</button>
+                          <button type="button" className="btn btn-outline booking-info-contact-btn" onClick={() => handleChatWithPerson(contactEmail)} disabled={!contactEmail} title={!contactEmail ? 'Keine E-Mail hinterlegt' : undefined}>💬 Chat</button>
+                        </div>
                       </article>
                     );
                   })}
