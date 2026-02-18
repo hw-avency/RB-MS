@@ -18,8 +18,9 @@
 
 ---
 
-## Microsoft Entra ID (Single Tenant) einrichten
+## Microsoft Entra ID (Multi-Tenant) einrichten
 
+### App Registration
 1. Azure Portal → **App registrations** → **New registration**
 2. **Supported account types**: `Accounts in this organizational directory only` (Single tenant)
 3. Redirect URI (Web):
@@ -32,7 +33,15 @@
    - Für OIDC Login reichen Scopes `openid profile email`
    - Optional Microsoft Graph `User.Read` (delegated), falls später benötigt
 
-**Wichtig:** Das Backend akzeptiert nur Logins mit `tid === ENTRA_TENANT_ID`.
+### Multi-Tenant Setup
+Das System unterstützt mehrere Microsoft Entra Mandanten:
+- **Primärer Tenant**: Via `ENTRA_TENANT_ID` Environment Variable (für Rückwärtskompatibilität)
+- **Zusätzliche Tenants**: Im Admin-Bereich unter `/admin/tenants` konfigurieren
+  - Für jeden Tenant die **Entra Tenant ID** (UUID) hinterlegen
+  - Login-Seite zeigt automatisch einen Button pro konfiguriertem Tenant
+  - Mitarbeiter werden beim ersten Login automatisch dem passenden Tenant zugeordnet
+
+**Hinweis:** Tenants ohne Entra ID erscheinen nicht auf der Login-Seite.
 
 ---
 
@@ -73,11 +82,13 @@
 - `ADMIN_PASSWORD=<starkes-passwort>`
 
 ### Entra (required)
-- `ENTRA_TENANT_ID=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx`
+- `ENTRA_TENANT_ID=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx` (Primary/Default Tenant)
 - `ENTRA_CLIENT_ID=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx`
 - `ENTRA_CLIENT_SECRET=<secret-value>`
 - `ENTRA_REDIRECT_URI=https://rb-ms.onrender.com/auth/entra/callback`
 - `ENTRA_POST_LOGIN_REDIRECT=https://rb-ms-1.onrender.com/#/`
+
+**Multi-Tenant:** Weitere Tenant IDs werden in der Datenbank über `/admin/tenants` konfiguriert.
 
 ### Entra (optional)
 - `ENTRA_LOGOUT_REDIRECT=https://rb-ms-1.onrender.com/#/login`
@@ -104,11 +115,29 @@
 
 ## API (Auth-relevant)
 - `GET /health`
-- `GET /auth/entra/start`
+- `GET /auth/entra/start?tenant=<tenant_id>` (optional tenant parameter for multi-tenant)
 - `GET /auth/entra/callback`
+- `GET /auth/tenants` (returns configured tenants with Entra IDs for login screen)
 - `POST /auth/login` (Breakglass)
 - `POST /auth/logout`
 - `GET /auth/me`
+
+## Multi-Tenant Setup
+
+Das System unterstützt mehrere Microsoft Entra Mandanten:
+
+### Konfiguration
+1. **Primärer Tenant**: Via `ENTRA_TENANT_ID` Environment Variable (Rückwärtskompatibilität)
+2. **Weitere Tenants**: In Admin UI unter `/admin/tenants` konfigurieren
+   - Für jeden Tenant die **Microsoft Entra Tenant ID** (UUID) hinterlegen
+   - Login-Seite zeigt automatisch einen Button pro konfiguriertem Tenant
+   - Mitarbeiter werden beim ersten Login automatisch dem passenden Tenant zugeordnet
+
+### Verhalten
+- Tenants **ohne** Entra ID erscheinen nicht auf der Login-Seite
+- Tenants **mit** Entra ID bekommen eigenen Login-Button mit Namen
+- Backend validiert Login gegen den jeweiligen Tenant
+- Automatische Zuordnung von Mitarbeitern basierend auf `entraTenantId`
 
 ## Qualitätschecks
 - Frontend: `npm run build`

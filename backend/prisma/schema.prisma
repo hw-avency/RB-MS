@@ -39,9 +39,10 @@ model Session {
 }
 
 model OidcState {
-  state     String   @id
-  nonce     String
-  createdAt DateTime @default(now())
+  state         String   @id
+  nonce         String
+  tenantContext String?
+  createdAt     DateTime @default(now())
 
   @@index([createdAt])
 }
@@ -75,6 +76,7 @@ model Tenant {
   id          String      @id @default(cuid())
   domain      String      @unique
   name        String?
+  entraId     String?     @unique
   createdAt   DateTime    @default(now())
   updatedAt   DateTime    @updatedAt
   employees   Employee[]

@@ -148,7 +148,7 @@ app.use(attachRequestId);
 
 const SESSION_COOKIE_NAME = 'rbms_session';
 const SESSION_TTL_MS = 1000 * 60 * 60 * 12;
-type OidcFlowState = { nonce: string; createdAt: Date };
+type OidcFlowState = { nonce: string; createdAt: Date; tenantContext?: string | null };
 const OIDC_STATE_TTL_MS = 1000 * 60 * 10;
 const parseCookies = (cookieHeader?: string): Record<string, string> => {
   if (!cookieHeader) return {};
@@ -235,13 +235,14 @@ const parseBase64UrlJson = <T>(value: string): T => {
   return JSON.parse(Buffer.from(normalized, 'base64').toString('utf8')) as T;
 };
 
-const createOidcState = async (): Promise<{ state: string; nonce: string }> => {
+const createOidcState = async (tenantContext?: string): Promise<{ state: string; nonce: string }> => {
   const state = crypto.randomBytes(16).toString('hex');
   const nonce = crypto.randomBytes(16).toString('hex');
   await prisma.oidcState.create({
     data: {
       state,
       nonce,
+      tenantContext: tenantContext || null,
       createdAt: new Date()
     }
   });
@@ -1417,14 +1418,15 @@ const upsertEmployeeFromEntraLogin = async (claims: { oid: string; tid: string; 
   });
 };
 
-app.get('/auth/entra/start', async (_req, res) => {
+app.get('/auth/entra/start', async (req, res) => {
   if (!isEntraConfigured()) {
     res.status(500).json({ code: 'ENTRA_NOT_CONFIGURED', message: 'Microsoft Entra login is not configured' });
     return;
   }
 
+  const tenantContext = typeof req.query.tenant === 'string' ? req.query.tenant.trim() : undefined;
   const metadata = await loadOidcMetadata();
-  const { state, nonce } = await createOidcState();
+  const { state, nonce } = await createOidcState(tenantContext);
   const query = new URLSearchParams({
     client_id: ENTRA_CLIENT_ID as string,
     response_type: 'code',
@@ -1477,7 +1479,19 @@ app.get('/auth/entra/callback', async (req, res) => {
     const tid = typeof claims.tid === 'string' ? claims.tid : null;
     const oid = typeof claims.oid === 'string' ? claims.oid : null;
 
-    if (!tid || tid !== ENTRA_TENANT_ID) {
+    if (!tid) {
+      res.status(403).json({ code: 'TENANT_NOT_ALLOWED', message: 'Tenant ID missing from token' });
+      return;
+    }
+
+    // Check if tenant is allowed - either matches ENTRA_TENANT_ID or exists in database
+    const allowedByEnv = tid === ENTRA_TENANT_ID;
+    const tenantInDb = await prisma.tenant.findFirst({
+      where: { entraId: tid },
+      select: { id: true, domain: true }
+    });
+
+    if (!allowedByEnv && !tenantInDb) {
       res.status(403).json({ code: 'TENANT_NOT_ALLOWED', message: 'Tenant not allowed' });
       return;
     }
@@ -1618,6 +1632,15 @@ app.get('/auth/me', (req, res) => {
 
 app.get('/auth/csrf', (req, res) => {
   res.status(204).send();
+});
+
+app.get('/auth/tenants', async (_req, res) => {
+  const tenants = await prisma.tenant.findMany({
+    where: { entraId: { not: null } },
+    select: { id: true, domain: true, name: true, entraId: true },
+    orderBy: { name: 'asc' }
+  });
+  res.status(200).json({ tenants });
 });
 
 app.get('/user/me/photo', requireAuthenticated, async (req, res) => {
@@ -2047,6 +2070,7 @@ app.get('/admin/tenants', requireAdmin, async (_req, res) => {
     id: tenant.id,
     domain: tenant.domain,
     name: tenant.name,
+    entraId: tenant.entraId,
     createdAt: tenant.createdAt,
     updatedAt: tenant.updatedAt,
     employeeCount: tenant._count.employees
@@ -2057,6 +2081,7 @@ app.post('/admin/tenants', requireAdmin, async (req, res) => {
   const rawDomain = typeof req.body?.domain === 'string' ? req.body.domain : '';
   const domain = normalizeTenantDomain(rawDomain);
   const name = typeof req.body?.name === 'string' ? req.body.name.trim() : undefined;
+  const entraId = typeof req.body?.entraId === 'string' ? req.body.entraId.trim() : undefined;
 
   if (!domain || !domain.includes('.')) {
     res.status(400).json({ error: 'validation', message: 'domain must be a valid domain' });
@@ -2064,11 +2089,17 @@ app.post('/admin/tenants', requireAdmin, async (req, res) => {
   }
 
   try {
-    const created = await prisma.tenant.create({ data: { domain, name: name || domain } });
+    const created = await prisma.tenant.create({ 
+      data: { 
+        domain, 
+        name: name || domain,
+        entraId: entraId || null
+      } 
+    });
     res.status(201).json(created);
   } catch (error) {
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
-      res.status(409).json({ error: 'conflict', message: 'Tenant domain already exists' });
+      res.status(409).json({ error: 'conflict', message: 'Tenant domain or entraId already exists' });
       return;
     }
     throw error;
@@ -2084,9 +2115,11 @@ app.patch('/admin/tenants/:id', requireAdmin, async (req, res) => {
 
   const rawDomain = typeof req.body?.domain === 'string' ? req.body.domain : undefined;
   const name = typeof req.body?.name === 'string' ? req.body.name.trim() : undefined;
+  const rawEntraId = typeof req.body?.entraId === 'string' ? req.body.entraId : undefined;
+  const entraId = typeof rawEntraId === 'string' ? (rawEntraId.trim() || null) : undefined;
 
-  if (typeof rawDomain === 'undefined' && typeof name === 'undefined') {
-    res.status(400).json({ error: 'validation', message: 'name or domain must be provided' });
+  if (typeof rawDomain === 'undefined' && typeof name === 'undefined' && typeof entraId === 'undefined') {
+    res.status(400).json({ error: 'validation', message: 'name, domain, or entraId must be provided' });
     return;
   }
 
@@ -2101,13 +2134,14 @@ app.patch('/admin/tenants/:id', requireAdmin, async (req, res) => {
       where: { id },
       data: {
         ...(typeof domain === 'string' ? { domain } : {}),
-        ...(typeof name === 'string' ? { name: name || null } : {})
+        ...(typeof name === 'string' ? { name: name || null } : {}),
+        ...(typeof entraId !== 'undefined' ? { entraId } : {})
       }
     });
     res.status(200).json(updated);
   } catch (error) {
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
-      res.status(409).json({ error: 'conflict', message: 'Tenant domain already exists' });
+      res.status(409).json({ error: 'conflict', message: 'Tenant domain or entraId already exists' });
       return;
     }
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2025') {
