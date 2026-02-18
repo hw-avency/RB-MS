@@ -5,7 +5,7 @@ import { resourceKindLabel } from './resourceKinds';
 import { BOOKABLE_END, BOOKABLE_START, ROOM_WINDOW_TOTAL_MINUTES } from './lib/bookingWindows';
 import { formatMinutes } from './lib/bookingWindows';
 import { computeRoomBusySegments, computeRoomOccupancy } from './lib/roomOccupancy';
-import { FloorplanFlatRenderer, FloorplanRect, ResolvedFlatResource } from './FloorplanFlatRenderer';
+import { FloorplanFlatRenderer, FloorplanRect, FloorplanViewportInfo, ResolvedFlatResource } from './FloorplanFlatRenderer';
 import { NonRoomDaySlotRing } from './components/NonRoomDaySlotRing';
 import { RoomBusinessDayRing } from './components/RoomBusinessDayRing';
 
@@ -122,7 +122,26 @@ type FloorplanCanvasProps = {
   style?: CSSProperties;
 };
 
-const DeskOverlay = memo(function DeskOverlay({ markers, selectedDeskId, hoveredDeskId, selectedDate, bookingVersion, onHoverDesk, onSelectDesk, onDeskDoubleClick, onDeskAnchorChange, disablePulseAnimation = false, debugEnabled = false }: { markers: ResolvedFlatResource<FloorplanDesk>[]; selectedDeskId: string; hoveredDeskId: string; selectedDate?: string; bookingVersion?: number; onHoverDesk: (deskId: string) => void; onSelectDesk: (deskId: string, anchorEl?: HTMLElement) => void; onDeskDoubleClick?: (deskId: string) => void; onDeskAnchorChange?: (deskId: string, element: HTMLElement | null) => void; disablePulseAnimation?: boolean; debugEnabled?: boolean; }) {
+type DeskCluster = { id: string; members: ResolvedFlatResource<FloorplanDesk>[]; screenX: number; screenY: number };
+
+const CLUSTER_DISTANCE = 52;
+
+const buildClusters = (markers: ResolvedFlatResource<FloorplanDesk>[]): DeskCluster[] => {
+  const clusters: DeskCluster[] = [];
+  for (const marker of [...markers].sort((a, b) => a.resource.id.localeCompare(b.resource.id))) {
+    const cluster = clusters.find((candidate) => Math.hypot(candidate.screenX - marker.leftPx, candidate.screenY - marker.topPx) <= CLUSTER_DISTANCE);
+    if (!cluster) {
+      clusters.push({ id: `cluster-${marker.resource.id}`, members: [marker], screenX: marker.leftPx, screenY: marker.topPx });
+      continue;
+    }
+    cluster.members.push(marker);
+    cluster.screenX = cluster.members.reduce((sum, member) => sum + member.leftPx, 0) / cluster.members.length;
+    cluster.screenY = cluster.members.reduce((sum, member) => sum + member.topPx, 0) / cluster.members.length;
+  }
+  return clusters;
+};
+
+const DeskOverlay = memo(function DeskOverlay({ markers, viewport, selectedDeskId, hoveredDeskId, selectedDate, bookingVersion, onHoverDesk, onSelectDesk, onDeskDoubleClick, onDeskAnchorChange, disablePulseAnimation = false, debugEnabled = false }: { markers: ResolvedFlatResource<FloorplanDesk>[]; viewport: FloorplanViewportInfo; selectedDeskId: string; hoveredDeskId: string; selectedDate?: string; bookingVersion?: number; onHoverDesk: (deskId: string) => void; onSelectDesk: (deskId: string, anchorEl?: HTMLElement) => void; onDeskDoubleClick?: (deskId: string) => void; onDeskAnchorChange?: (deskId: string, element: HTMLElement | null) => void; disablePulseAnimation?: boolean; debugEnabled?: boolean; }) {
   const [imageStates, setImageStates] = useState<Record<string, boolean>>({});
   const [tooltip, setTooltip] = useState<{ deskId: string; left: number; top: number } | null>(null);
 
@@ -138,11 +157,35 @@ const DeskOverlay = memo(function DeskOverlay({ markers, selectedDeskId, hovered
   }, [tooltip]);
 
   const tooltipDesk = markers.find((entry) => entry.resource.id === tooltip?.deskId)?.resource;
+  const markerGroups = viewport.zoom <= viewport.fitZoom * 1.35
+    ? buildClusters(markers).map((cluster) => ({ kind: 'cluster' as const, cluster }))
+    : markers.map((marker) => ({ kind: 'marker' as const, marker }));
 
   return (
     <>
       <div className="desk-overlay" data-version={bookingVersion}>
-        {markers.map(({ resource: desk, xPct, yPct }) => {
+        {markerGroups.map((group) => {
+          if (group.kind === 'cluster') {
+            return (
+              <button
+                key={group.cluster.id}
+                type="button"
+                className="desk-pin desk-pin-cluster"
+                style={{ left: `${group.cluster.screenX}px`, top: `${group.cluster.screenY}px` }}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onSelectDesk(group.cluster.members[0]!.resource.id, event.currentTarget);
+                }}
+              >
+                <span className="pin-hit-content" style={{ transform: `scale(${1 / Math.max(viewport.zoom, 0.0001)})` }}>
+                  <span className="desk-pin-count">{group.cluster.members.length}</span>
+                </span>
+              </button>
+            );
+          }
+
+          const { marker } = group;
+          const desk = marker.resource;
           const bookings = normalizeBookings(desk);
           const isRoom = desk.kind === 'RAUM';
           const roomMarkerLabel = isRoom ? getRoomMarkerLabel(desk) : null;
@@ -201,8 +244,8 @@ const DeskOverlay = memo(function DeskOverlay({ markers, selectedDeskId, hovered
               className={`desk-pin ${selectedDeskId === desk.id ? 'selected' : ''} ${hoveredDeskId === desk.id ? 'hovered' : ''} ${desk.isCurrentUsersDesk ? 'is-own-desk' : ''} ${desk.isHighlighted ? 'is-highlighted' : ''} ${desk.isSelected ? 'is-selected' : ''} ${!isClickable ? 'is-click-disabled' : ''} ${isTenantBlocked ? 'is-not-bookable' : ''}`}
               data-free={shouldShowPulse ? 'true' : 'false'}
               style={{
-                left: `${xPct}%`,
-                top: `${yPct}%`
+                left: `${marker.worldX}px`,
+                top: `${marker.worldY}px`
               }}
               onMouseEnter={(event) => {
                 const rect = event.currentTarget.getBoundingClientRect();
@@ -242,6 +285,7 @@ const DeskOverlay = memo(function DeskOverlay({ markers, selectedDeskId, hovered
               }) : undefined}
               aria-label={`${resourceKindLabel(desk.kind)}: ${getDeskLabel(desk)}`}
             >
+              <span className="pin-hit-content" style={{ transform: `scale(${1 / Math.max(viewport.zoom, 0.0001)})` }}>
               {shouldShowPulse && <div className="pulseHalo" aria-hidden="true" />}
               {isRoom ? (
                 <>
@@ -289,6 +333,7 @@ const DeskOverlay = memo(function DeskOverlay({ markers, selectedDeskId, hovered
                 ) : (
                   <span className="desk-pin-kind-icon" aria-hidden="true">{getResourceMarkerIcon(desk.kind)}</span>
                 )}
+              </span>
               </span>
             </button>
           );
@@ -354,9 +399,10 @@ export function FloorplanCanvas({ imageUrl, imageAlt, desks, selectedDeskId, hov
       onDisplayedRectChange={onDisplayedRectChange}
       containImageOnly={containImageOnly}
       style={style}
-      renderMarkers={(markers) => (!containImageOnly ? (
+      renderMarkers={(markers, viewport) => (!containImageOnly ? (
         <DeskOverlay
           markers={markers}
+          viewport={viewport}
           selectedDeskId={selectedDeskId}
           hoveredDeskId={hoveredDeskId}
           selectedDate={selectedDate}
