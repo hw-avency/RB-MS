@@ -2482,7 +2482,16 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
             key={`selected-${occupant.userId}-${occupant.deskId}`}
             ref={(node) => { occupantRowRefs.current[occupant.deskId] = node; }}
             role="listitem"
+            tabIndex={0}
             className={`occupant-compact-card ${(hoveredDeskId === occupant.deskId || selectedDeskId === occupant.deskId) ? 'is-active' : ''} ${highlightedDeskId === occupant.deskId ? 'is-highlighted' : ''}`}
+            onClick={(event) => {
+              selectDeskFromCanvas(occupant.deskId, event.currentTarget);
+            }}
+            onKeyDown={(event) => {
+              if (event.key !== 'Enter' && event.key !== ' ') return;
+              event.preventDefault();
+              selectDeskFromCanvas(occupant.deskId, event.currentTarget);
+            }}
             onMouseEnter={() => {
               setHoveredDeskId(occupant.deskId);
               setHighlightedDeskId(occupant.deskId);
@@ -2491,6 +2500,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
               setHoveredDeskId('');
               setHighlightedDeskId('');
             }}
+            aria-label={`Profilkarte für ${occupant.name} öffnen`}
           >
             <div className="occupant-card-main">
               <Avatar displayName={occupant.name} email={occupant.email} photoUrl={occupant.photoUrl} size={26} />

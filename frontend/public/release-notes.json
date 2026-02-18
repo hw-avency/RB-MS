@@ -1,5 +1,17 @@
 [
   {
+    "version": "1.5.10",
+    "date": "2026-02-18",
+    "type": "feature",
+    "title": "Anwesenheitsliste öffnet jetzt direkt die Profilkarte",
+    "summary": "Personen im rechten Anwesenheits-Panel können jetzt direkt angeklickt werden, um die bestehende Profilkarte der Buchung zu öffnen.",
+    "items": [
+      "Ein Klick auf einen Eintrag in der Anwesenheitsliste öffnet jetzt dieselbe Profilkarte wie bei der Auswahl über den Floorplan.",
+      "Die Liste unterstützt zusätzlich Tastaturbedienung: Enter und Leertaste öffnen die Profilkarte für den markierten Eintrag.",
+      "Aktive Einträge bleiben visuell markiert, damit Auswahl und Kontext im Floorplan sofort erkennbar sind."
+    ]
+  },
+  {
     "version": "1.5.9",
     "date": "2026-02-18",
     "type": "feature",
