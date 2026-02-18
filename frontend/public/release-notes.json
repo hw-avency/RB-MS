@@ -2,13 +2,14 @@
   {
     "version": "1.5.3",
     "date": "2026-02-18",
-    "type": "bugfix",
-    "title": "Profil-Refresh übernimmt jetzt Telefon, Name und E-Mail robuster aus Entra",
-    "summary": "Beim Aktualisieren von Entra-Profilen werden Telefonnummern zuverlässiger übernommen; fehlt die primäre Mail, wird automatisch die UPN-Adresse genutzt.",
+    "type": "feature","bugfix"
+    "title": "Feedback-Meldungen mit Status, Detailansicht und Löschfunktion",
+    "summary": "Im Admin-Bereich können Feature-Requests und Bugmeldungen jetzt aktiv bearbeitet werden: mit Status, großer Detailansicht und kompletter Löschoption.",
     "items": [
-      "Der Profil-Refresh liest jetzt mobile Telefonnummer und geschäftliche Telefonnummer aus Microsoft Graph und speichert die beste verfügbare Nummer.",
-      "Falls in Entra kein Feld \"mail\" gesetzt ist, wird automatisch \"userPrincipalName\" als E-Mail verwendet.",
-      "Bei eigenem Profil-Refresh wird ein vorhandenes Session-Graph-Token bevorzugt genutzt; ansonsten bleibt der bestehende Service-Token-Fallback aktiv."
+      "Jede Meldung hat jetzt einen Status: In Arbeit, Abgelehnt oder Erledigt.",
+      "Admins können den Status direkt in der Liste und auch im Detail-Popup ändern.",
+      "Meldungen lassen sich vollständig löschen; zusätzlich gibt es eine große Detailansicht beim Klick auf einen Listeneintrag.",
+      "Die Nachrichtenspalte ist breiter, damit längere Texte in der Übersicht besser lesbar sind."
     ]
   },
   {

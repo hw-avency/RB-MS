@@ -3,7 +3,7 @@ import { canCancelBooking } from './auth/bookingAuth';
 import express from 'express';
 import crypto from 'crypto';
 import bcrypt from 'bcryptjs';
-import { BookedFor, BookingSlot, DaySlot, DeskTenantScope, FeedbackReportType, FloorplanTenantScope, Prisma, RecurrencePatternType, RecurringBooking, ResourceKind } from '@prisma/client';
+import { BookedFor, BookingSlot, DaySlot, DeskTenantScope, FeedbackReportStatus, FeedbackReportType, FloorplanTenantScope, Prisma, RecurrencePatternType, RecurringBooking, ResourceKind } from '@prisma/client';
 import { prisma } from './prisma';
 import { expandRecurrence, MAX_SERIES_OCCURRENCES, type RecurrenceDefinition, validateRecurrenceDefinition } from './recurrence';
 
@@ -76,6 +76,7 @@ const FLOORPLAN_TENANT_SCOPES = new Set<FloorplanTenantScope>(['ALL', 'SELECTED'
 const BOOKED_FOR_VALUES = new Set<BookedFor>(['SELF', 'GUEST']);
 const RECURRENCE_PATTERN_VALUES = new Set<RecurrencePatternType>(['DAILY', 'WEEKLY', 'MONTHLY', 'YEARLY']);
 const FEEDBACK_REPORT_TYPES = new Set<FeedbackReportType>(['BUG', 'FEATURE_REQUEST']);
+const FEEDBACK_REPORT_STATUSES = new Set<FeedbackReportStatus>(['IN_ARBEIT', 'ABGELEHNT', 'ERLEDIGT']);
 const SERIES_BOOKING_CHUNK_SIZE = 100;
 
 const parseResourceKind = (value: unknown): ResourceKind | null => {
@@ -106,6 +107,12 @@ const parseFeedbackReportType = (value: unknown): FeedbackReportType | null => {
   if (typeof value !== 'string') return null;
   const normalized = value.trim().toUpperCase() as FeedbackReportType;
   return FEEDBACK_REPORT_TYPES.has(normalized) ? normalized : null;
+};
+
+const parseFeedbackReportStatus = (value: unknown): FeedbackReportStatus | null => {
+  if (typeof value !== 'string') return null;
+  const normalized = value.trim().toUpperCase() as FeedbackReportStatus;
+  return FEEDBACK_REPORT_STATUSES.has(normalized) ? normalized : null;
 };
 
 const normalizeGuestName = (value: unknown): string | null => {
@@ -2460,8 +2467,14 @@ app.post('/feedback-reports', requireAuthenticated, async (req, res) => {
 
 app.get('/admin/feedback-reports', requireAdmin, async (req, res) => {
   const type = req.query.type ? parseFeedbackReportType(req.query.type) : null;
+  const status = req.query.status ? parseFeedbackReportStatus(req.query.status) : null;
   if (req.query.type && !type) {
     res.status(400).json({ error: 'invalid_type', message: 'type must be BUG or FEATURE_REQUEST' });
+    return;
+  }
+
+  if (req.query.status && !status) {
+    res.status(400).json({ error: 'invalid_status', message: 'status must be IN_ARBEIT, ABGELEHNT or ERLEDIGT' });
     return;
   }
 
@@ -2493,6 +2506,7 @@ app.get('/admin/feedback-reports', requireAdmin, async (req, res) => {
   const reports = await prisma.feedbackReport.findMany({
     where: {
       ...(type ? { type } : {}),
+      ...(status ? { status } : {}),
       ...(reporter ? {
         OR: [
           { reporterDisplayName: { contains: reporter, mode: 'insensitive' } },
@@ -2508,12 +2522,65 @@ app.get('/admin/feedback-reports', requireAdmin, async (req, res) => {
     reports: reports.map((report) => ({
       id: report.id,
       type: report.type,
+      status: report.status,
       message: report.message,
       reporterDisplayName: report.reporterDisplayName,
       reporterEmail: report.reporterEmail,
       createdAt: report.createdAt.toISOString()
     }))
   });
+});
+
+app.patch('/admin/feedback-reports/:id/status', requireAdmin, async (req, res) => {
+  const id = getRouteId(req.params.id);
+  if (!id) {
+    res.status(400).json({ error: 'validation', message: 'id is required' });
+    return;
+  }
+
+  const status = parseFeedbackReportStatus(req.body?.status);
+  if (!status) {
+    res.status(400).json({ error: 'invalid_status', message: 'status must be IN_ARBEIT, ABGELEHNT or ERLEDIGT' });
+    return;
+  }
+
+  try {
+    const updated = await prisma.feedbackReport.update({
+      where: { id },
+      data: { status }
+    });
+
+    res.status(200).json({
+      id: updated.id,
+      status: updated.status,
+      updatedAt: updated.updatedAt.toISOString()
+    });
+  } catch (error) {
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2025') {
+      res.status(404).json({ error: 'not_found', message: 'Feedback report not found' });
+      return;
+    }
+    throw error;
+  }
+});
+
+app.delete('/admin/feedback-reports/:id', requireAdmin, async (req, res) => {
+  const id = getRouteId(req.params.id);
+  if (!id) {
+    res.status(400).json({ error: 'validation', message: 'id is required' });
+    return;
+  }
+
+  try {
+    await prisma.feedbackReport.delete({ where: { id } });
+    res.status(204).send();
+  } catch (error) {
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2025') {
+      res.status(404).json({ error: 'not_found', message: 'Feedback report not found' });
+      return;
+    }
+    throw error;
+  }
 });
 
 app.get('/me', (req, res) => {

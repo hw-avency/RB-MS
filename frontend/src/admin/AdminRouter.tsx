@@ -17,7 +17,8 @@ type Tenant = { id: string; domain: string; name?: string | null; entraTenantId?
 type EntraConfig = { clientId: string | null; redirectUri: string | null };
 type Booking = { id: string; deskId: string; userEmail: string; userDisplayName?: string; employeeId?: string; date: string; slot?: 'FULL_DAY' | 'MORNING' | 'AFTERNOON' | 'CUSTOM'; startTime?: string; endTime?: string; createdAt?: string; updatedAt?: string; bookedFor?: 'SELF' | 'GUEST'; guestName?: string | null; createdByUserId?: string; createdBy?: { id: string; displayName?: string | null; email: string }; user?: { id: string; displayName?: string | null; email: string } | null };
 type FeedbackReportType = 'BUG' | 'FEATURE_REQUEST';
-type FeedbackReport = { id: string; type: FeedbackReportType; message: string; reporterDisplayName: string; reporterEmail: string; createdAt: string };
+type FeedbackReportStatus = 'IN_ARBEIT' | 'ABGELEHNT' | 'ERLEDIGT';
+type FeedbackReport = { id: string; type: FeedbackReportType; status: FeedbackReportStatus; message: string; reporterDisplayName: string; reporterEmail: string; createdAt: string; updatedAt?: string };
 type DbColumn = { name: string; type: string; required: boolean; id: boolean; hasDefaultValue: boolean };
 type DbTable = { name: string; model: string; columns: DbColumn[] };
 type RouteProps = { path: string; navigate: (to: string) => void; onRoleStateChanged: () => Promise<void>; onLogout: () => Promise<void>; currentUser?: AdminSession | null };
@@ -61,6 +62,8 @@ const in7Days = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().sli
 
 const formatDate = (value?: string) => (value ? new Date(value).toLocaleString('de-DE') : '—');
 const formatDateOnly = (value?: string) => (value ? new Date(value).toLocaleDateString('de-DE') : '—');
+const feedbackStatusLabel = (status: FeedbackReportStatus): string => ({ IN_ARBEIT: 'In Arbeit', ABGELEHNT: 'Abgelehnt', ERLEDIGT: 'Erledigt' }[status]);
+const feedbackStatusTone = (status: FeedbackReportStatus): 'default' | 'warn' | 'ok' => ({ IN_ARBEIT: 'default', ABGELEHNT: 'warn', ERLEDIGT: 'ok' }[status]);
 const getCreatorDisplay = (booking: Booking): string => booking.createdBy?.displayName?.trim() || booking.createdBy?.email || booking.userDisplayName || booking.userEmail;
 const getCreatorEmail = (booking: Booking): string => booking.createdBy?.email || booking.userEmail;
 const basePath = (path: string) => path.split('?')[0];
@@ -1832,19 +1835,34 @@ function TenantsPage({ path, navigate, onLogout, currentUser }: RouteProps) {
 
 
 function FeedbackReportsPage({ path, navigate, onLogout, currentUser }: RouteProps) {
+  const toasts = useToast();
   const [reports, setReports] = useState<FeedbackReport[]>([]);
   const [state, setState] = useState<DataState>({ loading: true, error: '', ready: false });
   const [reporterFilter, setReporterFilter] = useState('');
   const [typeFilter, setTypeFilter] = useState<'ALL' | FeedbackReportType>('ALL');
+  const [statusFilter, setStatusFilter] = useState<'ALL' | FeedbackReportStatus>('ALL');
   const [fromDate, setFromDate] = useState('');
   const [toDate, setToDate] = useState('');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
+  const [selectedReport, setSelectedReport] = useState<FeedbackReport | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<FeedbackReport | null>(null);
+  const [updatingReportId, setUpdatingReportId] = useState<string | null>(null);
+  const [deletingReportId, setDeletingReportId] = useState<string | null>(null);
+
+  const filteredReports = useMemo(() => {
+    const needle = reporterFilter.trim().toLowerCase();
+    return reports.filter((report) => {
+      if (!needle) return true;
+      return report.reporterDisplayName.toLowerCase().includes(needle) || report.reporterEmail.toLowerCase().includes(needle);
+    });
+  }, [reports, reporterFilter]);
 
   const load = async () => {
     setState({ loading: true, error: '', ready: false });
     try {
       const query = new URLSearchParams();
       if (typeFilter !== 'ALL') query.set('type', typeFilter);
+      if (statusFilter !== 'ALL') query.set('status', statusFilter);
       if (reporterFilter.trim()) query.set('reporter', reporterFilter.trim());
       if (fromDate) query.set('fromDate', fromDate);
       if (toDate) query.set('toDate', toDate);
@@ -1859,14 +1877,44 @@ function FeedbackReportsPage({ path, navigate, onLogout, currentUser }: RoutePro
 
   useEffect(() => {
     void load();
-  }, [typeFilter, sortDirection, fromDate, toDate]);
+  }, [typeFilter, statusFilter, sortDirection, fromDate, toDate]);
+
+  const updateStatus = async (report: FeedbackReport, status: FeedbackReportStatus) => {
+    if (report.status === status) return;
+    setUpdatingReportId(report.id);
+    try {
+      await patch(`/admin/feedback-reports/${report.id}/status`, { status });
+      setReports((current) => current.map((item) => item.id === report.id ? { ...item, status } : item));
+      setSelectedReport((current) => (current && current.id === report.id ? { ...current, status } : current));
+      toasts.success('Status aktualisiert');
+    } catch (error) {
+      toasts.error(error instanceof Error ? error.message : 'Status konnte nicht aktualisiert werden');
+    } finally {
+      setUpdatingReportId(null);
+    }
+  };
+
+  const deleteReport = async (report: FeedbackReport) => {
+    setDeletingReportId(report.id);
+    try {
+      await del(`/admin/feedback-reports/${report.id}`);
+      setReports((current) => current.filter((item) => item.id !== report.id));
+      setSelectedReport((current) => current?.id === report.id ? null : current);
+      setDeleteTarget(null);
+      toasts.success('Meldung gelöscht');
+    } catch (error) {
+      toasts.error(error instanceof Error ? error.message : 'Löschen fehlgeschlagen');
+    } finally {
+      setDeletingReportId(null);
+    }
+  };
 
   return (
     <AdminLayout path={path} navigate={navigate} title="Feature Requests/Bug Reports" onLogout={onLogout} currentUser={currentUser ?? null}>
       <section className="card stack-sm">
         <ListToolbar
           title="Meldungen"
-          count={reports.length}
+          count={filteredReports.length}
           filters={(
             <>
               <div className="admin-search">
@@ -1883,6 +1931,15 @@ function FeedbackReportsPage({ path, navigate, onLogout, currentUser }: RoutePro
                   <option value="ALL">Alle</option>
                   <option value="BUG">Bug</option>
                   <option value="FEATURE_REQUEST">Feature Request</option>
+                </select>
+              </label>
+              <label className="field">
+                <span>Status</span>
+                <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as 'ALL' | FeedbackReportStatus)}>
+                  <option value="ALL">Alle</option>
+                  <option value="IN_ARBEIT">In Arbeit</option>
+                  <option value="ABGELEHNT">Abgelehnt</option>
+                  <option value="ERLEDIGT">Erledigt</option>
                 </select>
               </label>
               <label className="field">
@@ -1903,50 +1960,109 @@ function FeedbackReportsPage({ path, navigate, onLogout, currentUser }: RoutePro
               <button className="btn btn-outline" onClick={() => void load()}>Aktualisieren</button>
             </>
           )}
-          actions={<button className="btn btn-outline" onClick={() => { setReporterFilter(''); setTypeFilter('ALL'); setFromDate(''); setToDate(''); setSortDirection('desc'); }}>Filter zurücksetzen</button>}
+          actions={<button className="btn btn-outline" onClick={() => { setReporterFilter(''); setTypeFilter('ALL'); setStatusFilter('ALL'); setFromDate(''); setToDate(''); setSortDirection('desc'); }}>Filter zurücksetzen</button>}
         />
 
         {state.loading && <p className="muted">Meldungen werden geladen …</p>}
         {state.error && <ErrorState text={state.error} onRetry={() => void load()} />}
 
-        {!state.loading && !state.error && reports.length === 0 && <EmptyState text="Keine Meldungen gefunden." />}
+        {!state.loading && !state.error && filteredReports.length === 0 && <EmptyState text="Keine Meldungen gefunden." />}
 
-        {!state.loading && !state.error && reports.length > 0 && (
+        {!state.loading && !state.error && filteredReports.length > 0 && (
           <div className="table-wrap">
-            <table className="admin-table">
+            <table className="admin-table feedback-reports-table">
               <thead>
                 <tr>
                   <th>Datum</th>
                   <th>User</th>
                   <th>Typ</th>
-                  <th>Nachricht</th>
+                  <th>Status</th>
+                  <th className="feedback-message-col">Nachricht</th>
+                  <th className="align-right">Aktionen</th>
                 </tr>
               </thead>
               <tbody>
-                {reports
-                  .filter((report) => {
-                    const needle = reporterFilter.trim().toLowerCase();
-                    if (!needle) return true;
-                    return report.reporterDisplayName.toLowerCase().includes(needle) || report.reporterEmail.toLowerCase().includes(needle);
-                  })
-                  .map((report) => (
-                    <tr key={report.id}>
-                      <td>{formatDate(report.createdAt)}</td>
-                      <td>
-                        <div>
-                          <strong>{report.reporterDisplayName}</strong>
-                          <p className="muted">{report.reporterEmail}</p>
-                        </div>
-                      </td>
-                      <td>{report.type === 'BUG' ? 'Bug' : 'Feature Request'}</td>
-                      <td style={{ whiteSpace: 'pre-wrap' }}>{report.message}</td>
-                    </tr>
-                  ))}
+                {filteredReports.map((report) => (
+                  <tr key={report.id} onClick={() => setSelectedReport(report)} className="feedback-row-clickable">
+                    <td>{formatDate(report.createdAt)}</td>
+                    <td>
+                      <div>
+                        <strong>{report.reporterDisplayName}</strong>
+                        <p className="muted">{report.reporterEmail}</p>
+                      </div>
+                    </td>
+                    <td>{report.type === 'BUG' ? 'Bug' : 'Feature Request'}</td>
+                    <td><Badge tone={feedbackStatusTone(report.status)}>{feedbackStatusLabel(report.status)}</Badge></td>
+                    <td className="feedback-message-col" style={{ whiteSpace: 'pre-wrap' }}>{report.message}</td>
+                    <td className="align-right" onClick={(event) => event.stopPropagation()}>
+                      <RowMenu
+                        items={[
+                          { label: 'Details öffnen', onSelect: () => setSelectedReport(report) },
+                          { label: 'Status: In Arbeit', onSelect: () => { void updateStatus(report, 'IN_ARBEIT'); } },
+                          { label: 'Status: Abgelehnt', onSelect: () => { void updateStatus(report, 'ABGELEHNT'); } },
+                          { label: 'Status: Erledigt', onSelect: () => { void updateStatus(report, 'ERLEDIGT'); } },
+                          { label: 'Löschen', danger: true, onSelect: () => setDeleteTarget(report) }
+                        ]}
+                      />
+                    </td>
+                  </tr>
+                ))}
               </tbody>
             </table>
           </div>
         )}
+
+        {updatingReportId && <p className="muted">Status wird gespeichert …</p>}
       </section>
+
+      {selectedReport && createPortal(
+        <div className="overlay" onClick={() => setSelectedReport(null)}>
+          <section className="card dialog stack-sm feedback-report-dialog" role="dialog" aria-modal="true" onClick={(event) => event.stopPropagation()}>
+            <div className="inline-between">
+              <h3>Meldung im Detail</h3>
+              <Badge tone={feedbackStatusTone(selectedReport.status)}>{feedbackStatusLabel(selectedReport.status)}</Badge>
+            </div>
+            <div className="stack-xs">
+              <p><strong>Typ:</strong> {selectedReport.type === 'BUG' ? 'Bug' : 'Feature Request'}</p>
+              <p><strong>Gemeldet von:</strong> {selectedReport.reporterDisplayName} ({selectedReport.reporterEmail})</p>
+              <p><strong>Erstellt:</strong> {formatDate(selectedReport.createdAt)}</p>
+            </div>
+            <label className="field">
+              <span>Status</span>
+              <select
+                value={selectedReport.status}
+                disabled={updatingReportId === selectedReport.id}
+                onChange={(event) => { void updateStatus(selectedReport, event.target.value as FeedbackReportStatus); }}
+              >
+                <option value="IN_ARBEIT">In Arbeit</option>
+                <option value="ABGELEHNT">Abgelehnt</option>
+                <option value="ERLEDIGT">Erledigt</option>
+              </select>
+            </label>
+            <div className="stack-xs">
+              <strong>Nachricht</strong>
+              <div className="feedback-message-box">{selectedReport.message}</div>
+            </div>
+            <div className="inline-between">
+              <button className="btn btn-danger" onClick={() => setDeleteTarget(selectedReport)} disabled={deletingReportId === selectedReport.id}>Löschen</button>
+              <button className="btn btn-outline" onClick={() => setSelectedReport(null)}>Schließen</button>
+            </div>
+          </section>
+        </div>,
+        document.body
+      )}
+
+      {deleteTarget && (
+        <ConfirmDialog
+          title="Meldung löschen?"
+          description={`Die Meldung von ${deleteTarget.reporterDisplayName} wird dauerhaft gelöscht.`}
+          onCancel={() => setDeleteTarget(null)}
+          onConfirm={() => { void deleteReport(deleteTarget); }}
+          confirmLabel={deletingReportId === deleteTarget.id ? 'Lösche…' : 'Löschen'}
+          confirmDisabled={deletingReportId === deleteTarget.id}
+          cancelDisabled={deletingReportId === deleteTarget.id}
+        />
+      )}
     </AdminLayout>
   );
 }
