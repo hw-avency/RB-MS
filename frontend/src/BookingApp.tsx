@@ -1264,10 +1264,11 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
   const popupMode: BookingMode = popupDesk && popupMyBookings.length > 0 ? 'manage' : 'create';
   const popupDeskState = popupDesk ? (popupDesk.isBookableForMe === false ? 'UNBOOKABLE' : !canBookDesk(popupDesk) ? 'TAKEN' : 'FREE') : null;
   const meEmployeeId = currentUser?.id;
-  const selectedBooking = popupMySelectedBooking;
-  const canCancelHere =
-    !!selectedBooking &&
-    canCancelBooking(selectedBooking, meEmployeeId);
+  const popupCancelableBooking = useMemo(() => {
+    if (!popupDesk || isRoomResource(popupDesk)) return null;
+    return popupDeskBookings.find((booking) => canCancelBooking(booking, meEmployeeId, currentUser?.role === 'admin')) ?? null;
+  }, [currentUser?.role, meEmployeeId, popupDesk, popupDeskBookings]);
+  const canCancelHere = Boolean(popupCancelableBooking);
   const popupOwnBookingIsRecurring = useMemo(() => popupDeskBookings.some((booking) => booking.isCurrentUser && (Boolean(booking.recurringBookingId) || Boolean(booking.recurringGroupId))), [popupDeskBookings]);
   const manageSlotConflict = useMemo(() => {
     if (!popupDesk || !popupMySelectedBooking || isRoomResource(popupDesk)) return '';
@@ -1740,8 +1741,8 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
   }, [cancelConfirmContext?.bookingIds, cancelConfirmIsSeries, cancelFlowState]);
 
   const openCancelConfirm = () => {
-    if (!deskPopup || !popupDesk || !canCancelHere) return;
-    const ownBooking = normalizeDeskBookings(popupDesk).find((booking) => booking.isCurrentUser);
+    if (!deskPopup || !popupDesk || !canCancelHere || !popupCancelableBooking) return;
+    const ownBooking = popupCancelableBooking;
     if (!ownBooking) return;
     const bookingIds = ownBooking.sourceBookingIds?.length
       ? ownBooking.sourceBookingIds
@@ -2686,6 +2687,18 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
                     }
                     : undefined}
                 />
+                {!isRoomResource(popupDesk) && canCancelHere && (
+                  <footer className="desk-popup-footer-actions">
+                    <button
+                      type="button"
+                      className="btn btn-danger"
+                      onClick={openCancelConfirm}
+                      disabled={bookingDialogState === 'SUBMITTING' || isCancellingBooking}
+                    >
+                      Stornieren
+                    </button>
+                  </footer>
+                )}
               </div>
             </>
           ) : (
