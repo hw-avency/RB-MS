@@ -53,6 +53,8 @@ type DeskFormState = {
   tenantIds: string[];
 };
 
+type BadgeTone = 'default' | 'ok' | 'warn';
+
 const navItems = [
   { to: '/admin', label: 'Dashboard' },
   { to: '/admin/floorplans', label: 'Floorpläne' },
@@ -73,7 +75,20 @@ const in7Days = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().sli
 const formatDate = (value?: string) => (value ? new Date(value).toLocaleString('de-DE') : '—');
 const formatDateOnly = (value?: string) => (value ? new Date(value).toLocaleDateString('de-DE') : '—');
 const feedbackStatusLabel = (status: FeedbackReportStatus): string => ({ IN_ARBEIT: 'In Arbeit', ABGELEHNT: 'Abgelehnt', ERLEDIGT: 'Erledigt' }[status]);
-const feedbackStatusTone = (status: FeedbackReportStatus): 'default' | 'warn' | 'ok' => ({ IN_ARBEIT: 'default', ABGELEHNT: 'warn', ERLEDIGT: 'ok' }[status]);
+const toBadgeTone = (variant: string | undefined): BadgeTone => {
+  if (variant === 'success' || variant === 'ok') return 'ok';
+  if (variant === 'warning' || variant === 'warn') return 'warn';
+  return 'default';
+};
+const feedbackStatusTone = (status: FeedbackReportStatus): BadgeTone => {
+  const variantByStatus: Record<FeedbackReportStatus, string> = {
+    IN_ARBEIT: 'default',
+    ABGELEHNT: 'warning',
+    ERLEDIGT: 'success',
+  };
+
+  return toBadgeTone(variantByStatus[status]);
+};
 const getCreatorDisplay = (booking: Booking): string => booking.createdBy?.displayName?.trim() || booking.createdBy?.email || booking.userDisplayName || booking.userEmail;
 const getCreatorEmail = (booking: Booking): string => booking.createdBy?.email || booking.userEmail;
 const basePath = (path: string) => path.split('?')[0];
@@ -104,7 +119,7 @@ const formatCellValue = (columnName: string, value: unknown) => {
   return String(value);
 };
 
-function Badge({ children, tone = 'default' }: { children: ReactNode; tone?: 'default' | 'ok' | 'warn' }) {
+function Badge({ children, tone = 'default' }: { children: ReactNode; tone?: BadgeTone }) {
   return <span className={`admin-badge admin-badge-${tone}`}>{children}</span>;
 }
 
