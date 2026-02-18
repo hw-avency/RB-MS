@@ -1,5 +1,17 @@
 [
   {
+    "version": "1.5.21",
+    "date": "2026-02-18",
+    "type": "bugfix",
+    "title": "Parkplätze berücksichtigen Zeitfenster wieder korrekt",
+    "summary": "Parkplatz-Buchungen mit Uhrzeiten blockieren nicht mehr den ganzen Tag. In Detailkarten wird der gebuchte Zeitraum jetzt als Uhrzeit statt „Ganztags“ gezeigt.",
+    "items": [
+      "Zeitbasierte Parkplatz-Buchungen zeigen in den Karten nun den echten Zeitraum (z. B. 09:00–11:00).",
+      "Beim Öffnen belegter Parkplätze wird der Zeitraum konsistent als Uhrzeit dargestellt – wie bei Zeitfenstern in Räumen.",
+      "Parkplätze bleiben trotz bestehender Teilzeit-Buchung weiter buchbar, sodass zusätzliche freie Zeitfenster genutzt werden können."
+    ]
+  },
+  {
     "version": "1.5.20",
     "date": "2026-02-18",
     "type": "bugfix",
