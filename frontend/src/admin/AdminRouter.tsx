@@ -12,7 +12,9 @@ import { RESOURCE_KIND_OPTIONS, resourceKindLabel, type ResourceKind } from '../
 type SeriesPolicy = 'DEFAULT' | 'ALLOW' | 'DISALLOW';
 type Floorplan = { id: string; name: string; imageUrl: string; isDefault?: boolean; sortOrder?: number; tenantScope?: 'ALL' | 'SELECTED'; tenantIds?: string[]; defaultResourceKind?: ResourceKind; defaultAllowSeries?: boolean; createdAt?: string; updatedAt?: string };
 type Desk = { id: string; floorplanId: string; name: string; kind?: ResourceKind; allowSeriesOverride?: boolean | null; effectiveAllowSeries?: boolean; x: number | null; y: number | null; position?: { x: number; y: number } | null; tenantScope?: 'ALL' | 'SELECTED'; tenantIds?: string[]; createdAt?: string; updatedAt?: string };
-type Employee = { id: string; email: string; displayName: string; role: 'admin' | 'user'; isActive: boolean; phone?: string | null; photoUrl?: string | null; createdAt?: string; updatedAt?: string };
+type Employee = { id: string; email: string; displayName: string; role: 'admin' | 'user'; isActive: boolean; phone?: string | null; photoUrl?: string | null; photoUpdatedAt?: string | null; createdAt?: string; updatedAt?: string };
+type PhoneSyncInfo = { graphReturnedPhone: boolean; source: 'me' | 'users'; reasonIfEmpty: 'graph_null' | 'mapping' | 'db_write' | 'unknown' | null };
+type RefreshEmployeeProfileResponse = Employee & { phoneSyncInfo: PhoneSyncInfo };
 type Tenant = { id: string; domain: string; name?: string | null; entraTenantId?: string | null; employeeCount?: number; createdAt?: string; updatedAt?: string };
 type EntraConfig = { clientId: string | null; redirectUri: string | null };
 type Booking = { id: string; deskId: string; userEmail: string; userDisplayName?: string; employeeId?: string; date: string; slot?: 'FULL_DAY' | 'MORNING' | 'AFTERNOON' | 'CUSTOM'; startTime?: string; endTime?: string; createdAt?: string; updatedAt?: string; bookedFor?: 'SELF' | 'GUEST'; guestName?: string | null; createdByUserId?: string; createdBy?: { id: string; displayName?: string | null; email: string }; user?: { id: string; displayName?: string | null; email: string } | null };
@@ -1438,9 +1440,15 @@ function EmployeesPage({ path, navigate, onRoleStateChanged, onLogout, currentAd
   const refreshEmployeeProfile = async (employee: Employee) => {
     setRefreshingProfileId(employee.id);
     try {
-      const updated = await post<Employee>(`/admin/employees/${employee.id}/refresh-profile`, {});
+      const updated = await post<RefreshEmployeeProfileResponse>(`/admin/employees/${employee.id}/refresh-profile`, {});
       setEmployees((current) => current.map((row) => (row.id === employee.id ? updated : row)));
-      toasts.success('Entra-Profil aktualisiert');
+
+      if (updated.phoneSyncInfo.graphReturnedPhone) {
+        toasts.success('Entra-Profil inkl. Telefonnummer aktualisiert');
+      } else {
+        toasts.success('Entra-Profil aktualisiert');
+        toasts.toast({ message: 'Hinweis: Entra liefert für diesen Nutzer keine Telefonnummer (mobilePhone/businessPhones leer).', durationMs: 5200 });
+      }
     } catch (err) {
       toasts.error(err instanceof Error ? err.message : 'Entra-Profil konnte nicht aktualisiert werden');
     } finally {
@@ -1486,18 +1494,20 @@ function EmployeesPage({ path, navigate, onRoleStateChanged, onLogout, currentAd
                 <th className="avatar-col">Avatar</th>
                 <th>Name</th>
                 <th>E-Mail</th>
+                <th>Telefon</th>
                 <th>Rolle</th>
                 <th>Status</th>
                 <th className="align-right">Aktionen</th>
               </tr>
             </thead>
-            {state.loading && !state.ready ? <SkeletonRows columns={6} /> : (
+            {state.loading && !state.ready ? <SkeletonRows columns={7} /> : (
               <tbody>
                 {filtered.map((employee) => (
                   <tr key={employee.id}>
                     <td className="avatar-col"><Avatar displayName={employee.displayName} email={employee.email} photoUrl={employee.photoUrl ?? undefined} size={24} /></td>
                     <td>{employee.displayName}</td>
                     <td className="truncate-cell" title={employee.email}>{employee.email}</td>
+                    <td className="truncate-cell" title={employee.phone ?? ''}>{employee.phone ?? '—'}</td>
                     <td>
                       <select value={employee.role} disabled={updatingRoleId === employee.id} onChange={(event) => { const nextRole = event.target.value as 'admin' | 'user'; if (nextRole !== employee.role) void updateRole(employee, nextRole); }}>
                         <option value="user">User</option>

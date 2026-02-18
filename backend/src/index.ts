@@ -59,6 +59,7 @@ const pushAppLog = (level: AppLogLevel, args: unknown[]): void => {
 
 const originalConsole = {
   log: console.log.bind(console),
+  info: console.info.bind(console),
   warn: console.warn.bind(console),
   error: console.error.bind(console),
   debug: console.debug.bind(console)
@@ -67,6 +68,11 @@ const originalConsole = {
 console.log = (...args: unknown[]) => {
   pushAppLog('info', args);
   originalConsole.log(...args);
+};
+
+console.info = (...args: unknown[]) => {
+  pushAppLog('info', args);
+  originalConsole.info(...args);
 };
 
 console.warn = (...args: unknown[]) => {
@@ -1345,87 +1351,177 @@ const chooseGraphDisplayName = (payload: GraphProfilePayload): string | null => 
   return displayName.length > 0 ? displayName : null;
 };
 
-const saveEmployeeGraphProfile = async (employeeId: string, payload: GraphProfilePayload) => {
+type PhoneSyncReasonIfEmpty = 'graph_null' | 'mapping' | 'db_write' | 'unknown';
+type PhoneSyncSource = 'me' | 'users';
+type GraphPhoneSyncResult = {
+  graphCallSucceeded: boolean;
+  source: PhoneSyncSource;
+  mobilePhonePresent: boolean;
+  businessPhonesCount: number;
+  graphReturnedPhone: boolean;
+  reasonIfEmpty: PhoneSyncReasonIfEmpty | null;
+  dbWriteSucceeded: boolean;
+};
+
+const getBusinessPhonesCount = (payload: GraphProfilePayload): number => {
+  if (!Array.isArray(payload.businessPhones)) return 0;
+  return payload.businessPhones.reduce((count, value) => (normalizePhoneValue(value) ? count + 1 : count), 0);
+};
+
+const saveEmployeeGraphProfile = async (employeeId: string, payload: GraphProfilePayload): Promise<{ updated: boolean; mobilePhonePresent: boolean; businessPhonesCount: number; graphReturnedPhone: boolean; persistedPhone: string | null; dbWriteSucceeded: boolean }> => {
   const existing = await prisma.employee.findUnique({
     where: { id: employeeId },
     select: { displayName: true, email: true, phone: true }
   });
 
+  const mobilePhonePresent = Boolean(normalizePhoneValue(payload.mobilePhone));
+  const businessPhonesCount = getBusinessPhonesCount(payload);
+  const nextPhone = chooseGraphPhone(payload);
+  const graphReturnedPhone = nextPhone !== null;
+
   if (!existing) {
-    return { updated: false, hasMobilePhone: Boolean(normalizePhoneValue(payload.mobilePhone)), hasBusinessPhones: Array.isArray(payload.businessPhones) && payload.businessPhones.some((value) => Boolean(normalizePhoneValue(value))) };
+    return { updated: false, mobilePhonePresent, businessPhonesCount, graphReturnedPhone, persistedPhone: null, dbWriteSucceeded: false };
   }
 
   const nextDisplayName = chooseGraphDisplayName(payload) ?? existing.displayName;
   const nextEmail = chooseGraphEmail(payload) ?? existing.email;
-  const nextPhone = chooseGraphPhone(payload);
 
   const changed = nextDisplayName !== existing.displayName || nextEmail !== existing.email || nextPhone !== existing.phone;
   if (!changed) {
     return {
       updated: false,
-      hasMobilePhone: Boolean(normalizePhoneValue(payload.mobilePhone)),
-      hasBusinessPhones: Array.isArray(payload.businessPhones) && payload.businessPhones.some((value) => Boolean(normalizePhoneValue(value)))
+      mobilePhonePresent,
+      businessPhonesCount,
+      graphReturnedPhone,
+      persistedPhone: existing.phone,
+      dbWriteSucceeded: true
     };
   }
 
-  await prisma.employee.update({
-    where: { id: employeeId },
-    data: {
-      displayName: nextDisplayName,
-      email: nextEmail,
-      phone: nextPhone
-    }
-  });
+  try {
+    const updated = await prisma.employee.update({
+      where: { id: employeeId },
+      data: {
+        displayName: nextDisplayName,
+        email: nextEmail,
+        phone: nextPhone
+      },
+      select: { phone: true }
+    });
 
-  return {
-    updated: true,
-    hasMobilePhone: Boolean(normalizePhoneValue(payload.mobilePhone)),
-    hasBusinessPhones: Array.isArray(payload.businessPhones) && payload.businessPhones.some((value) => Boolean(normalizePhoneValue(value)))
-  };
+    return {
+      updated: true,
+      mobilePhonePresent,
+      businessPhonesCount,
+      graphReturnedPhone,
+      persistedPhone: updated.phone,
+      dbWriteSucceeded: true
+    };
+  } catch {
+    return {
+      updated: false,
+      mobilePhonePresent,
+      businessPhonesCount,
+      graphReturnedPhone,
+      persistedPhone: existing.phone,
+      dbWriteSucceeded: false
+    };
+  }
 };
 
-const readGraphProfile = async (url: string, accessToken: string): Promise<GraphProfilePayload | null> => {
+const readGraphProfile = async (url: string, accessToken: string): Promise<{ ok: boolean; status: number; payload: GraphProfilePayload | null }> => {
   const response = await fetch(url, {
     headers: { authorization: `Bearer ${accessToken}` }
   });
 
   if (!response.ok) {
-    return null;
+    return { ok: false, status: response.status, payload: null };
   }
 
-  return response.json() as Promise<GraphProfilePayload>;
+  const payload = await response.json() as GraphProfilePayload;
+  return { ok: true, status: response.status, payload };
 };
 
 const GRAPH_ME_PROFILE_SELECT = 'displayName,mail,userPrincipalName,mobilePhone,businessPhones';
 
-const syncEmployeePhoneFromGraph = async (employeeId: string, graphAccessToken: string): Promise<{ graphCallSucceeded: boolean; hasMobilePhone: boolean; hasBusinessPhones: boolean }> => {
+const resolvePhoneSyncReasonIfEmpty = (params: { graphCallSucceeded: boolean; mobilePhonePresent: boolean; businessPhonesCount: number; graphReturnedPhone: boolean; persistedPhone: string | null; dbWriteSucceeded: boolean }): PhoneSyncReasonIfEmpty | null => {
+  const { graphCallSucceeded, mobilePhonePresent, businessPhonesCount, graphReturnedPhone, persistedPhone, dbWriteSucceeded } = params;
+  if (!graphCallSucceeded) return 'unknown';
+  if (!graphReturnedPhone) {
+    return mobilePhonePresent || businessPhonesCount > 0 ? 'mapping' : 'graph_null';
+  }
+
+  if (!persistedPhone) {
+    return dbWriteSucceeded ? 'db_write' : 'unknown';
+  }
+
+  return null;
+};
+
+const syncEmployeePhoneFromGraph = async (employeeId: string, graphAccessToken: string): Promise<GraphPhoneSyncResult> => {
   try {
-    const payload = await readGraphProfile(`https://graph.microsoft.com/v1.0/me?$select=${encodeURIComponent(GRAPH_ME_PROFILE_SELECT)}`, graphAccessToken);
-    if (!payload) return { graphCallSucceeded: false, hasMobilePhone: false, hasBusinessPhones: false };
-    const result = await saveEmployeeGraphProfile(employeeId, payload);
-    return { graphCallSucceeded: true, hasMobilePhone: result.hasMobilePhone, hasBusinessPhones: result.hasBusinessPhones };
+    const graphResult = await readGraphProfile(`https://graph.microsoft.com/v1.0/me?$select=${encodeURIComponent(GRAPH_ME_PROFILE_SELECT)}`, graphAccessToken);
+    if (!graphResult.ok || !graphResult.payload) {
+      return { graphCallSucceeded: false, source: 'me', mobilePhonePresent: false, businessPhonesCount: 0, graphReturnedPhone: false, reasonIfEmpty: 'unknown', dbWriteSucceeded: false };
+    }
+
+    const result = await saveEmployeeGraphProfile(employeeId, graphResult.payload);
+    return {
+      graphCallSucceeded: true,
+      source: 'me',
+      mobilePhonePresent: result.mobilePhonePresent,
+      businessPhonesCount: result.businessPhonesCount,
+      graphReturnedPhone: result.graphReturnedPhone,
+      reasonIfEmpty: resolvePhoneSyncReasonIfEmpty({
+        graphCallSucceeded: true,
+        mobilePhonePresent: result.mobilePhonePresent,
+        businessPhonesCount: result.businessPhonesCount,
+        graphReturnedPhone: result.graphReturnedPhone,
+        persistedPhone: result.persistedPhone,
+        dbWriteSucceeded: result.dbWriteSucceeded
+      }),
+      dbWriteSucceeded: result.dbWriteSucceeded
+    };
   } catch {
-    return { graphCallSucceeded: false, hasMobilePhone: false, hasBusinessPhones: false };
+    return { graphCallSucceeded: false, source: 'me', mobilePhonePresent: false, businessPhonesCount: 0, graphReturnedPhone: false, reasonIfEmpty: 'unknown', dbWriteSucceeded: false };
   }
 };
 
-const syncEmployeePhoneWithAppToken = async (employee: { id: string; entraOid: string | null; email: string; entraTenantId?: string | null }): Promise<{ graphCallSucceeded: boolean; hasMobilePhone: boolean; hasBusinessPhones: boolean }> => {
+const syncEmployeePhoneWithAppToken = async (employee: { id: string; entraOid: string | null; email: string; entraTenantId?: string | null }): Promise<GraphPhoneSyncResult> => {
   const resolvedTenantId = normalizeEntraTenantId(employee.entraTenantId) ?? normalizeEntraTenantId(ENTRA_TENANT_ID);
-  if (!resolvedTenantId) return { graphCallSucceeded: false, hasMobilePhone: false, hasBusinessPhones: false };
+  if (!resolvedTenantId) return { graphCallSucceeded: false, source: 'users', mobilePhonePresent: false, businessPhonesCount: 0, graphReturnedPhone: false, reasonIfEmpty: 'unknown', dbWriteSucceeded: false };
 
   const appAccessToken = await getGraphAppAccessToken(resolvedTenantId);
-  if (!appAccessToken) return { graphCallSucceeded: false, hasMobilePhone: false, hasBusinessPhones: false };
+  if (!appAccessToken) return { graphCallSucceeded: false, source: 'users', mobilePhonePresent: false, businessPhonesCount: 0, graphReturnedPhone: false, reasonIfEmpty: 'unknown', dbWriteSucceeded: false };
 
   const graphUserIdentifier = employee.entraOid ?? employee.email;
 
   try {
     const encodedUserId = encodeURIComponent(graphUserIdentifier);
-    const payload = await readGraphProfile(`https://graph.microsoft.com/v1.0/users/${encodedUserId}?$select=${encodeURIComponent(GRAPH_ME_PROFILE_SELECT)}`, appAccessToken);
-    if (!payload) return { graphCallSucceeded: false, hasMobilePhone: false, hasBusinessPhones: false };
-    const result = await saveEmployeeGraphProfile(employee.id, payload);
-    return { graphCallSucceeded: true, hasMobilePhone: result.hasMobilePhone, hasBusinessPhones: result.hasBusinessPhones };
+    const graphResult = await readGraphProfile(`https://graph.microsoft.com/v1.0/users/${encodedUserId}?$select=${encodeURIComponent(GRAPH_ME_PROFILE_SELECT)}`, appAccessToken);
+    if (!graphResult.ok || !graphResult.payload) {
+      return { graphCallSucceeded: false, source: 'users', mobilePhonePresent: false, businessPhonesCount: 0, graphReturnedPhone: false, reasonIfEmpty: 'unknown', dbWriteSucceeded: false };
+    }
+
+    const result = await saveEmployeeGraphProfile(employee.id, graphResult.payload);
+    return {
+      graphCallSucceeded: true,
+      source: 'users',
+      mobilePhonePresent: result.mobilePhonePresent,
+      businessPhonesCount: result.businessPhonesCount,
+      graphReturnedPhone: result.graphReturnedPhone,
+      reasonIfEmpty: resolvePhoneSyncReasonIfEmpty({
+        graphCallSucceeded: true,
+        mobilePhonePresent: result.mobilePhonePresent,
+        businessPhonesCount: result.businessPhonesCount,
+        graphReturnedPhone: result.graphReturnedPhone,
+        persistedPhone: result.persistedPhone,
+        dbWriteSucceeded: result.dbWriteSucceeded
+      }),
+      dbWriteSucceeded: result.dbWriteSucceeded
+    };
   } catch {
-    return { graphCallSucceeded: false, hasMobilePhone: false, hasBusinessPhones: false };
+    return { graphCallSucceeded: false, source: 'users', mobilePhonePresent: false, businessPhonesCount: 0, graphReturnedPhone: false, reasonIfEmpty: 'unknown', dbWriteSucceeded: false };
   }
 };
 
@@ -2153,10 +2249,14 @@ app.post('/admin/employees/:id/refresh-profile', requireAdmin, async (req, res) 
   const hasValidSessionGraphToken = Boolean(sessionToken && sessionTokenExpiresAt && sessionTokenExpiresAt.getTime() > Date.now());
 
   const refreshMode = isSelfRefresh && hasValidSessionGraphToken && sessionToken ? 'delegated_me' : 'app_users';
-  let phoneSyncResult: { graphCallSucceeded: boolean; hasMobilePhone: boolean; hasBusinessPhones: boolean } = {
+  let phoneSyncResult: GraphPhoneSyncResult = {
     graphCallSucceeded: false,
-    hasMobilePhone: false,
-    hasBusinessPhones: false
+    source: refreshMode === 'delegated_me' ? 'me' : 'users',
+    mobilePhonePresent: false,
+    businessPhonesCount: 0,
+    graphReturnedPhone: false,
+    reasonIfEmpty: 'unknown',
+    dbWriteSucceeded: false
   };
 
   if (refreshMode === 'delegated_me' && sessionToken) {
@@ -2177,9 +2277,13 @@ app.post('/admin/employees/:id/refresh-profile', requireAdmin, async (req, res) 
     requestId: req.requestId ?? 'unknown',
     employeeId: employee.id,
     mode: refreshMode,
+    source: phoneSyncResult.source,
     graphCallSucceeded: phoneSyncResult.graphCallSucceeded,
-    hasMobilePhone: phoneSyncResult.hasMobilePhone,
-    hasBusinessPhones: phoneSyncResult.hasBusinessPhones
+    mobilePhonePresent: phoneSyncResult.mobilePhonePresent,
+    businessPhonesCount: phoneSyncResult.businessPhonesCount,
+    graphReturnedPhone: phoneSyncResult.graphReturnedPhone,
+    reasonIfEmpty: phoneSyncResult.reasonIfEmpty,
+    dbWriteSucceeded: phoneSyncResult.dbWriteSucceeded
   });
 
   const updated = await prisma.employee.findUnique({ where: { id }, select: employeeSelect });
@@ -2188,7 +2292,15 @@ app.post('/admin/employees/:id/refresh-profile', requireAdmin, async (req, res) 
     return;
   }
 
-  res.status(200).json(toEmployeeResponse(updated));
+  res.status(200).json({
+    ...toEmployeeResponse(updated),
+    photoUpdatedAt: updated.photoUpdatedAt ? updated.photoUpdatedAt.toISOString() : null,
+    phoneSyncInfo: {
+      graphReturnedPhone: phoneSyncResult.graphReturnedPhone,
+      source: phoneSyncResult.source,
+      reasonIfEmpty: phoneSyncResult.reasonIfEmpty
+    }
+  });
 });
 
 app.get('/employees', async (_req, res) => {
