@@ -53,30 +53,59 @@ export const buildParkingAssignmentProposal = ({
     };
   }
 
-  const chargeEndMinute = Math.min(endMinute, startMinute + chargingMinutes);
-  const chargeWindow = { startMinute, endMinute: chargeEndMinute };
-  const chargerSpot = findFreeSpot(spots, bookings, chargeWindow, (spot) => spot.hasCharger);
-  if (!chargerSpot) return { type: 'none', reason: 'NO_CHARGER_WINDOW' };
+  const resolvedChargingMinutes = Math.min(attendanceMinutes, Math.max(0, chargingMinutes));
+  const chargeWindowCandidates = [
+    { startMinute, endMinute: startMinute + resolvedChargingMinutes, chargeAtStart: true },
+    { startMinute: endMinute - resolvedChargingMinutes, endMinute, chargeAtStart: false }
+  ].filter((candidate, index, all) => (
+    candidate.endMinute > candidate.startMinute
+    && all.findIndex((entry) => entry.startMinute === candidate.startMinute && entry.endMinute === candidate.endMinute) === index
+  ));
 
-  if (chargeEndMinute >= endMinute) {
-    return {
-      type: 'single',
-      bookings: [{ deskId: chargerSpot.id, startMinute, endMinute, hasCharger: true }],
-      usedFallbackChargerFullWindow: false
-    };
-  }
+  let chargerWindowFound = false;
 
-  const restWindow = { startMinute: chargeEndMinute, endMinute };
-  const regularSpot = findFreeSpot(spots, bookings, restWindow, (spot) => !spot.hasCharger);
-  if (regularSpot) {
-    return {
-      type: 'split',
-      bookings: [
-        { deskId: chargerSpot.id, startMinute, endMinute: chargeEndMinute, hasCharger: true },
-        { deskId: regularSpot.id, startMinute: chargeEndMinute, endMinute, hasCharger: regularSpot.hasCharger }
-      ],
-      usedFallbackChargerFullWindow: false
-    };
+  for (const candidate of chargeWindowCandidates) {
+    const chargeWindow = { startMinute: candidate.startMinute, endMinute: candidate.endMinute };
+    const chargerSpot = findFreeSpot(spots, bookings, chargeWindow, (spot) => spot.hasCharger);
+    if (!chargerSpot) continue;
+
+    chargerWindowFound = true;
+
+    if (candidate.startMinute === startMinute && candidate.endMinute === endMinute) {
+      return {
+        type: 'single',
+        bookings: [{ deskId: chargerSpot.id, startMinute, endMinute, hasCharger: true }],
+        usedFallbackChargerFullWindow: false
+      };
+    }
+
+    if (candidate.chargeAtStart) {
+      const restWindow = { startMinute: candidate.endMinute, endMinute };
+      const regularSpot = findFreeSpot(spots, bookings, restWindow, (spot) => !spot.hasCharger);
+      if (regularSpot) {
+        return {
+          type: 'split',
+          bookings: [
+            { deskId: chargerSpot.id, startMinute, endMinute: candidate.endMinute, hasCharger: true },
+            { deskId: regularSpot.id, startMinute: candidate.endMinute, endMinute, hasCharger: regularSpot.hasCharger }
+          ],
+          usedFallbackChargerFullWindow: false
+        };
+      }
+    } else {
+      const restWindow = { startMinute, endMinute: candidate.startMinute };
+      const regularSpot = findFreeSpot(spots, bookings, restWindow, (spot) => !spot.hasCharger);
+      if (regularSpot) {
+        return {
+          type: 'split',
+          bookings: [
+            { deskId: regularSpot.id, startMinute, endMinute: candidate.startMinute, hasCharger: regularSpot.hasCharger },
+            { deskId: chargerSpot.id, startMinute: candidate.startMinute, endMinute, hasCharger: true }
+          ],
+          usedFallbackChargerFullWindow: false
+        };
+      }
+    }
   }
 
   const fullWindowCharger = findFreeSpot(spots, bookings, fullWindow, (spot) => spot.hasCharger);
@@ -88,5 +117,5 @@ export const buildParkingAssignmentProposal = ({
     };
   }
 
-  return { type: 'none', reason: 'NO_SPLIT_AND_NO_FALLBACK' };
+  return { type: 'none', reason: chargerWindowFound ? 'NO_SPLIT_AND_NO_FALLBACK' : 'NO_CHARGER_WINDOW' };
 };

@@ -1,5 +1,18 @@
 [
   {
+    "version": "1.5.27",
+    "date": "2026-02-18",
+    "type": "bugfix",
+    "title": "Parkplatz-Buchungsdialog zeigt alle Zeiten und storniert gesammelt",
+    "summary": "Im Parkplatz-Dialog wurden die alten Tages-Presets entfernt. Eigene Zeitbuchungen werden vollständig angezeigt, und der große Storno-Button löscht jetzt alle eigenen Buchungen auf dem Parkplatz für den gewählten Tag.",
+    "items": [
+      "Die Preset-Auswahl Vormittag/Nachmittag/Ganztag entfällt bei Parkplätzen – die freien Zeitfenster bleiben als schnelle Auswahl erhalten.",
+      "Wenn du auf einem Parkplatz mehrere Buchungen am selben Tag hast, werden sie im Buchungsfenster jetzt vollständig gelistet.",
+      "Der große Storno-Button entfernt bei Parkplätzen alle deine Buchungen für diesen Tag auf dem ausgewählten Parkplatz; einzelne Zeitfenster bleiben weiter über den kleinen Storno-Button löschbar.",
+      "Die Smart-Parking-Logik berücksichtigt Ladefenster jetzt auch am Ende des Aufenthalts, damit verfügbare Ladezeiten zuverlässiger gefunden werden."
+    ]
+  },
+  {
     "version": "1.5.26",
     "date": "2026-02-18",
     "type": "bugfix",
