@@ -18,6 +18,7 @@ model User {
   updatedAt    DateTime @updatedAt
   sessions     Session[]
   bookingsCreated Booking[] @relation("BookingCreatedBy")
+  feedbackReports FeedbackReport[] @relation("FeedbackReportUser")
 }
 
 model Session {
@@ -67,6 +68,7 @@ model Employee {
   bookingsCreated Booking[] @relation("BookingCreatedByEmployee")
   bookingsForSelf Booking[] @relation("BookingEmployee")
   recurringBookingsCreated RecurringBooking[] @relation("RecurringBookingCreatedByEmployee")
+  feedbackReports FeedbackReport[] @relation("FeedbackReportEmployee")
   tenant      Tenant?   @relation(fields: [tenantDomainId], references: [id], onDelete: SetNull)
 
   @@index([tenantDomainId])
@@ -244,4 +246,31 @@ model RecurringBooking {
   @@index([resourceId, startDate, endDate])
   @@index([createdByEmployeeId])
   @@index([groupId])
+}
+
+
+enum FeedbackReportType {
+  BUG
+  FEATURE_REQUEST
+}
+
+model FeedbackReport {
+  id                 String             @id @default(cuid())
+  type               FeedbackReportType
+  message            String
+  reporterUserId     String?
+  reporterEmployeeId String?
+  reporterEmail      String
+  reporterDisplayName String
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
+
+  reporterUser       User?              @relation("FeedbackReportUser", fields: [reporterUserId], references: [id], onDelete: SetNull)
+  reporterEmployee   Employee?          @relation("FeedbackReportEmployee", fields: [reporterEmployeeId], references: [id], onDelete: SetNull)
+
+  @@index([type, createdAt])
+  @@index([reporterEmail, createdAt])
+  @@index([reporterUserId])
+  @@index([reporterEmployeeId])
+  @@index([createdAt])
 }

@@ -173,6 +173,7 @@ type FloorplanDebugCounters = {
 type CalendarBooking = { date: string; deskId: string; daySlot?: 'AM' | 'PM' | 'FULL'; slot?: 'FULL_DAY' | 'MORNING' | 'AFTERNOON' | 'CUSTOM' };
 type DayAvailabilityTone = 'many-free' | 'few-free' | 'none-free';
 type OverviewView = 'presence' | 'rooms' | 'myBookings';
+type FeedbackReportType = 'BUG' | 'FEATURE_REQUEST';
 
 const OVERVIEW_QUERY_KEY = 'overview';
 
@@ -586,6 +587,10 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
   const [selectedResourceKindFilter, setSelectedResourceKindFilter] = useState<'ALL' | ResourceKind>('ALL');
   const [overviewView, setOverviewView] = useState<OverviewView>(() => getInitialOverviewView());
   const [isManageEditOpen, setIsManageEditOpen] = useState(false);
+  const [feedbackDialogOpen, setFeedbackDialogOpen] = useState(false);
+  const [feedbackType, setFeedbackType] = useState<FeedbackReportType>('BUG');
+  const [feedbackMessage, setFeedbackMessage] = useState('');
+  const [isSubmittingFeedback, setIsSubmittingFeedback] = useState(false);
 
   const [selectedDeskId, setSelectedDeskId] = useState('');
   const [hoveredDeskId, setHoveredDeskId] = useState('');
@@ -2341,6 +2346,30 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
     }
   };
 
+  const submitFeedbackReport = async () => {
+    const trimmedMessage = feedbackMessage.trim();
+    if (trimmedMessage.length < 10) {
+      toast.error('Bitte gib mindestens 10 Zeichen ein.');
+      return;
+    }
+
+    try {
+      setIsSubmittingFeedback(true);
+      await post('/feedback-reports', {
+        type: feedbackType,
+        message: trimmedMessage
+      });
+      toast.success('Danke! Deine Meldung wurde gespeichert.');
+      setFeedbackDialogOpen(false);
+      setFeedbackType('BUG');
+      setFeedbackMessage('');
+    } catch (error) {
+      toast.error(getApiErrorMessage(error, 'Meldung konnte nicht gespeichert werden'));
+    } finally {
+      setIsSubmittingFeedback(false);
+    }
+  };
+
   const selectDay = (day: Date) => {
     const key = toDateKey(day);
     setSelectedDate(key);
@@ -2402,6 +2431,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
         <span className="legend-chip"><i className="dot booked" /> Belegt</span>
         <span className="legend-chip"><i className="dot selected" /> Dein Platz</span>
       </div>
+      <button className="btn btn-outline" onClick={() => setFeedbackDialogOpen(true)}>Feature Request / Bug melden</button>
     </section>
   );
 
@@ -2862,6 +2892,39 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
               </div>
             </>
           )}
+          </section>
+        </div>,
+        document.body
+      )}
+
+      {feedbackDialogOpen && createPortal(
+        <div className="overlay" role="presentation">
+          <section className="card dialog stack-sm" role="dialog" aria-modal="true" aria-labelledby="feedback-report-title">
+            <h3 id="feedback-report-title">Feature Request / Bug melden</h3>
+            <p className="muted">Dein Feedback hilft uns, die Buchungs-App zu verbessern.</p>
+            <label className="stack-xs">
+              <span className="field-label">Typ</span>
+              <select value={feedbackType} onChange={(event) => setFeedbackType(event.target.value as FeedbackReportType)} disabled={isSubmittingFeedback}>
+                <option value="BUG">Bug</option>
+                <option value="FEATURE_REQUEST">Feature Request</option>
+              </select>
+            </label>
+            <label className="stack-xs">
+              <span className="field-label">Beschreibung</span>
+              <textarea
+                rows={6}
+                value={feedbackMessage}
+                onChange={(event) => setFeedbackMessage(event.target.value)}
+                placeholder="Bitte beschreibe dein Anliegen möglichst konkret …"
+                disabled={isSubmittingFeedback}
+              />
+            </label>
+            <div className="inline-end">
+              <button className="btn btn-outline" onClick={() => setFeedbackDialogOpen(false)} disabled={isSubmittingFeedback}>Abbrechen</button>
+              <button className="btn" onClick={() => void submitFeedbackReport()} disabled={isSubmittingFeedback || feedbackMessage.trim().length < 10}>
+                {isSubmittingFeedback ? 'Sende…' : 'Meldung absenden'}
+              </button>
+            </div>
           </section>
         </div>,
         document.body

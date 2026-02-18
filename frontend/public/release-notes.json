@@ -1,5 +1,17 @@
 [
   {
+    "version": "1.5.1",
+    "date": "2026-02-18",
+    "type": "feature",
+    "title": "Feature-Request- und Bug-Meldungen direkt in der App",
+    "summary": "User können jetzt im Buchungsbereich Feedback senden; Admins sehen alle Meldungen gesammelt mit Filtern und Datumssortierung.",
+    "items": [
+      "Neuer Button „Feature Request / Bug melden“ unter „Datum & Ansicht“ öffnet ein Formular mit Typ-Auswahl und Freitext.",
+      "Beim Absenden wird die Meldung inklusive meldendem User in der Datenbank gespeichert.",
+      "Im Admin-Menü gibt es den neuen Bereich „Feature Requests/Bug Reports“ mit Filtern nach User, Typ und Datum sowie sortierbarer Datumsliste."
+    ]
+  },
+  {
     "version": "1.5.0",
     "date": "2026-02-18",
     "type": "feature",
