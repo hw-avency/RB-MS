@@ -27,12 +27,12 @@
     "version": "1.3.0",
     "date": "2026-02-10",
     "type": "feature",
-    "title": "Mehr Kontrolle für den Admin-Alltag",
-    "summary": "Die Admin-Oberfläche wurde an mehreren Stellen verbessert und aufgeräumt.",
+    "title": "Multi Tenant Support",
+    "summary": "AVENCY Booking hat jetzt Multitenant Entra Support.",
     "items": [
-      "Bessere Verwaltung von Mandanten und Ressourcen.",
-      "Optimierte Tabellenansichten für schnellere Bearbeitung.",
-      "Stabilere Abläufe bei Buchungs- und Benutzerverwaltung."
+      "Neuer Menüpunkt Mandanten.",
+      "Pflege von Tenant ID.",
+      "Auth-Flow über Universal Tenant App mit Admin/User Consent."
     ]
   }
 ]
