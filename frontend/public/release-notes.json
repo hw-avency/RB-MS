@@ -1,5 +1,17 @@
 [
   {
+    "version": "1.5.26",
+    "date": "2026-02-18",
+    "type": "bugfix",
+    "title": "Parkplatz-Zeitslots und Umbuchung wieder korrekt",
+    "summary": "Parkplatz-Presets nutzen jetzt den vollen Buchungstag von 06:00 bis 18:00 Uhr. Beim Umbuchen auf einen anderen Parkplatz werden bestehende Parkplatz-Buchungen am selben Tag zuverlässig entfernt, bevor der neue Platz gebucht wird.",
+    "items": [
+      "Die Presets im Buchungsdialog sind auf 06:00–12:00 (Vormittag), 12:00–18:00 (Nachmittag) und 06:00–18:00 (Ganztag) angepasst.",
+      "Bei einer Umbuchung mit Überschreiben storniert das System bestehende Parkplatz-Buchungen des Tages automatisch.",
+      "Danach wird der neu gewählte Parkplatz direkt als aktuelle Buchung angelegt, ohne dass alte Parkplatzbuchungen bestehen bleiben."
+    ]
+  },
+  {
     "version": "1.5.25",
     "date": "2026-02-18",
     "type": "bugfix",

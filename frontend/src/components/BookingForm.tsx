@@ -494,9 +494,9 @@ export function BookingForm({ values, onChange, onSubmit, onCancel, isSubmitting
               </section>
               {isParking && (
                 <div className="room-free-slots" role="group" aria-label="Zeit-Presets">
-                  <button type="button" className="free-slot-chip" disabled={disabled || isSubmitting} onClick={() => onChange({ ...values, startTime: '08:00', endTime: '12:00' })}>Vormittag</button>
-                  <button type="button" className="free-slot-chip" disabled={disabled || isSubmitting} onClick={() => onChange({ ...values, startTime: '12:00', endTime: '16:00' })}>Nachmittag</button>
-                  <button type="button" className="free-slot-chip" disabled={disabled || isSubmitting} onClick={() => onChange({ ...values, startTime: '08:00', endTime: '16:00' })}>Ganztag</button>
+                  <button type="button" className="free-slot-chip" disabled={disabled || isSubmitting} onClick={() => onChange({ ...values, startTime: '06:00', endTime: '12:00' })}>Vormittag</button>
+                  <button type="button" className="free-slot-chip" disabled={disabled || isSubmitting} onClick={() => onChange({ ...values, startTime: '12:00', endTime: '18:00' })}>Nachmittag</button>
+                  <button type="button" className="free-slot-chip" disabled={disabled || isSubmitting} onClick={() => onChange({ ...values, startTime: '06:00', endTime: '18:00' })}>Ganztag</button>
                 </div>
               )}
               <div className="split">
