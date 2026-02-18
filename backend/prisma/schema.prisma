@@ -47,6 +47,12 @@ model OidcState {
   @@index([createdAt])
 }
 
+model SystemState {
+  id               String   @id
+  forceReauthAfter DateTime?
+  updatedAt        DateTime @updatedAt
+}
+
 model Employee {
   id          String    @id @default(cuid())
   email       String    @unique

@@ -215,7 +215,7 @@ declare global {
       requestId?: string;
       authUser?: AuthUser;
       authSession?: SessionRecord;
-      authFailureReason?: 'MISSING_SESSION_COOKIE' | 'SESSION_INVALID_OR_EXPIRED' | 'USER_MISSING_OR_INACTIVE';
+      authFailureReason?: 'MISSING_SESSION_COOKIE' | 'SESSION_INVALID_OR_EXPIRED' | 'USER_MISSING_OR_INACTIVE' | 'FORCED_RELOGIN_REQUIRED';
     }
   }
 }
@@ -239,6 +239,7 @@ app.use(attachRequestId);
 
 const SESSION_COOKIE_NAME = 'rbms_session';
 const SESSION_TTL_MS = 1000 * 60 * 60 * 12;
+const SYSTEM_STATE_SINGLETON_ID = 'global';
 type OidcFlowState = { nonce: string; createdAt: Date };
 const OIDC_STATE_TTL_MS = 1000 * 60 * 10;
 const parseCookies = (cookieHeader?: string): Record<string, string> => {
@@ -516,6 +517,17 @@ const attachAuthUser: express.RequestHandler = async (req, _res, next) => {
   if (!session || session.expiresAt.getTime() <= Date.now()) {
     await destroySession(sessionId);
     req.authFailureReason = 'SESSION_INVALID_OR_EXPIRED';
+    next();
+    return;
+  }
+
+  const systemState = await prisma.systemState.findUnique({
+    where: { id: SYSTEM_STATE_SINGLETON_ID },
+    select: { forceReauthAfter: true }
+  });
+  if (systemState?.forceReauthAfter && session.createdAt.getTime() < systemState.forceReauthAfter.getTime()) {
+    await destroySession(sessionId);
+    req.authFailureReason = 'FORCED_RELOGIN_REQUIRED';
     next();
     return;
   }
@@ -2032,6 +2044,11 @@ app.get('/auth/me', (req, res) => {
   }
 
   if (!req.authUser) {
+    if (req.authFailureReason === 'FORCED_RELOGIN_REQUIRED') {
+      res.status(401).json({ code: 'FORCED_RELOGIN_REQUIRED', message: 'Bitte neu anmelden: Die Sitzung wurde wegen eines Updates beendet.' });
+      return;
+    }
+
     res.status(401).json({ code: 'UNAUTHENTICATED', message: 'Authentication required' });
     return;
   }
@@ -2275,6 +2292,32 @@ app.delete('/admin/db/:table/rows/:id', requireAdmin, async (req, res) => {
 
     res.status(400).json({ error: 'validation', message: error instanceof Error ? error.message : 'Löschen fehlgeschlagen' });
   }
+});
+
+app.post('/admin/employees/force-reauth', requireAdmin, async (req, res) => {
+  const forceReauthAfter = new Date();
+
+  const [_, affectedSessions] = await prisma.$transaction([
+    prisma.systemState.upsert({
+      where: { id: SYSTEM_STATE_SINGLETON_ID },
+      update: { forceReauthAfter },
+      create: { id: SYSTEM_STATE_SINGLETON_ID, forceReauthAfter }
+    }),
+    prisma.session.count({ where: { createdAt: { lt: forceReauthAfter } } })
+  ]);
+
+  console.info('ADMIN_FORCE_REAUTH_TRIGGERED', {
+    requestId: req.requestId ?? 'unknown',
+    byUserEmail: req.authUser?.email ?? 'unknown',
+    forceReauthAfter: forceReauthAfter.toISOString(),
+    affectedSessions
+  });
+
+  res.status(200).json({
+    message: 'Re-Login wurde für alle Mitarbeitenden aktiviert.',
+    forceReauthAfter: forceReauthAfter.toISOString(),
+    affectedSessions
+  });
 });
 
 app.get('/admin/employees', requireAdmin, async (_req, res) => {
