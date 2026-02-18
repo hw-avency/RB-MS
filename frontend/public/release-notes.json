@@ -1,5 +1,18 @@
 [
   {
+    "version": "1.5.8",
+    "date": "2026-02-18",
+    "type": "bugfix",
+    "title": "Entra-Telefon-Sync bevorzugt jetzt Festnetz vor Mobil",
+    "summary": "Beim Login und Profil-Refresh wird für Mitarbeitende jetzt zuerst die geschäftliche Telefonnummer übernommen; Mobil wird nur noch als Fallback genutzt.",
+    "items": [
+      "Wenn in Entra sowohl businessPhones als auch mobilePhone vorhanden sind, wird jetzt konsequent businessPhones[0] gespeichert.",
+      "Sind mehrere geschäftliche Nummern vorhanden, wird ohne zusätzliche Auswahl immer der erste Eintrag verwendet.",
+      "Wenn keine geschäftliche Nummer vorhanden ist, nutzt der Sync weiterhin mobilePhone als Fallback.",
+      "Liefert Entra keine Telefonnummer, bleibt der bestehende Wert im Mitarbeiterprofil unverändert statt geleert zu werden."
+    ]
+  },
+  {
     "version": "1.5.7",
     "date": "2026-02-18",
     "type": "bugfix",

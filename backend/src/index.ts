@@ -1323,17 +1323,12 @@ const normalizePhoneValue = (value: string | null | undefined): string | null =>
 };
 
 const chooseGraphPhone = (payload: GraphProfilePayload): string | null => {
-  const mobilePhone = normalizePhoneValue(payload.mobilePhone);
-  if (mobilePhone) return mobilePhone;
+  const businessPhone = Array.isArray(payload.businessPhones)
+    ? normalizePhoneValue(payload.businessPhones[0])
+    : null;
+  if (businessPhone) return businessPhone;
 
-  if (Array.isArray(payload.businessPhones)) {
-    for (const candidate of payload.businessPhones) {
-      const normalized = normalizePhoneValue(candidate);
-      if (normalized) return normalized;
-    }
-  }
-
-  return null;
+  return normalizePhoneValue(payload.mobilePhone);
 };
 
 const chooseGraphEmail = (payload: GraphProfilePayload): string | null => {
@@ -1401,8 +1396,9 @@ const saveEmployeeGraphProfile = async (employeeId: string, payload: GraphProfil
 
   const mobilePhonePresent = Boolean(normalizePhoneValue(payload.mobilePhone));
   const businessPhonesCount = getBusinessPhonesCount(payload);
-  const nextPhone = chooseGraphPhone(payload);
-  const graphReturnedPhone = nextPhone !== null;
+  const graphPhone = chooseGraphPhone(payload);
+  const graphReturnedPhone = graphPhone !== null;
+  const nextPhone = graphPhone ?? existing?.phone ?? null;
 
   if (!existing) {
     return { updated: false, mobilePhonePresent, businessPhonesCount, graphReturnedPhone, persistedPhone: null, dbWriteSucceeded: false };
