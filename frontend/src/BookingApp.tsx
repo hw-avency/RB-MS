@@ -175,6 +175,9 @@ type DayAvailabilityTone = 'many-free' | 'few-free' | 'none-free';
 type OverviewView = 'presence' | 'rooms' | 'myBookings';
 type FeedbackReportType = 'BUG' | 'FEATURE_REQUEST';
 
+const FEEDBACK_SCREENSHOT_MAX_BYTES = 3 * 1024 * 1024;
+const FEEDBACK_SCREENSHOT_ACCEPT = 'image/png,image/jpeg,image/webp';
+
 const OVERVIEW_QUERY_KEY = 'overview';
 
 const isOverviewView = (value: string | null): value is OverviewView => value === 'presence' || value === 'rooms' || value === 'myBookings';
@@ -602,6 +605,9 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
   const [feedbackDialogOpen, setFeedbackDialogOpen] = useState(false);
   const [feedbackType, setFeedbackType] = useState<FeedbackReportType>('BUG');
   const [feedbackMessage, setFeedbackMessage] = useState('');
+  const [feedbackScreenshotDataUrl, setFeedbackScreenshotDataUrl] = useState('');
+  const [feedbackScreenshotName, setFeedbackScreenshotName] = useState('');
+  const [feedbackScreenshotError, setFeedbackScreenshotError] = useState('');
   const [isSubmittingFeedback, setIsSubmittingFeedback] = useState(false);
 
   const [selectedDeskId, setSelectedDeskId] = useState('');
@@ -2376,6 +2382,51 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
     }
   };
 
+  const onFeedbackScreenshotChange = async (file: File | null) => {
+    setFeedbackScreenshotError('');
+    if (!file) {
+      setFeedbackScreenshotDataUrl('');
+      setFeedbackScreenshotName('');
+      return;
+    }
+
+    if (![ 'image/png', 'image/jpeg', 'image/webp' ].includes(file.type)) {
+      setFeedbackScreenshotDataUrl('');
+      setFeedbackScreenshotName('');
+      setFeedbackScreenshotError('Bitte nur PNG, JPG oder WEBP hochladen.');
+      return;
+    }
+
+    if (file.size > FEEDBACK_SCREENSHOT_MAX_BYTES) {
+      setFeedbackScreenshotDataUrl('');
+      setFeedbackScreenshotName('');
+      setFeedbackScreenshotError('Der Screenshot darf maximal 3 MB groß sein.');
+      return;
+    }
+
+    try {
+      const dataUrl = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => {
+          if (typeof reader.result === 'string') {
+            resolve(reader.result);
+            return;
+          }
+          reject(new Error('Datei konnte nicht gelesen werden'));
+        };
+        reader.onerror = () => reject(new Error('Datei konnte nicht gelesen werden'));
+        reader.readAsDataURL(file);
+      });
+
+      setFeedbackScreenshotDataUrl(dataUrl);
+      setFeedbackScreenshotName(file.name);
+    } catch {
+      setFeedbackScreenshotDataUrl('');
+      setFeedbackScreenshotName('');
+      setFeedbackScreenshotError('Screenshot konnte nicht gelesen werden.');
+    }
+  };
+
   const submitFeedbackReport = async () => {
     const trimmedMessage = feedbackMessage.trim();
     if (trimmedMessage.length < 10) {
@@ -2387,12 +2438,16 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
       setIsSubmittingFeedback(true);
       await post('/feedback-reports', {
         type: feedbackType,
-        message: trimmedMessage
+        message: trimmedMessage,
+        screenshotDataUrl: feedbackType === 'BUG' && feedbackScreenshotDataUrl ? feedbackScreenshotDataUrl : undefined
       });
       toast.success('Danke! Deine Meldung wurde gespeichert.');
       setFeedbackDialogOpen(false);
       setFeedbackType('BUG');
       setFeedbackMessage('');
+      setFeedbackScreenshotDataUrl('');
+      setFeedbackScreenshotName('');
+      setFeedbackScreenshotError('');
     } catch (error) {
       toast.error(getApiErrorMessage(error, 'Meldung konnte nicht gespeichert werden'));
     } finally {
@@ -2955,7 +3010,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
             <p className="muted">Dein Feedback hilft uns, die Buchungs-App zu verbessern.</p>
             <label className="stack-xs">
               <span className="field-label">Typ</span>
-              <select value={feedbackType} onChange={(event) => setFeedbackType(event.target.value as FeedbackReportType)} disabled={isSubmittingFeedback}>
+              <select value={feedbackType} onChange={(event) => { const nextType = event.target.value as FeedbackReportType; setFeedbackType(nextType); if (nextType !== 'BUG') { setFeedbackScreenshotDataUrl(''); setFeedbackScreenshotName(''); setFeedbackScreenshotError(''); } }} disabled={isSubmittingFeedback}>
                 <option value="BUG">Bug</option>
                 <option value="FEATURE_REQUEST">Feature Request</option>
               </select>
@@ -2970,8 +3025,23 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
                 disabled={isSubmittingFeedback}
               />
             </label>
+            <label className="stack-xs">
+              <span className="field-label">Screenshot (optional, für Bugs)</span>
+              <input
+                type="file"
+                accept={FEEDBACK_SCREENSHOT_ACCEPT}
+                disabled={isSubmittingFeedback || feedbackType !== 'BUG'}
+                onChange={(event) => { void onFeedbackScreenshotChange(event.target.files?.[0] ?? null); }}
+              />
+              {feedbackType !== 'BUG' && <span className="muted">Screenshots können aktuell nur bei Bug-Meldungen angehängt werden.</span>}
+              {feedbackScreenshotName && <span className="muted">Ausgewählt: {feedbackScreenshotName}</span>}
+              {feedbackScreenshotError && <span className="error-banner">{feedbackScreenshotError}</span>}
+              {feedbackScreenshotDataUrl && feedbackType === 'BUG' && (
+                <img src={feedbackScreenshotDataUrl} alt="Screenshot Vorschau" className="feedback-screenshot-preview" />
+              )}
+            </label>
             <div className="inline-end">
-              <button className="btn btn-outline" onClick={() => setFeedbackDialogOpen(false)} disabled={isSubmittingFeedback}>Abbrechen</button>
+              <button className="btn btn-outline" onClick={() => { setFeedbackDialogOpen(false); setFeedbackScreenshotDataUrl(''); setFeedbackScreenshotName(''); setFeedbackScreenshotError(''); }} disabled={isSubmittingFeedback}>Abbrechen</button>
               <button className="btn" onClick={() => void submitFeedbackReport()} disabled={isSubmittingFeedback}>
                 {isSubmittingFeedback ? 'Sende…' : 'Meldung absenden'}
               </button>

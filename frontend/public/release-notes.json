@@ -1,5 +1,17 @@
 [
   {
+    "version": "1.5.16",
+    "date": "2026-02-18",
+    "type": "feature",
+    "title": "Bug-Meldungen jetzt mit Screenshot-Anhang",
+    "summary": "Beim Melden eines Bugs kann jetzt direkt ein Screenshot hochgeladen werden. Admins sehen den Anhang in der Detailansicht der Meldung.",
+    "items": [
+      "Im Feedback-Dialog für Bug-Meldungen gibt es jetzt einen optionalen Screenshot-Upload mit Vorschau.",
+      "Der Screenshot wird zusammen mit der Meldung sicher gespeichert und der Meldung zugeordnet.",
+      "Im Admin-Bereich zeigt die Detailansicht den Screenshot an und öffnet ihn bei Bedarf in voller Größe."
+    ]
+  },
+  {
     "version": "1.5.15",
     "date": "2026-02-18",
     "type": "bugfix",
