@@ -840,13 +840,15 @@ const bookingSlotToDaySlot = (slot: BookingSlot | null | undefined): DaySlot | n
 };
 
 const bookingToWindow = (booking: { daySlot: DaySlot | null; startTime: Date | null; endTime: Date | null; slot: BookingSlot; startMinute: number | null; endMinute: number | null }): BookingWindowInput | null => {
-  const normalizedDaySlot = booking.daySlot ?? bookingSlotToDaySlot(booking.slot);
-  if (normalizedDaySlot) return { mode: 'day', daySlot: normalizedDaySlot };
-
   const startMinute = booking.startMinute ?? (booking.startTime ? booking.startTime.getUTCHours() * 60 + booking.startTime.getUTCMinutes() : null);
   const endMinute = booking.endMinute ?? (booking.endTime ? booking.endTime.getUTCHours() * 60 + booking.endTime.getUTCMinutes() : null);
-  if (typeof startMinute !== 'number' || typeof endMinute !== 'number') return null;
-  return { mode: 'time', startMinute, endMinute };
+  if (typeof startMinute === 'number' && typeof endMinute === 'number') {
+    return { mode: 'time', startMinute, endMinute };
+  }
+
+  const normalizedDaySlot = booking.daySlot ?? bookingSlotToDaySlot(booking.slot);
+  if (normalizedDaySlot) return { mode: 'day', daySlot: normalizedDaySlot };
+  return null;
 };
 
 const windowsOverlap = (left: BookingWindowInput, right: BookingWindowInput): boolean => {

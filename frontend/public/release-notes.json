@@ -1,5 +1,17 @@
 [
   {
+    "version": "1.5.24",
+    "date": "2026-02-18",
+    "type": "bugfix",
+    "title": "Smart-Parking findet wieder freie Zeitkombinationen",
+    "summary": "Die intelligente Parkplatzzuweisung bewertet Konflikte jetzt konsequent über gebuchte Uhrzeiten. Dadurch werden freie Anschluss-Zeitfenster auf einem Parkplatz wieder korrekt erkannt.",
+    "items": [
+      "Zeitbasierte Buchungen haben bei der Konfliktprüfung Vorrang vor alten AM/PM/Ganztags-Feldern.",
+      "Smart-Parking kann dadurch mehrere Buchungen pro Parkplatz am selben Tag korrekt einplanen, solange sich die Uhrzeiten nicht überschneiden.",
+      "Freie Kombinationen mit Ladeplatz + Anschluss-Parkplatz werden wieder gefunden, wenn zwischen bestehenden Buchungen genug Zeit ist."
+    ]
+  },
+  {
     "version": "1.5.23",
     "date": "2026-02-18",
     "type": "bugfix",
