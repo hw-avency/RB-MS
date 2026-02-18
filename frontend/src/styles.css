@@ -590,3 +590,24 @@ tr{cursor:pointer}.row-selected{background:hsl(var(--muted))}
 .booking-detail-card .muted{font-size:12px}
 .desk-popup-footer-actions{margin-top:auto;display:flex;justify-content:flex-end;gap:8px;border-top:1px solid hsl(var(--border));padding-top:12px}
 .cancel-options .btn{width:100%;justify-content:center;min-height:44px;flex-grow:0}
+
+.release-notes-list {
+  margin-top: 0.5rem;
+}
+
+.release-note-item {
+  border: 1px solid hsl(var(--border));
+  border-radius: 12px;
+  padding: 1rem;
+  background: hsl(var(--muted)/.35);
+}
+
+.release-note-header {
+  gap: 0.75rem;
+}
+
+.release-note-bullets {
+  margin: 0;
+  padding-left: 1.2rem;
+  color: hsl(var(--muted-foreground));
+}
