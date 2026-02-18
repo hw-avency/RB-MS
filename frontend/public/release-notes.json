@@ -1,5 +1,17 @@
 [
   {
+    "version": "1.5.2",
+    "date": "2026-02-18",
+    "type": "bugfix",
+    "title": "Stornieren schützt jetzt zuverlässig fremde Halbtags-Buchungen",
+    "summary": "Beim Stornieren wird nun immer nur die eigene Buchung entfernt; außerdem ist die Zeitraum-Anzeige in Profilkarten lesbarer formatiert.",
+    "items": [
+      "Bei geteilten Halbtags-Buchungen (AM/PM) kann ein User nicht mehr versehentlich die Buchung eines anderen Users stornieren.",
+      "Die Stornierung berücksichtigt nur noch Buchungen, für die der aktuelle User wirklich berechtigt ist (Admin ausgenommen).",
+      "In der Profilkarte wird der Zeitraum jetzt mit \"Zeitraum: …\" klarer dargestellt."
+    ]
+  },
+  {
     "version": "1.5.1",
     "date": "2026-02-18",
     "type": "feature",
