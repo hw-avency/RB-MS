@@ -88,9 +88,11 @@ const getBookingPersonLabel = (booking?: FloorplanBooking): string => {
 
 const normalizeBookings = (desk: FloorplanDesk): FloorplanBooking[] => {
   const bookings = desk.bookings && desk.bookings.length > 0 ? desk.bookings : desk.booking ? [desk.booking] : [];
-  if (desk.kind === 'RAUM') return normalizeDaySlotBookingsPerEntry(bookings);
+  if (desk.kind === 'RAUM' || desk.kind === 'PARKPLATZ') return normalizeDaySlotBookingsPerEntry(bookings);
   return normalizeDaySlotBookings(bookings);
 };
+
+const isClockSegmentResource = (kind?: string): boolean => kind === 'RAUM' || kind === 'PARKPLATZ';
 
 const slotFromBooking = (booking: FloorplanBooking): 'AM' | 'PM' | 'FULL' | null => {
   if (booking.daySlot === 'FULL' || booking.slot === 'FULL_DAY') return 'FULL';
@@ -145,6 +147,7 @@ const DeskOverlay = memo(function DeskOverlay({ markers, selectedDeskId, hovered
         {markers.map(({ resource: desk, xPct, yPct }) => {
           const bookings = normalizeBookings(desk);
           const isRoom = desk.kind === 'RAUM';
+          const useClockRing = isClockSegmentResource(desk.kind);
           const roomMarkerLabel = isRoom ? getRoomMarkerLabel(desk) : null;
           const fullBooking = bookings.find((booking) => slotFromBooking(booking) === 'FULL');
           const amBooking = fullBooking ?? bookings.find((booking) => slotFromBooking(booking) === 'AM');
@@ -163,9 +166,9 @@ const DeskOverlay = memo(function DeskOverlay({ markers, selectedDeskId, hovered
             return 'var(--resource-busy)';
           };
 
-          const roomOccupancy = isRoom ? computeRoomOccupancy(bookings, selectedDate, BOOKABLE_START, BOOKABLE_END) : null;
+          const roomOccupancy = useClockRing ? computeRoomOccupancy(bookings, selectedDate, BOOKABLE_START, BOOKABLE_END) : null;
           const roomIntervals = roomOccupancy?.intervals ?? [];
-          const roomSegments = isRoom
+          const roomSegments = useClockRing
             ? computeRoomBusySegments(bookings, {
                 day: selectedDate,
                 start: BOOKABLE_START,
@@ -176,8 +179,8 @@ const DeskOverlay = memo(function DeskOverlay({ markers, selectedDeskId, hovered
           const roomFreeSegments = roomOccupancy?.freeSegments ?? [];
           const roomCoverage = roomOccupancy?.occupiedMinutes ?? 0;
           const roomFreeMinutes = roomOccupancy?.freeMinutes ?? 0;
-          const shouldShowPulse = (isRoom ? roomFreeMinutes >= 60 : bookings.length === 0) && !isInteracting && !disablePulseAnimation;
-          const isRoomFullyBooked = roomCoverage >= ROOM_WINDOW_TOTAL_MINUTES - 1;
+          const shouldShowPulse = (useClockRing ? roomFreeMinutes >= 60 : bookings.length === 0) && !isInteracting && !disablePulseAnimation;
+          const isResourceFullyBooked = roomCoverage >= ROOM_WINDOW_TOTAL_MINUTES - 1;
           const roomRingDebugTitle = debugEnabled && roomOccupancy
             ? [
                 `business minutes booked: ${roomOccupancy.occupiedMinutes}`,
@@ -233,7 +236,7 @@ const DeskOverlay = memo(function DeskOverlay({ markers, selectedDeskId, hovered
                 resourceId: desk.id,
                 type: desk.kind ?? 'SONSTIGES',
                 bookingsForResourceCount: bookings.length,
-                occupancyState: isRoom ? (isRoomFullyBooked ? 'full' : roomIntervals.length > 0 ? 'partial' : 'free') : fullBooking ? 'full-day' : amBooking || pmBooking ? 'half-day' : 'free',
+                occupancyState: useClockRing ? (isResourceFullyBooked ? 'full' : roomIntervals.length > 0 ? 'partial' : 'free') : fullBooking ? 'full-day' : amBooking || pmBooking ? 'half-day' : 'free',
                 period: nonRoomPeriod,
                 amSide: 'left',
                 roomFreeMinutes,
@@ -242,7 +245,7 @@ const DeskOverlay = memo(function DeskOverlay({ markers, selectedDeskId, hovered
               aria-label={`${resourceKindLabel(desk.kind)}: ${getDeskLabel(desk)}`}
             >
               {shouldShowPulse && <div className="pulseHalo" aria-hidden="true" />}
-              {isRoom ? (
+              {useClockRing ? (
                 <>
                   <RoomBusinessDayRing
                     segments={roomSegments}
@@ -296,7 +299,7 @@ const DeskOverlay = memo(function DeskOverlay({ markers, selectedDeskId, hovered
       {tooltip && tooltipDesk && createPortal(
         <div className="desk-tooltip" style={{ left: tooltip.left, top: tooltip.top }} role="tooltip">
           <strong>{tooltipDesk.kind === 'RAUM' ? `Raum: ${getRoomName(tooltipDesk)}` : `${resourceKindLabel(tooltipDesk.kind)}: ${getDeskLabel(tooltipDesk)}`}</strong>
-          {tooltipDesk.kind === 'RAUM' ? (
+          {isClockSegmentResource(tooltipDesk.kind) ? (
             normalizeBookings(tooltipDesk).map((booking) => (
               <span key={booking.id ?? `${booking.userEmail ?? 'unknown'}-${booking.startTime}`}>{`${booking.startTime ?? '--:--'}-${booking.endTime ?? '--:--'}: ${getBookingPersonLabel(booking)}${booking.bookedFor === 'GUEST' ? ` · gebucht von ${booking.createdBy?.displayName ?? booking.createdBy?.name ?? 'Unbekannt'}` : ''}`}</span>
             ))
@@ -326,7 +329,7 @@ const DeskOverlay = memo(function DeskOverlay({ markers, selectedDeskId, hovered
             const full = tooltipBookings.find((booking) => slotFromBooking(booking) === 'FULL');
             const am = full ?? tooltipBookings.find((booking) => slotFromBooking(booking) === 'AM');
             const pm = full ?? tooltipBookings.find((booking) => slotFromBooking(booking) === 'PM');
-            if (tooltipDesk.kind === 'RAUM') {
+            if (isClockSegmentResource(tooltipDesk.kind)) {
               const roomDebug = computeRoomOccupancy(tooltipBookings, selectedDate, BOOKABLE_START, BOOKABLE_END);
               return <span className="muted">debug: resourceId={tooltipDesk.id}; type={tooltipDesk.kind ?? 'SONSTIGES'}; bookingsForResourceCount={tooltipBookings.length}; occupancy={roomDebug.segments.length > 0 ? 'occupied-segments' : 'free'}; segments={roomDebug.segments.length}; occupiedMinutes={roomDebug.occupiedMinutes}; percentOccupied={(roomDebug.occupiedRatio * 100).toFixed(1)}%</span>;
             }

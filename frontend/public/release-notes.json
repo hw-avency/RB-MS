@@ -1,5 +1,17 @@
 [
   {
+    "version": "1.5.19",
+    "date": "2026-02-18",
+    "type": "bugfix",
+    "title": "Smart-Parking als eigener Flow und mit exakten Zeitsegmenten",
+    "summary": "Die intelligente Parkplatzzuweisung startet jetzt direkt über einen eigenen Button am Floorplan. Parkplätze zeigen Belegungen nun als Uhrzeit-Segmente statt nur halb/halb oder Ganztag.",
+    "items": [
+      "Über dem Floorplan gibt es jetzt einen eigenen Button \"Parkplatz intelligent zuweisen\" mit separatem Dialog.",
+      "Die Smart-Parking-Anfrage nutzt Startzeit, Aufenthaltsdauer und Ladezeit im eigenen Flow und bucht beim Bestätigen als genaue Zeitfenster.",
+      "Parkplatz-Ringe und Tooltips verwenden jetzt dieselbe segmentierte 12h-Uhr-Logik wie Räume, damit auch geteilte Buchungen exakt sichtbar sind."
+    ]
+  },
+  {
     "version": "1.5.18",
     "date": "2026-02-18",
     "type": "bugfix",
