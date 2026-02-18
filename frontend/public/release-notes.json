@@ -1,5 +1,17 @@
 [
   {
+    "version": "1.5.11",
+    "date": "2026-02-18",
+    "type": "bugfix",
+    "title": "Profilkarten in Anwesenheitsliste jetzt auch tenant-übergreifend",
+    "summary": "Im rechten Anwesenheits-Panel lassen sich Profilkarten jetzt auch dann öffnen, wenn die Person aus einem anderen Mandanten auf derselben Fläche gebucht ist.",
+    "items": [
+      "Ein Klick auf Personen in der Anwesenheitsliste öffnet die Profilkarte jetzt auch bei Buchungen aus anderen Mandanten auf dem gleichen Floor.",
+      "Die bisherige Sperre für nicht buchbare Ressourcen gilt weiterhin im Floorplan, nicht aber beim reinen Öffnen der Profilansicht aus der Anwesenheitsliste.",
+      "Enter und Leertaste unterstützen dieses Verhalten ebenfalls für die Tastaturbedienung."
+    ]
+  },
+  {
     "version": "1.5.10",
     "date": "2026-02-18",
     "type": "feature",

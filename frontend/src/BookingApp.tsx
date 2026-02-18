@@ -1677,10 +1677,10 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
     }, hold);
   };
 
-  const selectDeskFromCanvas = (deskId: string, anchorEl?: HTMLElement) => {
+  const selectDeskFromCanvas = (deskId: string, anchorEl?: HTMLElement, options?: { allowUnbookable?: boolean }) => {
     const desk = desks.find((entry) => entry.id === deskId);
     if (!desk || !anchorEl) return;
-    if (desk.isBookableForMe === false) return;
+    if (desk.isBookableForMe === false && !options?.allowUnbookable) return;
 
     const anchorRect = cloneRect(anchorEl.getBoundingClientRect());
 
@@ -2485,7 +2485,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
             tabIndex={0}
             className={`occupant-compact-card ${(hoveredDeskId === occupant.deskId || selectedDeskId === occupant.deskId) ? 'is-active' : ''} ${highlightedDeskId === occupant.deskId ? 'is-highlighted' : ''}`}
             onClick={(event) => {
-              selectDeskFromCanvas(occupant.deskId, event.currentTarget);
+              selectDeskFromCanvas(occupant.deskId, event.currentTarget, { allowUnbookable: true });
             }}
             onKeyDown={(event) => {
               if (event.key !== 'Enter' && event.key !== ' ') return;
