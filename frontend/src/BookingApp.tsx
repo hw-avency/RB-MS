@@ -665,9 +665,11 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
   const [dialogErrorMessage, setDialogErrorMessage] = useState('');
   const [parkingStayMinutes, setParkingStayMinutes] = useState(480);
   const [parkingChargeMinutes, setParkingChargeMinutes] = useState(120);
+  const [parkingSmartStartTime, setParkingSmartStartTime] = useState('08:00');
   const [parkingSmartProposal, setParkingSmartProposal] = useState<ParkingSmartProposal | null>(null);
   const [parkingSmartError, setParkingSmartError] = useState('');
   const [isParkingSmartLoading, setIsParkingSmartLoading] = useState(false);
+  const [isParkingSmartDialogOpen, setIsParkingSmartDialogOpen] = useState(false);
   const [rebookConfirm, setRebookConfirm] = useState<RebookConfirmState | null>(null);
   const [isRebooking, setIsRebooking] = useState(false);
   const [recurringConflictState, setRecurringConflictState] = useState<RecurringConflictState | null>(null);
@@ -1953,15 +1955,15 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
 
 
   const requestSmartParkingProposal = async () => {
-    if (!selectedFloorplanId || !bookingFormValues.date || !bookingFormValues.startTime) return;
+    if (!selectedFloorplanId || !selectedDate || !parkingSmartStartTime) return;
     setParkingSmartError('');
     setParkingSmartProposal(null);
     setIsParkingSmartLoading(true);
     try {
       const response = await post<{ status: 'ok' | 'none'; message?: string; proposalType?: 'single' | 'split'; usedFallbackChargerFullWindow?: boolean; switchAfterCharging?: boolean; bookings?: ParkingSmartProposal['bookings'] }>('/bookings/parking-smart/propose', {
         floorplanId: selectedFloorplanId,
-        date: bookingFormValues.date,
-        startTime: bookingFormValues.startTime,
+        date: selectedDate,
+        startTime: parkingSmartStartTime,
         attendanceMinutes: parkingStayMinutes,
         chargingMinutes: parkingChargeMinutes
       });
@@ -1988,20 +1990,32 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
     setParkingSmartError('');
     try {
       await post('/bookings/parking-smart/confirm', {
-        date: bookingFormValues.date,
-        bookedFor: bookingFormValues.bookedFor,
-        guestName: bookingFormValues.bookedFor === 'GUEST' ? bookingFormValues.guestName : undefined,
+        date: selectedDate,
+        bookedFor: 'SELF',
         bookings: parkingSmartProposal.bookings.map((entry) => ({ deskId: entry.deskId, startMinute: entry.startMinute, endMinute: entry.endMinute }))
       });
       toast.success('Parkplatz gebucht');
       setParkingSmartProposal(null);
-      closeBookingFlow();
+      setIsParkingSmartDialogOpen(false);
       reloadBookings().catch(() => undefined);
     } catch (error) {
       setParkingSmartError(getApiErrorMessage(error, 'Nicht mehr verfügbar, bitte neu zuweisen.'));
     } finally {
       setIsParkingSmartLoading(false);
     }
+  };
+
+  const openParkingSmartDialog = () => {
+    setParkingSmartError('');
+    setParkingSmartProposal(null);
+    setIsParkingSmartDialogOpen(true);
+  };
+
+  const closeParkingSmartDialog = () => {
+    if (isParkingSmartLoading) return;
+    setParkingSmartError('');
+    setParkingSmartProposal(null);
+    setIsParkingSmartDialogOpen(false);
   };
 
   const updateExistingDeskBooking = async () => {
@@ -2789,6 +2803,8 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
     );
   }
 
+  const isParkingFloor = selectedFloorplan?.defaultResourceKind === 'PARKPLATZ';
+
   return (
     <main className="app-shell">
       <TopLoadingBar loading={isAppLoading} />
@@ -2814,7 +2830,13 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
                 <h2>{selectedFloorplan?.name ?? 'Floorplan'} · {formatDate(selectedDate)}</h2>
                 <p className="muted">Klicke auf einen Platz zum Buchen</p>
               </div>
-              <div className="toolbar" />
+              <div className="toolbar">
+                {isParkingFloor && (
+                  <button type="button" className="btn btn-outline" onClick={openParkingSmartDialog}>
+                    Parkplatz intelligent zuweisen
+                  </button>
+                )}
+              </div>
             </div>
             <div className={`canvas-body canvas-body-focus ${isUpdatingOccupancy ? 'is-loading' : ''}`}>
               {isBootstrapping ? (
@@ -2942,23 +2964,6 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
                     }
                     : undefined}
                 />
-                {popupDesk.kind === 'PARKPLATZ' && selectedFloorplan?.defaultResourceKind === 'PARKPLATZ' && (
-                  <section className="card stack-xs" style={{ marginTop: 12, padding: 12 }}>
-                    <h4>Parkplatz intelligent zuweisen</h4>
-                    <label className="field"><span>Wie lange sind Sie da? (Minuten)</span><input type="number" min={60} step={30} value={parkingStayMinutes} onChange={(event) => setParkingStayMinutes(Math.max(60, Number(event.target.value) || 60))} disabled={isParkingSmartLoading} /></label>
-                    <label className="field"><span>Müssen Sie laden? (Minuten)</span><input type="number" min={0} step={30} value={parkingChargeMinutes} onChange={(event) => setParkingChargeMinutes(Math.max(0, Math.min(parkingStayMinutes, Number(event.target.value) || 0)))} disabled={isParkingSmartLoading} /></label>
-                    <button type="button" className="btn btn-outline" onClick={requestSmartParkingProposal} disabled={isParkingSmartLoading}>Parkplatz anfordern</button>
-                    {parkingSmartError && <p className="field-error">{parkingSmartError}</p>}
-                    {parkingSmartProposal && (
-                      <div className="stack-xs">
-                        <strong>Vorschlag</strong>
-                        {parkingSmartProposal.bookings.map((entry, index) => <p key={`${entry.deskId}-${index}`}>{entry.hasCharger ? '⚡ ' : ''}{entry.deskName} · {entry.startTime ?? formatMinutes(entry.startMinute)}–{entry.endTime ?? formatMinutes(entry.endMinute)}</p>)}
-                        {parkingSmartProposal.switchAfterCharging && <p className="muted">Wechsel nach Ladedauer.</p>}
-                        <button type="button" className="btn" onClick={confirmSmartParkingProposal} disabled={isParkingSmartLoading}>Vorschlag bestätigen</button>
-                      </div>
-                    )}
-                  </section>
-                )}
                 {!isRoomResource(popupDesk) && canCancelHere && (
                   <footer className="desk-popup-footer-actions">
                     <button
@@ -3084,6 +3089,36 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
               </div>
             </>
           )}
+          </section>
+        </div>,
+        document.body
+      )}
+
+      {isParkingSmartDialogOpen && createPortal(
+        <div className="desk-popup-overlay" role="presentation">
+          <section className="card desk-popup" role="dialog" aria-modal="true" aria-labelledby="parking-smart-title">
+            <div className="desk-popup-header">
+              <div className="stack-xxs">
+                <h3 id="parking-smart-title">Parkplatz intelligent zuweisen</h3>
+                <p className="muted">Automatische Empfehlung für Lade- und Restzeit auf dem ausgewählten Floor.</p>
+              </div>
+              <button type="button" className="btn btn-ghost desk-popup-close" aria-label="Dialog schließen" onClick={closeParkingSmartDialog} disabled={isParkingSmartLoading}>✕</button>
+            </div>
+            <div className="desk-popup-body stack-xs">
+              <label className="field"><span>Startzeit</span><input type="time" min="00:00" max="23:30" step={1800} value={parkingSmartStartTime} onChange={(event) => setParkingSmartStartTime(event.target.value)} disabled={isParkingSmartLoading} /></label>
+              <label className="field"><span>Wie lange sind Sie da? (Minuten)</span><input type="number" min={60} step={30} value={parkingStayMinutes} onChange={(event) => setParkingStayMinutes(Math.max(60, Number(event.target.value) || 60))} disabled={isParkingSmartLoading} /></label>
+              <label className="field"><span>Müssen Sie laden? (Minuten)</span><input type="number" min={0} step={30} value={parkingChargeMinutes} onChange={(event) => setParkingChargeMinutes(Math.max(0, Math.min(parkingStayMinutes, Number(event.target.value) || 0)))} disabled={isParkingSmartLoading} /></label>
+              <button type="button" className="btn btn-outline" onClick={requestSmartParkingProposal} disabled={isParkingSmartLoading}>Parkplatz anfordern</button>
+              {parkingSmartError && <p className="field-error">{parkingSmartError}</p>}
+              {parkingSmartProposal && (
+                <div className="stack-xs">
+                  <strong>Vorschlag</strong>
+                  {parkingSmartProposal.bookings.map((entry, index) => <p key={`${entry.deskId}-${index}`}>{entry.hasCharger ? '⚡ ' : ''}{entry.deskName} · {entry.startTime ?? formatMinutes(entry.startMinute)}–{entry.endTime ?? formatMinutes(entry.endMinute)}</p>)}
+                  {parkingSmartProposal.switchAfterCharging && <p className="muted">Wechsel nach Ladedauer.</p>}
+                  <button type="button" className="btn" onClick={confirmSmartParkingProposal} disabled={isParkingSmartLoading}>Vorschlag bestätigen</button>
+                </div>
+              )}
+            </div>
           </section>
         </div>,
         document.body
