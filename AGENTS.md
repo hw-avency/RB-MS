@@ -82,6 +82,8 @@ Keine manuellen Shell-Schritte beim Nutzer voraussetzen.
 - Bei **jedem Commit mit funktionaler Änderung** muss diese Datei aktualisiert werden.
 - Eintrag-Regeln:
   - Nur wichtige Features oder relevante Bugfixes aufnehmen.
-  - Nicht zu technisch formulieren (verständliche Produkt-Sprache).
+  - Falls neue Funktionen hinzugekommen sind kurze Beschreibung wie sie  funktionieren oder bedient werden.
+  - Nicht zu technisch formulieren (verständliche Produkt-Sprache)
+  - Nichts ausdenken, es dürfen wirklich nur tatsächliche Änderungen aufgenommen werden.
   - Neueste Version immer oben einfügen.
   - Version muss zur App-Version in `frontend/package.json` passen.
