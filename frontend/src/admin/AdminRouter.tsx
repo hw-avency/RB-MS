@@ -13,7 +13,7 @@ type SeriesPolicy = 'DEFAULT' | 'ALLOW' | 'DISALLOW';
 type Floorplan = { id: string; name: string; imageUrl: string; isDefault?: boolean; sortOrder?: number; tenantScope?: 'ALL' | 'SELECTED'; tenantIds?: string[]; defaultResourceKind?: ResourceKind; defaultAllowSeries?: boolean; createdAt?: string; updatedAt?: string };
 type Desk = { id: string; floorplanId: string; name: string; kind?: ResourceKind; allowSeriesOverride?: boolean | null; effectiveAllowSeries?: boolean; x: number | null; y: number | null; position?: { x: number; y: number } | null; tenantScope?: 'ALL' | 'SELECTED'; tenantIds?: string[]; createdAt?: string; updatedAt?: string };
 type Employee = { id: string; email: string; displayName: string; role: 'admin' | 'user'; isActive: boolean; photoUrl?: string | null; createdAt?: string; updatedAt?: string };
-type Tenant = { id: string; domain: string; name?: string | null; employeeCount?: number; createdAt?: string; updatedAt?: string };
+type Tenant = { id: string; domain: string; name?: string | null; entraTenantId?: string | null; employeeCount?: number; createdAt?: string; updatedAt?: string };
 type Booking = { id: string; deskId: string; userEmail: string; userDisplayName?: string; employeeId?: string; date: string; slot?: 'FULL_DAY' | 'MORNING' | 'AFTERNOON' | 'CUSTOM'; startTime?: string; endTime?: string; createdAt?: string; updatedAt?: string; bookedFor?: 'SELF' | 'GUEST'; guestName?: string | null; createdByUserId?: string; createdBy?: { id: string; displayName?: string | null; email: string }; user?: { id: string; displayName?: string | null; email: string } | null };
 type DbColumn = { name: string; type: string; required: boolean; id: boolean; hasDefaultValue: boolean };
 type DbTable = { name: string; model: string; columns: DbColumn[] };
@@ -1688,6 +1688,7 @@ function TenantsPage({ path, navigate, onLogout, currentUser }: RouteProps) {
   const [creating, setCreating] = useState(false);
   const [domain, setDomain] = useState('');
   const [name, setName] = useState('');
+  const [entraTenantId, setEntraTenantId] = useState('');
 
   const load = async () => {
     setState((current) => ({ ...current, loading: true, error: '' }));
@@ -1702,6 +1703,8 @@ function TenantsPage({ path, navigate, onLogout, currentUser }: RouteProps) {
 
   useEffect(() => { void load(); }, []);
   const normalizedDomain = domain.trim().toLowerCase().replace(/^@+/, '');
+  const normalizedEntraTenantId = entraTenantId.trim().toLowerCase();
+  const isValidEntraTenantId = normalizedEntraTenantId.length === 0 || /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(normalizedEntraTenantId);
 
   return (
     <AdminLayout path={path} navigate={navigate} title="Mandanten" onLogout={onLogout} currentUser={currentUser ?? null}>
@@ -1709,13 +1712,13 @@ function TenantsPage({ path, navigate, onLogout, currentUser }: RouteProps) {
         <ListToolbar
           title="Mandanten"
           count={tenants.length}
-          actions={<button className="btn" onClick={() => { setCreating(true); setEditing(null); setDomain(''); setName(''); }}>Neuer Mandant</button>}
+          actions={<button className="btn" onClick={() => { setCreating(true); setEditing(null); setDomain(''); setName(''); setEntraTenantId(''); }}>Neuer Mandant</button>}
         />
         {state.error && <ErrorState text={state.error} onRetry={() => void load()} />}
-        <div className="table-wrap"><table className="admin-table"><thead><tr><th>Domain</th><th>Name</th><th>Mitarbeiter</th><th className="align-right">Aktionen</th></tr></thead>{state.loading && !state.ready ? <SkeletonRows columns={4} /> : <tbody>{tenants.map((tenant) => <tr key={tenant.id}><td>{tenant.domain}</td><td>{tenant.name ?? '—'}</td><td>{tenant.employeeCount ?? '—'}</td><td className="align-right"><RowMenu items={[{ label: 'Bearbeiten', onSelect: () => { setEditing(tenant); setCreating(true); setDomain(tenant.domain); setName(tenant.name ?? ''); } }, { label: 'Löschen', danger: true, onSelect: async () => { try { await del(`/admin/tenants/${tenant.id}`); toasts.success('Mandant gelöscht'); await load(); } catch (error) { toasts.error(error instanceof Error ? error.message : 'Löschen fehlgeschlagen'); } } }]} /></td></tr>)}</tbody>}</table></div>
+        <div className="table-wrap"><table className="admin-table"><thead><tr><th>Domain</th><th>Name</th><th>Entra Tenant ID</th><th>Mitarbeiter</th><th className="align-right">Aktionen</th></tr></thead>{state.loading && !state.ready ? <SkeletonRows columns={5} /> : <tbody>{tenants.map((tenant) => <tr key={tenant.id}><td>{tenant.domain}</td><td>{tenant.name ?? '—'}</td><td>{tenant.entraTenantId ?? '—'}</td><td>{tenant.employeeCount ?? '—'}</td><td className="align-right"><RowMenu items={[{ label: 'Bearbeiten', onSelect: () => { setEditing(tenant); setCreating(true); setDomain(tenant.domain); setName(tenant.name ?? ''); setEntraTenantId(tenant.entraTenantId ?? ''); } }, { label: 'Löschen', danger: true, onSelect: async () => { try { await del(`/admin/tenants/${tenant.id}`); toasts.success('Mandant gelöscht'); await load(); } catch (error) { toasts.error(error instanceof Error ? error.message : 'Löschen fehlgeschlagen'); } } }]} /></td></tr>)}</tbody>}</table></div>
       </section>
       {creating && (
-        <div className="overlay"><section className="card dialog stack-sm"><h3>{editing ? 'Mandant bearbeiten' : 'Mandant anlegen'}</h3><form className="stack-sm" onSubmit={async (event) => { event.preventDefault(); try { if (editing) { await patch(`/admin/tenants/${editing.id}`, { domain: normalizedDomain, name }); } else { await post('/admin/tenants', { domain: normalizedDomain, name }); } setCreating(false); setEditing(null); setDomain(''); setName(''); toasts.success('Mandant gespeichert'); await load(); } catch (error) { toasts.error(error instanceof Error ? error.message : 'Speichern fehlgeschlagen'); } }}><label className="field"><span>Domain</span><input required value={domain} onChange={(event) => setDomain(event.target.value)} placeholder="avency.de" /></label><label className="field"><span>Name</span><input value={name} onChange={(event) => setName(event.target.value)} placeholder="optional" /></label><div className="inline-end"><button type="button" className="btn btn-outline" onClick={() => setCreating(false)}>Abbrechen</button><button className="btn" disabled={!normalizedDomain || !normalizedDomain.includes('.')}>Speichern</button></div></form></section></div>
+        <div className="overlay"><section className="card dialog stack-sm"><h3>{editing ? 'Mandant bearbeiten' : 'Mandant anlegen'}</h3><form className="stack-sm" onSubmit={async (event) => { event.preventDefault(); try { const payload = { domain: normalizedDomain, name, entraTenantId: normalizedEntraTenantId || null }; if (editing) { await patch(`/admin/tenants/${editing.id}`, payload); } else { await post('/admin/tenants', payload); } setCreating(false); setEditing(null); setDomain(''); setName(''); setEntraTenantId(''); toasts.success('Mandant gespeichert'); await load(); } catch (error) { toasts.error(error instanceof Error ? error.message : 'Speichern fehlgeschlagen'); } }}><label className="field"><span>Domain</span><input required value={domain} onChange={(event) => setDomain(event.target.value)} placeholder="avency.de" /></label><label className="field"><span>Name</span><input value={name} onChange={(event) => setName(event.target.value)} placeholder="optional" /></label><label className="field"><span>Entra Tenant ID</span><input value={entraTenantId} onChange={(event) => setEntraTenantId(event.target.value)} placeholder="00000000-0000-0000-0000-000000000000" /></label><div className="inline-end"><button type="button" className="btn btn-outline" onClick={() => setCreating(false)}>Abbrechen</button><button className="btn" disabled={!normalizedDomain || !normalizedDomain.includes('.') || !isValidEntraTenantId}>Speichern</button></div></form></section></div>
       )}
     </AdminLayout>
   );

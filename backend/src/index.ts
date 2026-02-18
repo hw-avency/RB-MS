@@ -209,7 +209,8 @@ const destroySession = async (sessionId?: string) => {
   if (!sessionId) return;
   await prisma.session.deleteMany({ where: { id: sessionId } });
 };
-const ENTRA_AUTHORITY = `https://login.microsoftonline.com/${ENTRA_TENANT_ID}/v2.0`;
+const ENTRA_DISCOVERY_TENANT = process.env.ENTRA_DISCOVERY_TENANT?.trim() || 'organizations';
+const ENTRA_AUTHORITY = `https://login.microsoftonline.com/${ENTRA_DISCOVERY_TENANT}/v2.0`;
 const ENTRA_DISCOVERY_URL = `${ENTRA_AUTHORITY}/.well-known/openid-configuration`;
 type OidcMetadata = { authorization_endpoint: string; token_endpoint: string; jwks_uri: string; issuer: string };
 type Jwk = { kid?: string; kty?: string; use?: string; alg?: string; n?: string; e?: string };
@@ -261,7 +262,7 @@ const consumeOidcState = async (state: string): Promise<OidcFlowState | null> =>
   return current;
 };
 
-const isEntraConfigured = (): boolean => Boolean(ENTRA_TENANT_ID && ENTRA_CLIENT_ID && ENTRA_CLIENT_SECRET && ENTRA_REDIRECT_URI);
+const isEntraConfigured = (): boolean => Boolean(ENTRA_CLIENT_ID && ENTRA_CLIENT_SECRET && ENTRA_REDIRECT_URI);
 
 const loadOidcMetadata = async (): Promise<OidcMetadata> => {
   if (oidcMetadataCache) return oidcMetadataCache;
@@ -301,12 +302,44 @@ const verifyIdToken = async (idToken: string, expectedNonce: string): Promise<Id
   const now = Math.floor(Date.now() / 1000);
   const audience = Array.isArray(claims.aud) ? claims.aud : [claims.aud];
 
-  if (claims.iss !== metadata.issuer) throw new Error('INVALID_ISSUER');
+  const issuerForTenant = claims.tid ? `https://login.microsoftonline.com/${claims.tid}/v2.0` : null;
+  if (!issuerForTenant || claims.iss !== issuerForTenant) throw new Error('INVALID_ISSUER');
   if (!audience.includes(ENTRA_CLIENT_ID as string)) throw new Error('INVALID_AUDIENCE');
   if (!claims.exp || claims.exp <= now) throw new Error('ID_TOKEN_EXPIRED');
   if (claims.nonce !== expectedNonce) throw new Error('INVALID_NONCE');
 
   return claims;
+};
+
+
+const ENTRA_TENANT_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const normalizeEntraTenantId = (value: unknown): string | null => {
+  if (typeof value !== 'string') return null;
+  const normalized = value.trim().toLowerCase();
+  if (!ENTRA_TENANT_ID_PATTERN.test(normalized)) return null;
+  return normalized;
+};
+
+const loadAllowedEntraTenantIds = async (): Promise<Set<string>> => {
+  const rows = await prisma.tenant.findMany({
+    where: { entraTenantId: { not: null } },
+    select: { entraTenantId: true }
+  });
+
+  const allowed = new Set<string>();
+  for (const row of rows) {
+    const normalized = normalizeEntraTenantId(row.entraTenantId);
+    if (normalized) {
+      allowed.add(normalized);
+    }
+  }
+
+  const envTenantId = normalizeEntraTenantId(ENTRA_TENANT_ID);
+  if (envTenantId) {
+    allowed.add(envTenantId);
+  }
+
+  return allowed;
 };
 
 const originGuardExcludedPaths = new Set(['/auth/login', '/auth/logout']);
@@ -1477,7 +1510,9 @@ app.get('/auth/entra/callback', async (req, res) => {
     const tid = typeof claims.tid === 'string' ? claims.tid : null;
     const oid = typeof claims.oid === 'string' ? claims.oid : null;
 
-    if (!tid || tid !== ENTRA_TENANT_ID) {
+    const normalizedTid = normalizeEntraTenantId(tid);
+    const allowedTenantIds = await loadAllowedEntraTenantIds();
+    if (!normalizedTid || !allowedTenantIds.has(normalizedTid)) {
       res.status(403).json({ code: 'TENANT_NOT_ALLOWED', message: 'Tenant not allowed' });
       return;
     }
@@ -1491,7 +1526,7 @@ app.get('/auth/entra/callback', async (req, res) => {
       return;
     }
 
-    const user = await upsertEmployeeFromEntraLogin({ oid, tid, email, name });
+    const user = await upsertEmployeeFromEntraLogin({ oid, tid: normalizedTid, email, name });
     if (tokenPayload.access_token) {
       await syncEmployeePhotoFromGraph(user.employeeId, tokenPayload.access_token);
     } else {
@@ -2047,6 +2082,7 @@ app.get('/admin/tenants', requireAdmin, async (_req, res) => {
     id: tenant.id,
     domain: tenant.domain,
     name: tenant.name,
+    entraTenantId: tenant.entraTenantId,
     createdAt: tenant.createdAt,
     updatedAt: tenant.updatedAt,
     employeeCount: tenant._count.employees
@@ -2057,6 +2093,12 @@ app.post('/admin/tenants', requireAdmin, async (req, res) => {
   const rawDomain = typeof req.body?.domain === 'string' ? req.body.domain : '';
   const domain = normalizeTenantDomain(rawDomain);
   const name = typeof req.body?.name === 'string' ? req.body.name.trim() : undefined;
+  const entraTenantId = typeof req.body?.entraTenantId === 'string' ? normalizeEntraTenantId(req.body.entraTenantId) : null;
+
+  if (typeof req.body?.entraTenantId === 'string' && !entraTenantId) {
+    res.status(400).json({ error: 'validation', message: 'entraTenantId must be a GUID' });
+    return;
+  }
 
   if (!domain || !domain.includes('.')) {
     res.status(400).json({ error: 'validation', message: 'domain must be a valid domain' });
@@ -2064,7 +2106,7 @@ app.post('/admin/tenants', requireAdmin, async (req, res) => {
   }
 
   try {
-    const created = await prisma.tenant.create({ data: { domain, name: name || domain } });
+    const created = await prisma.tenant.create({ data: { domain, name: name || domain, entraTenantId } });
     res.status(201).json(created);
   } catch (error) {
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
@@ -2084,15 +2126,22 @@ app.patch('/admin/tenants/:id', requireAdmin, async (req, res) => {
 
   const rawDomain = typeof req.body?.domain === 'string' ? req.body.domain : undefined;
   const name = typeof req.body?.name === 'string' ? req.body.name.trim() : undefined;
+  const rawEntraTenantId = Object.prototype.hasOwnProperty.call(req.body ?? {}, 'entraTenantId') ? req.body?.entraTenantId : undefined;
 
-  if (typeof rawDomain === 'undefined' && typeof name === 'undefined') {
-    res.status(400).json({ error: 'validation', message: 'name or domain must be provided' });
+  if (typeof rawDomain === 'undefined' && typeof name === 'undefined' && typeof rawEntraTenantId === 'undefined') {
+    res.status(400).json({ error: 'validation', message: 'name, domain or entraTenantId must be provided' });
     return;
   }
 
   const domain = typeof rawDomain === 'string' ? normalizeTenantDomain(rawDomain) : undefined;
+  const entraTenantId = typeof rawEntraTenantId === 'string' ? normalizeEntraTenantId(rawEntraTenantId) : rawEntraTenantId === null ? null : undefined;
   if (typeof domain === 'string' && (!domain || !domain.includes('.'))) {
     res.status(400).json({ error: 'validation', message: 'domain must be a valid domain' });
+    return;
+  }
+
+  if (typeof rawEntraTenantId !== 'undefined' && typeof entraTenantId === 'undefined') {
+    res.status(400).json({ error: 'validation', message: 'entraTenantId must be a GUID or null' });
     return;
   }
 
@@ -2101,7 +2150,8 @@ app.patch('/admin/tenants/:id', requireAdmin, async (req, res) => {
       where: { id },
       data: {
         ...(typeof domain === 'string' ? { domain } : {}),
-        ...(typeof name === 'string' ? { name: name || null } : {})
+        ...(typeof name === 'string' ? { name: name || null } : {}),
+        ...(typeof entraTenantId !== 'undefined' ? { entraTenantId } : {})
       }
     });
     res.status(200).json(updated);
