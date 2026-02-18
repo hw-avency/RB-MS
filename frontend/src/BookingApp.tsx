@@ -1136,7 +1136,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
   const popupDeskAvailability = useMemo(() => getDeskSlotAvailability(popupDesk), [popupDesk]);
   const popupDeskBookings = useMemo(() => (popupDesk ? normalizeDeskBookings(popupDesk) : []), [popupDesk]);
   const popupRoomBookingsForSelectedDay = useMemo<RoomAvailabilityBooking[]>(() => {
-    if (!popupDesk || !isRoomResource(popupDesk)) return [];
+    if (!popupDesk || !isTimeBasedResource(popupDesk)) return [];
     if (roomAvailability && roomAvailability.resource.id === popupDesk.id && roomAvailability.date === selectedDate) {
       return roomAvailability.bookings
         .map((booking) => ({
@@ -1227,7 +1227,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
       label: `${formatMinutes(interval.startMin)} – ${formatMinutes(interval.endMin)}`
     })), [popupRoomFreeIntervals]);
   const roomDebugInfo = useMemo(() => {
-    if (!showRoomDebugInfo || !popupDesk || !isRoomResource(popupDesk)) return undefined;
+    if (!showRoomDebugInfo || !popupDesk || !isTimeBasedResource(popupDesk)) return undefined;
 
     const formatIntervalList = (intervals: Array<{ startMin: number; endMin: number }>): string => {
       if (intervals.length === 0) return '—';
@@ -1242,7 +1242,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
     ];
   }, [popupDesk, popupRoomFreeIntervals, popupRoomOccupiedIntervals, popupRoomOccupiedSegments, showRoomDebugInfo]);
   const popupRoomRingDebugTitle = useMemo(() => {
-    if (!showRoomDebugInfo || !popupDesk || !isRoomResource(popupDesk)) return undefined;
+    if (!showRoomDebugInfo || !popupDesk || !isTimeBasedResource(popupDesk)) return undefined;
 
     const segmentList = popupRoomOccupiedIntervals.length > 0
       ? popupRoomOccupiedIntervals.map((interval) => `${formatMinutes(interval.startMin)}–${formatMinutes(interval.endMin)}`).join(', ')
@@ -2942,7 +2942,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
                   errorMessage={dialogErrorMessage}
                   allowRecurring={popupDesk.effectiveAllowSeries !== false}
                   resourceKind={popupDesk.kind}
-                  roomSchedule={isRoomResource(popupDesk)
+                  roomSchedule={isTimeBasedResource(popupDesk)
                     ? {
                       bookings: popupRoomBookingsList.map((booking) => ({
                         id: booking.id,
