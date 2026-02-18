@@ -119,7 +119,13 @@ input, select { border: 1px solid hsl(var(--border)); border-radius: 12px; paddi
 .desk-pin.selected,.desk-pin.hovered,.desk-pin.is-highlighted{--desk-pin-scale:1.06;box-shadow:0 0 0 4px rgba(59,130,246,.2),0 8px 18px rgba(15,23,42,.2)}
 .desk-pin.is-selected{box-shadow:0 0 0 5px rgba(59,130,246,.32),0 0 0 10px rgba(59,130,246,.15),0 8px 20px rgba(15,23,42,.24)}
 .desk-pin.is-click-disabled{cursor:not-allowed;opacity:.9}
-.desk-pin.is-not-bookable{filter:grayscale(1);opacity:.55;cursor:not-allowed}
+.desk-pin.is-not-bookable{cursor:not-allowed}
+.desk-pin.is-not-bookable .pulseHalo{display:none}
+.desk-pin.is-not-bookable .pin-ring-arc,
+.desk-pin.is-not-bookable .room-business-ring-free,
+.desk-pin.is-not-bookable .room-business-ring-booked,
+.desk-pin.is-not-bookable .room-business-ring-night,
+.desk-pin.is-not-bookable .room-business-ring-track{stroke:var(--resource-neutral)}
 .desk-pin:hover{--desk-pin-scale:1.05}
 .desk-pin:hover .pulseHalo,.desk-pin.selected .pulseHalo,.desk-pin.is-selected .pulseHalo,.desk-pin.hovered .pulseHalo,.desk-pin.is-highlighted .pulseHalo{animation-play-state:paused;opacity:.12}
 .desk-pin-avatar-img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;object-position:center;display:block;z-index:1}
