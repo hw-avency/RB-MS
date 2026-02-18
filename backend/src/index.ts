@@ -26,6 +26,94 @@ type AppLogEntry = {
 const APP_LOG_BUFFER_LIMIT = 2000;
 const appLogBuffer: AppLogEntry[] = [];
 
+const logLookupCache = {
+  employeeEmailsById: new Map<string, string>(),
+  tenantDomainsById: new Map<string, string>(),
+  deskNamesById: new Map<string, string>()
+};
+
+const refreshLogLookupCache = async (): Promise<void> => {
+  try {
+    const [employees, tenants, desks] = await Promise.all([
+      prisma.employee.findMany({ select: { id: true, email: true } }),
+      prisma.tenant.findMany({ select: { id: true, domain: true } }),
+      prisma.desk.findMany({ select: { id: true, name: true } })
+    ]);
+
+    logLookupCache.employeeEmailsById = new Map(
+      employees
+        .map((employee) => [employee.id, employee.email?.trim().toLowerCase() ?? ''] as const)
+        .filter((entry): entry is readonly [string, string] => entry[1].length > 0)
+    );
+    logLookupCache.tenantDomainsById = new Map(
+      tenants
+        .map((tenant) => [tenant.id, tenant.domain?.trim().toLowerCase() ?? ''] as const)
+        .filter((entry): entry is readonly [string, string] => entry[1].length > 0)
+    );
+    logLookupCache.deskNamesById = new Map(
+      desks
+        .map((desk) => [desk.id, desk.name?.trim() ?? ''] as const)
+        .filter((entry): entry is readonly [string, string] => entry[1].length > 0)
+    );
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    originalConsole.warn('LOG_LOOKUP_REFRESH_FAILED', { message });
+  }
+};
+
+const mapKnownLogReference = (key: string, value: unknown): { key: string; value: unknown } => {
+  if (key === 'employeeId' && typeof value === 'string') {
+    return { key: 'employeeEmail', value: logLookupCache.employeeEmailsById.get(value) ?? value };
+  }
+  if (key === 'tenantId' && typeof value === 'string') {
+    return { key: 'tenantDomain', value: logLookupCache.tenantDomainsById.get(value) ?? value };
+  }
+  if (key === 'deskId' && typeof value === 'string') {
+    return { key: 'deskName', value: logLookupCache.deskNamesById.get(value) ?? value };
+  }
+  if (key === 'employeeIds' && Array.isArray(value)) {
+    return {
+      key: 'employeeEmails',
+      value: value.map((entry) => (typeof entry === 'string' ? (logLookupCache.employeeEmailsById.get(entry) ?? entry) : entry))
+    };
+  }
+  if (key === 'tenantIds' && Array.isArray(value)) {
+    return {
+      key: 'tenantDomains',
+      value: value.map((entry) => (typeof entry === 'string' ? (logLookupCache.tenantDomainsById.get(entry) ?? entry) : entry))
+    };
+  }
+  if (key === 'deskIds' && Array.isArray(value)) {
+    return {
+      key: 'deskNames',
+      value: value.map((entry) => (typeof entry === 'string' ? (logLookupCache.deskNamesById.get(entry) ?? entry) : entry))
+    };
+  }
+
+  return { key, value };
+};
+
+const normalizeLogArg = (value: unknown, seen = new WeakSet<object>()): unknown => {
+  if (Array.isArray(value)) {
+    return value.map((entry) => normalizeLogArg(entry, seen));
+  }
+  if (!value || typeof value !== 'object' || value instanceof Error || value instanceof Date) {
+    return value;
+  }
+  if (seen.has(value)) return '[Circular]';
+  seen.add(value);
+
+  const normalized: Record<string, unknown> = {};
+  for (const [rawKey, rawValue] of Object.entries(value)) {
+    const mapped = mapKnownLogReference(rawKey, rawValue);
+    normalized[mapped.key] = normalizeLogArg(mapped.value, seen);
+  }
+
+  return normalized;
+};
+
+const normalizeLogArgs = (args: unknown[]): unknown[] => args.map((entry) => normalizeLogArg(entry));
+
 const serializeLogArg = (value: unknown): string => {
   if (typeof value === 'string') return value;
   if (value instanceof Error) {
@@ -67,28 +155,33 @@ const originalConsole = {
 };
 
 console.log = (...args: unknown[]) => {
-  pushAppLog('info', args);
-  originalConsole.log(...args);
+  const normalized = normalizeLogArgs(args);
+  pushAppLog('info', normalized);
+  originalConsole.log(...normalized);
 };
 
 console.info = (...args: unknown[]) => {
-  pushAppLog('info', args);
-  originalConsole.info(...args);
+  const normalized = normalizeLogArgs(args);
+  pushAppLog('info', normalized);
+  originalConsole.info(...normalized);
 };
 
 console.warn = (...args: unknown[]) => {
-  pushAppLog('warn', args);
-  originalConsole.warn(...args);
+  const normalized = normalizeLogArgs(args);
+  pushAppLog('warn', normalized);
+  originalConsole.warn(...normalized);
 };
 
 console.error = (...args: unknown[]) => {
-  pushAppLog('error', args);
-  originalConsole.error(...args);
+  const normalized = normalizeLogArgs(args);
+  pushAppLog('error', normalized);
+  originalConsole.error(...normalized);
 };
 
 console.debug = (...args: unknown[]) => {
-  pushAppLog('debug', args);
-  originalConsole.debug(...args);
+  const normalized = normalizeLogArgs(args);
+  pushAppLog('debug', normalized);
+  originalConsole.debug(...normalized);
 };
 
 const ADMIN_EMAIL = process.env.ADMIN_EMAIL?.trim().toLowerCase();
@@ -6615,6 +6708,10 @@ const start = async () => {
   await ensureBreakglassAdmin();
   await ensureEmployeeTenantAssignments();
   await backfillLegacyBookingCreators();
+  await refreshLogLookupCache();
+  setInterval(() => {
+    void refreshLogLookupCache();
+  }, 5 * 60 * 1000);
   app.listen(port, '0.0.0.0', () => {
     console.log(`${APP_TITLE} API listening on ${port}`);
   });
