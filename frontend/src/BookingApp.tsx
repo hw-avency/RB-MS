@@ -2461,7 +2461,12 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
         <span className="legend-chip"><i className="dot booked" /> Belegt</span>
         <span className="legend-chip"><i className="dot selected" /> Dein Platz</span>
       </div>
-      <button className="btn btn-outline" onClick={() => setFeedbackDialogOpen(true)}>Feature Request / Bug melden</button>
+    </section>
+  );
+
+  const feedbackCallout = (
+    <section className="feedback-callout">
+      <button className="btn feedback-callout-btn" onClick={() => setFeedbackDialogOpen(true)}>Feature Request / Bug melden</button>
     </section>
   );
 
@@ -2676,6 +2681,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
       <section className="layout-grid">
         <aside className="left-col stack-sm">
           {isBootstrapping ? <div className="card skeleton h-480" /> : dateAndViewPanel}
+          {!isBootstrapping && feedbackCallout}
         </aside>
         <section className="center-col">
           <article className="card canvas-card">
