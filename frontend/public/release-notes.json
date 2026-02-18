@@ -1,5 +1,18 @@
 [
   {
+    "version": "1.5.26",
+    "date": "2026-02-18",
+    "type": "bugfix",
+    "title": "Smart-Parking mit Anreise/Abreise und Lade-Alternative",
+    "summary": "Beim intelligenten Parken gibst du jetzt Anreise und Abreise direkt als Uhrzeit an. Wenn Laden nicht möglich ist, werden kürzere Ladezeiten oder auf Wunsch ein normaler Parkplatz vorgeschlagen.",
+    "items": [
+      "Die Felder heißen jetzt Anreise und Abreise; dadurch planst du den Zeitraum direkt statt über eine Aufenthaltsdauer.",
+      "Bei Ladebedarf kann die App eine kürzere verfügbare Ladezeit vorschlagen, wenn die gewünschte Dauer nicht frei ist.",
+      "Sind alle Ladezeiten belegt, fragt die App nach einer Buchung ohne Laden und bietet – falls möglich – einen normalen Parkplatz im selben Zeitraum an.",
+      "Der kleine Stornieren-Button bei zeitbasierten Parkplatzbuchungen funktioniert wieder zuverlässig."
+    ]
+  },
+  {
     "version": "1.5.25",
     "date": "2026-02-18",
     "type": "bugfix",

@@ -183,6 +183,17 @@ type ParkingSmartProposal = {
   bookings: Array<{ deskId: string; deskName: string; startMinute: number; endMinute: number; startTime?: string; endTime?: string; hasCharger: boolean }>;
 };
 
+type ParkingSmartProposeResponse = {
+  status: 'ok' | 'none';
+  message?: string;
+  proposalType?: 'single' | 'split';
+  usedFallbackChargerFullWindow?: boolean;
+  switchAfterCharging?: boolean;
+  adjustedChargingMinutes?: number;
+  bookings?: ParkingSmartProposal['bookings'];
+  fallbackWithoutCharging?: ParkingSmartProposal;
+};
+
 const FEEDBACK_SCREENSHOT_MAX_BYTES = 3 * 1024 * 1024;
 const FEEDBACK_SCREENSHOT_ACCEPT = 'image/png,image/jpeg,image/webp';
 
@@ -666,11 +677,12 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
   const [bookingFormValues, setBookingFormValues] = useState<BookingFormValues>(createDefaultBookingFormValues(today));
   const [manageTargetSlot, setManageTargetSlot] = useState<BookingFormValues['slot']>('MORNING');
   const [dialogErrorMessage, setDialogErrorMessage] = useState('');
-  const [parkingStayMinutes, setParkingStayMinutes] = useState(480);
+  const [parkingSmartArrivalTime, setParkingSmartArrivalTime] = useState('08:00');
+  const [parkingSmartDepartureTime, setParkingSmartDepartureTime] = useState('16:00');
   const [parkingChargeMinutes, setParkingChargeMinutes] = useState(120);
-  const [parkingSmartStartTime, setParkingSmartStartTime] = useState('08:00');
   const [parkingSmartProposal, setParkingSmartProposal] = useState<ParkingSmartProposal | null>(null);
   const [parkingSmartError, setParkingSmartError] = useState('');
+  const [parkingSmartInfo, setParkingSmartInfo] = useState('');
   const [isParkingSmartLoading, setIsParkingSmartLoading] = useState(false);
   const [isParkingSmartDialogOpen, setIsParkingSmartDialogOpen] = useState(false);
   const [rebookConfirm, setRebookConfirm] = useState<RebookConfirmState | null>(null);
@@ -698,10 +710,6 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
   const [calendarBookings, setCalendarBookings] = useState<CalendarBooking[]>([]);
   const [floorplanResources, setFloorplanResources] = useState<FloorplanResource[]>([]);
   const [bookedCalendarDays, setBookedCalendarDays] = useState<string[]>([]);
-
-  useEffect(() => {
-    setParkingChargeMinutes((current) => Math.min(current, parkingStayMinutes));
-  }, [parkingStayMinutes]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -1962,22 +1970,41 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
 
 
   const requestSmartParkingProposal = async () => {
-    if (!selectedFloorplanId || !selectedDate || !parkingSmartStartTime) return;
+    if (!selectedFloorplanId || !selectedDate || !parkingSmartArrivalTime || !parkingSmartDepartureTime) return;
+    if (toMinutes(parkingSmartDepartureTime) <= toMinutes(parkingSmartArrivalTime)) {
+      setParkingSmartError('Abreise muss nach der Anreise liegen.');
+      setParkingSmartProposal(null);
+      return;
+    }
+
     setParkingSmartError('');
+    setParkingSmartInfo('');
     setParkingSmartProposal(null);
     setIsParkingSmartLoading(true);
     try {
-      const response = await post<{ status: 'ok' | 'none'; message?: string; proposalType?: 'single' | 'split'; usedFallbackChargerFullWindow?: boolean; switchAfterCharging?: boolean; bookings?: ParkingSmartProposal['bookings'] }>('/bookings/parking-smart/propose', {
+      const response = await post<ParkingSmartProposeResponse>('/bookings/parking-smart/propose', {
         floorplanId: selectedFloorplanId,
         date: selectedDate,
-        startTime: parkingSmartStartTime,
-        attendanceMinutes: parkingStayMinutes,
+        arrivalTime: parkingSmartArrivalTime,
+        departureTime: parkingSmartDepartureTime,
         chargingMinutes: parkingChargeMinutes
       });
+
       if (response.status !== 'ok' || !response.bookings) {
+        if (response.fallbackWithoutCharging) {
+          setParkingSmartInfo(response.message ?? 'Laden ist nicht verfügbar. Möchtest du stattdessen ohne Laden buchen?');
+          setParkingSmartProposal(response.fallbackWithoutCharging);
+          return;
+        }
         setParkingSmartError(response.message ?? 'Keine passende Kombination verfügbar.');
         return;
       }
+
+      if (response.message) setParkingSmartInfo(response.message);
+      if (typeof response.adjustedChargingMinutes === 'number' && response.adjustedChargingMinutes > 0 && response.adjustedChargingMinutes !== parkingChargeMinutes) {
+        setParkingSmartInfo(response.message ?? `Es ist aktuell eine kürzere Ladedauer von ${Math.floor(response.adjustedChargingMinutes / 60)}h ${response.adjustedChargingMinutes % 60}min verfügbar.`);
+      }
+
       setParkingSmartProposal({
         proposalType: response.proposalType ?? (response.bookings.length === 2 ? 'split' : 'single'),
         usedFallbackChargerFullWindow: Boolean(response.usedFallbackChargerFullWindow),
@@ -2014,6 +2041,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
 
   const openParkingSmartDialog = () => {
     setParkingSmartError('');
+    setParkingSmartInfo('');
     setParkingSmartProposal(null);
     setIsParkingSmartDialogOpen(true);
   };
@@ -2021,6 +2049,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
   const closeParkingSmartDialog = () => {
     if (isParkingSmartLoading) return;
     setParkingSmartError('');
+    setParkingSmartInfo('');
     setParkingSmartProposal(null);
     setIsParkingSmartDialogOpen(false);
   };
@@ -2317,7 +2346,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
   const handleRoomBookingCancel = (event: ReactMouseEvent<HTMLButtonElement>, bookingId: string) => {
     event.preventDefault();
     event.stopPropagation();
-    if (!deskPopup || !popupDesk || !isRoomResource(popupDesk)) return;
+    if (!deskPopup || !popupDesk || !isTimeBasedResource(popupDesk)) return;
     const selectedBooking = popupRoomBookingsList.find((booking) => booking.id === bookingId);
     if (!selectedBooking || !selectedBooking.canCancel || !selectedBooking.bookingId) return;
 
@@ -3112,35 +3141,26 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
               <button type="button" className="btn btn-ghost desk-popup-close" aria-label="Dialog schließen" onClick={closeParkingSmartDialog} disabled={isParkingSmartLoading}>✕</button>
             </div>
             <div className="desk-popup-body stack-xs">
-              <label className="field"><span>Wann kommen sie an?</span><input type="time" min="00:00" max="23:30" step={1800} value={parkingSmartStartTime} onChange={(event) => setParkingSmartStartTime(event.target.value)} disabled={isParkingSmartLoading} /></label>
+              <label className="field"><span>Anreise</span><input type="time" min="00:00" max="23:30" step={1800} value={parkingSmartArrivalTime} onChange={(event) => setParkingSmartArrivalTime(event.target.value)} disabled={isParkingSmartLoading} /></label>
+              <label className="field"><span>Abreise</span><input type="time" min="00:30" max="23:59" step={1800} value={parkingSmartDepartureTime} onChange={(event) => setParkingSmartDepartureTime(event.target.value)} disabled={isParkingSmartLoading} /></label>
               <label className="field">
-                <span>Wie lange sind Sie da? (Stunden)</span>
+                <span>Müssen Sie laden?</span>
                 <select
-                  value={String(parkingStayMinutes / 60)}
-                  onChange={(event) => setParkingStayMinutes(Math.max(60, Number(event.target.value) * 60 || 60))}
+                  value={String(parkingChargeMinutes)}
+                  onChange={(event) => setParkingChargeMinutes(Math.max(0, Number(event.target.value) || 0))}
                   disabled={isParkingSmartLoading}
                 >
+                  <option value="0">Nein</option>
                   {Array.from({ length: 8 }, (_, index) => {
                     const hours = index + 1;
-                    return <option key={hours} value={hours}>{hours} {hours === 1 ? 'Stunde' : 'Stunden'}</option>;
-                  })}
-                </select>
-              </label>
-              <label className="field">
-                <span>Müssen Sie laden? (Stunden)</span>
-                <select
-                  value={String(parkingChargeMinutes / 60)}
-                  onChange={(event) => setParkingChargeMinutes(Math.min(parkingStayMinutes, Math.max(60, Number(event.target.value) * 60 || 60)))}
-                  disabled={isParkingSmartLoading}
-                >
-                  {Array.from({ length: 8 }, (_, index) => {
-                    const hours = index + 1;
-                    return <option key={hours} value={hours} disabled={hours * 60 > parkingStayMinutes}>{hours} {hours === 1 ? 'Stunde' : 'Stunden'}</option>;
+                    const minutes = hours * 60;
+                    return <option key={hours} value={minutes}>{hours} {hours === 1 ? 'Stunde' : 'Stunden'}</option>;
                   })}
                 </select>
               </label>
               <button type="button" className="btn btn-outline" onClick={requestSmartParkingProposal} disabled={isParkingSmartLoading}>Parkplatz anfordern</button>
               {parkingSmartError && <p className="field-error">{parkingSmartError}</p>}
+              {parkingSmartInfo && <p className="muted">{parkingSmartInfo}</p>}
               {parkingSmartProposal && (
                 <div className="stack-xs">
                   <strong>Vorschlag</strong>

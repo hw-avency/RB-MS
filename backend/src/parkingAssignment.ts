@@ -43,7 +43,8 @@ export const buildParkingAssignmentProposal = ({
   const fullWindow = { startMinute, endMinute };
 
   if (chargingMinutes <= 0) {
-    const freeSpot = findFreeSpot(spots, bookings, fullWindow, () => true);
+    const regularSpot = findFreeSpot(spots, bookings, fullWindow, (spot) => !spot.hasCharger);
+    const freeSpot = regularSpot ?? findFreeSpot(spots, bookings, fullWindow, (spot) => spot.hasCharger);
     if (!freeSpot) return { type: 'none', reason: 'NO_PARKING' };
     return {
       type: 'single',

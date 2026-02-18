@@ -3941,10 +3941,16 @@ app.post('/bookings/check-conflicts', async (req, res) => {
 
 
 
-type ParkingSmartRequest = { floorplanId?: string; date?: string; startTime?: string; attendanceMinutes?: number; chargingMinutes?: number };
+type ParkingSmartRequest = {
+  floorplanId?: string;
+  date?: string;
+  arrivalTime?: string;
+  departureTime?: string;
+  chargingMinutes?: number;
+};
 
 app.post('/bookings/parking-smart/propose', async (req, res) => {
-  const { floorplanId, date, startTime, attendanceMinutes, chargingMinutes } = req.body as ParkingSmartRequest;
+  const { floorplanId, date, arrivalTime, departureTime, chargingMinutes } = req.body as ParkingSmartRequest;
   const requestId = bookingRequestId();
   logBookingEvent('SMART_PROPOSE_REQUEST_RECEIVED', {
     requestId,
@@ -3952,25 +3958,32 @@ app.post('/bookings/parking-smart/propose', async (req, res) => {
     actorRole: req.authUser?.role ?? null,
     floorplanId: floorplanId ?? null,
     date: date ?? null,
-    startTime: startTime ?? null,
-    attendanceMinutes: typeof attendanceMinutes === 'number' ? attendanceMinutes : null,
+    arrivalTime: arrivalTime ?? null,
+    departureTime: departureTime ?? null,
     chargingMinutes: typeof chargingMinutes === 'number' ? chargingMinutes : null
   });
-  if (!floorplanId || !date || !startTime || typeof attendanceMinutes !== 'number' || typeof chargingMinutes !== 'number') {
+  if (!floorplanId || !date || !arrivalTime || !departureTime || typeof chargingMinutes !== 'number') {
     logBookingEvent('SMART_PROPOSE_VALIDATION_FAILED', { requestId, reason: 'required input missing' }, 'warn');
-    res.status(400).json({ error: 'validation', message: 'floorplanId, date, startTime, attendanceMinutes and chargingMinutes are required' });
+    res.status(400).json({ error: 'validation', message: 'floorplanId, date, arrivalTime, departureTime and chargingMinutes are required' });
     return;
   }
 
   const parsedDate = toDateOnly(date);
-  const parsedStartMinute = parseTimeToMinute(startTime);
-  if (!parsedDate || parsedStartMinute === null) {
-    logBookingEvent('SMART_PROPOSE_VALIDATION_FAILED', { requestId, reason: 'invalid date/startTime', date, startTime }, 'warn');
-    res.status(400).json({ error: 'validation', message: 'date/startTime invalid' });
+  const parsedArrivalMinute = parseTimeToMinute(arrivalTime);
+  const parsedDepartureMinute = parseTimeToMinute(departureTime);
+  if (!parsedDate || parsedArrivalMinute === null || parsedDepartureMinute === null) {
+    logBookingEvent('SMART_PROPOSE_VALIDATION_FAILED', { requestId, reason: 'invalid date/arrival/departure', date, arrivalTime, departureTime }, 'warn');
+    res.status(400).json({ error: 'validation', message: 'date/arrivalTime/departureTime invalid' });
     return;
   }
 
-  const totalMinutes = Math.max(60, Math.floor(attendanceMinutes));
+  const totalMinutes = parsedDepartureMinute - parsedArrivalMinute;
+  if (totalMinutes <= 0) {
+    logBookingEvent('SMART_PROPOSE_VALIDATION_FAILED', { requestId, reason: 'departure must be after arrival', arrivalTime, departureTime }, 'warn');
+    res.status(400).json({ error: 'validation', message: 'Abreise muss nach der Anreise liegen.' });
+    return;
+  }
+
   const requestedCharging = Math.max(0, Math.floor(chargingMinutes));
   const normalizedCharging = Math.min(totalMinutes, requestedCharging);
 
@@ -3994,7 +4007,7 @@ app.post('/bookings/parking-smart/propose', async (req, res) => {
   });
 
   const proposal = buildParkingAssignmentProposal({
-    startMinute: parsedStartMinute,
+    startMinute: parsedArrivalMinute,
     attendanceMinutes: totalMinutes,
     chargingMinutes: normalizedCharging,
     spots: spots.map((spot) => ({ id: spot.id, hasCharger: spot.hasCharger })),
@@ -4008,8 +4021,72 @@ app.post('/bookings/parking-smart/propose', async (req, res) => {
     totalMinutes,
     requestedCharging,
     normalizedCharging,
-    parsedStartMinute
+    parsedArrivalMinute
   }, 'debug');
+
+  const toNamedBookings = (entries: Array<{ deskId: string; startMinute: number; endMinute: number; hasCharger: boolean }>) => entries.map((entry) => ({
+    ...entry,
+    deskName: spots.find((spot) => spot.id === entry.deskId)?.name ?? entry.deskId,
+    startTime: minuteToHHMM(entry.startMinute),
+    endTime: minuteToHHMM(entry.endMinute)
+  }));
+
+  if (normalizedCharging > 0 && proposal.type === 'none') {
+    let shorterProposal: ReturnType<typeof buildParkingAssignmentProposal> | null = null;
+    let offeredChargingMinutes = normalizedCharging;
+    for (let candidate = normalizedCharging - 30; candidate >= 30; candidate -= 30) {
+      const candidateProposal = buildParkingAssignmentProposal({
+        startMinute: parsedArrivalMinute,
+        attendanceMinutes: totalMinutes,
+        chargingMinutes: candidate,
+        spots: spots.map((spot) => ({ id: spot.id, hasCharger: spot.hasCharger })),
+        bookings: normalizedBookings
+      });
+      if (candidateProposal.type !== 'none') {
+        shorterProposal = candidateProposal;
+        offeredChargingMinutes = candidate;
+        break;
+      }
+    }
+
+    if (shorterProposal) {
+      const namedBookings = toNamedBookings(shorterProposal.bookings);
+      res.status(200).json({
+        status: 'ok',
+        proposalType: shorterProposal.type,
+        usedFallbackChargerFullWindow: shorterProposal.usedFallbackChargerFullWindow,
+        switchAfterCharging: shorterProposal.bookings.length === 2,
+        adjustedChargingMinutes: offeredChargingMinutes,
+        message: `Die gewünschte Ladedauer war nicht komplett frei. Es ist ein kürzeres Ladefenster von ${Math.floor(offeredChargingMinutes / 60)}h ${offeredChargingMinutes % 60}min verfügbar.`,
+        bookings: namedBookings
+      });
+      return;
+    }
+
+    const noChargingFallback = buildParkingAssignmentProposal({
+      startMinute: parsedArrivalMinute,
+      attendanceMinutes: totalMinutes,
+      chargingMinutes: 0,
+      spots: spots.map((spot) => ({ id: spot.id, hasCharger: spot.hasCharger })),
+      bookings: normalizedBookings
+    });
+
+    if (noChargingFallback.type !== 'none') {
+      const namedFallbackBookings = toNamedBookings(noChargingFallback.bookings);
+      res.status(200).json({
+        status: 'none',
+        reason: 'ALL_CHARGING_BOOKED',
+        message: 'Alle Ladezeiten sind im gewählten Zeitraum belegt. Möchtest du stattdessen einen normalen Parkplatz ohne Laden buchen?',
+        fallbackWithoutCharging: {
+          proposalType: noChargingFallback.type,
+          usedFallbackChargerFullWindow: noChargingFallback.usedFallbackChargerFullWindow,
+          switchAfterCharging: noChargingFallback.bookings.length === 2,
+          bookings: namedFallbackBookings
+        }
+      });
+      return;
+    }
+  }
 
   if (proposal.type === 'none') {
     logBookingEvent('SMART_PROPOSE_NO_MATCH', { requestId, reason: proposal.reason, floorplanId, date }, 'warn');
@@ -4017,12 +4094,7 @@ app.post('/bookings/parking-smart/propose', async (req, res) => {
     return;
   }
 
-  const namedBookings = proposal.bookings.map((entry) => ({
-    ...entry,
-    deskName: spots.find((spot) => spot.id === entry.deskId)?.name ?? entry.deskId,
-    startTime: minuteToHHMM(entry.startMinute),
-    endTime: minuteToHHMM(entry.endMinute)
-  }));
+  const namedBookings = toNamedBookings(proposal.bookings);
 
   res.status(200).json({
     status: 'ok',
