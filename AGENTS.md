@@ -50,7 +50,9 @@ Keine manuellen Shell-Schritte beim Nutzer voraussetzen.
 - Sichtbare App-Version kommt aus `frontend/package.json` (`version`) und wird im Footer als `vX.Y.Z` angezeigt.
 - Bei **jedem Commit mit funktionalen Änderungen** Version erhöhen:
   - **Patch** (`X.Y.Z` → `X.Y.Z+1`) für Bugfixes, kleine Änderungen, Texte/kleine UI-Korrekturen.
-  - **Minor** (`X.Y.Z` → `X.(Y+1).0`) für neue Features, geändertes Feature-Verhalten oder größere UI-Änderungen.
+    - Bei rein kleinen Änderungen darf sich die zweite Zahl (`Y`) **nicht** ändern.
+  - **Minor** (`X.Y.Z` → `X.(Y+1).0`) nur für neue Features, komplett neue UI-Elemente oder größere UI-Reworks.
+    - Die zweite Zahl (`Y`) darf nur in diesen Fällen erhöht werden.
   - **Major** (`X.Y.Z` → `(X+1).0.0`) nur auf explizite Anweisung des Nutzers.
 - Beim Erhöhen von `frontend/package.json` auch `frontend/package-lock.json`-Top-Level-Version konsistent mitziehen.
 
