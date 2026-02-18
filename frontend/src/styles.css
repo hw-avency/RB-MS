@@ -236,7 +236,8 @@ tr{cursor:pointer}.row-selected{background:hsl(var(--muted))}
 
 
 .occupancy-list{display:grid;gap:6px;flex:1;min-height:0;max-height:60vh;overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain;padding-right:2px}
-.occupant-compact-card{display:flex;align-items:center;justify-content:flex-start;gap:12px;min-height:44px;padding:9px 10px;border-radius:10px;background:hsl(var(--muted)/.45);border:1px solid hsl(var(--border));transition:background .15s ease,border-color .15s ease;overflow:hidden}
+.occupant-compact-card{display:flex;align-items:center;justify-content:flex-start;gap:12px;min-height:44px;padding:9px 10px;border-radius:10px;background:hsl(var(--muted)/.45);border:1px solid hsl(var(--border));transition:background .15s ease,border-color .15s ease;overflow:hidden;cursor:pointer}
+.occupant-compact-card:focus-visible{outline:2px solid hsl(var(--primary));outline-offset:1px}
 .occupant-compact-card:hover,.occupant-compact-card.is-active{background:hsl(var(--muted)/.85)}
 .occupant-compact-card.is-highlighted{background:hsl(var(--primary)/.14);border-color:hsl(var(--primary)/.35)}
 .occupant-card-main{display:flex;align-items:center;gap:12px;min-width:0;flex:1}
