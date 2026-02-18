@@ -1224,7 +1224,13 @@ const syncEmployeePhotoWithAppToken = async (employee: { id: string; entraOid: s
   }
 };
 
-type GraphContactPayload = { mobilePhone?: string | null; businessPhones?: string[] };
+type GraphProfilePayload = {
+  displayName?: string | null;
+  mail?: string | null;
+  userPrincipalName?: string | null;
+  mobilePhone?: string | null;
+  businessPhones?: string[] | null;
+};
 
 const normalizePhoneValue = (value: string | null | undefined): string | null => {
   if (typeof value !== 'string') return null;
@@ -1232,7 +1238,7 @@ const normalizePhoneValue = (value: string | null | undefined): string | null =>
   return normalized.length > 0 ? normalized : null;
 };
 
-const chooseGraphPhone = (payload: GraphContactPayload): string | null => {
+const chooseGraphPhone = (payload: GraphProfilePayload): string | null => {
   const mobilePhone = normalizePhoneValue(payload.mobilePhone);
   if (mobilePhone) return mobilePhone;
 
@@ -1246,46 +1252,102 @@ const chooseGraphPhone = (payload: GraphContactPayload): string | null => {
   return null;
 };
 
-const saveEmployeePhone = async (employeeId: string, phone: string | null) => {
-  const existing = await prisma.employee.findUnique({ where: { id: employeeId }, select: { phone: true } });
-  if (!existing || existing.phone === phone) return;
-  await prisma.employee.update({ where: { id: employeeId }, data: { phone } });
+const chooseGraphEmail = (payload: GraphProfilePayload): string | null => {
+  const mail = typeof payload.mail === 'string' ? payload.mail.trim() : '';
+  if (mail) return normalizeEmail(mail);
+
+  const userPrincipalName = typeof payload.userPrincipalName === 'string' ? payload.userPrincipalName.trim() : '';
+  if (userPrincipalName) return normalizeEmail(userPrincipalName);
+
+  return null;
 };
 
-const syncEmployeePhoneFromGraph = async (employeeId: string, graphAccessToken: string) => {
-  try {
-    const response = await fetch('https://graph.microsoft.com/v1.0/me?$select=mobilePhone,businessPhones', {
-      headers: { authorization: `Bearer ${graphAccessToken}` }
-    });
+const chooseGraphDisplayName = (payload: GraphProfilePayload): string | null => {
+  const displayName = typeof payload.displayName === 'string' ? payload.displayName.trim() : '';
+  return displayName.length > 0 ? displayName : null;
+};
 
-    if (!response.ok) return;
-    const payload = await response.json() as GraphContactPayload;
-    await saveEmployeePhone(employeeId, chooseGraphPhone(payload));
+const saveEmployeeGraphProfile = async (employeeId: string, payload: GraphProfilePayload) => {
+  const existing = await prisma.employee.findUnique({
+    where: { id: employeeId },
+    select: { displayName: true, email: true, phone: true }
+  });
+
+  if (!existing) {
+    return { updated: false, hasMobilePhone: Boolean(normalizePhoneValue(payload.mobilePhone)), hasBusinessPhones: Array.isArray(payload.businessPhones) && payload.businessPhones.some((value) => Boolean(normalizePhoneValue(value))) };
+  }
+
+  const nextDisplayName = chooseGraphDisplayName(payload) ?? existing.displayName;
+  const nextEmail = chooseGraphEmail(payload) ?? existing.email;
+  const nextPhone = chooseGraphPhone(payload);
+
+  const changed = nextDisplayName !== existing.displayName || nextEmail !== existing.email || nextPhone !== existing.phone;
+  if (!changed) {
+    return {
+      updated: false,
+      hasMobilePhone: Boolean(normalizePhoneValue(payload.mobilePhone)),
+      hasBusinessPhones: Array.isArray(payload.businessPhones) && payload.businessPhones.some((value) => Boolean(normalizePhoneValue(value)))
+    };
+  }
+
+  await prisma.employee.update({
+    where: { id: employeeId },
+    data: {
+      displayName: nextDisplayName,
+      email: nextEmail,
+      phone: nextPhone
+    }
+  });
+
+  return {
+    updated: true,
+    hasMobilePhone: Boolean(normalizePhoneValue(payload.mobilePhone)),
+    hasBusinessPhones: Array.isArray(payload.businessPhones) && payload.businessPhones.some((value) => Boolean(normalizePhoneValue(value)))
+  };
+};
+
+const readGraphProfile = async (url: string, accessToken: string): Promise<GraphProfilePayload | null> => {
+  const response = await fetch(url, {
+    headers: { authorization: `Bearer ${accessToken}` }
+  });
+
+  if (!response.ok) {
+    return null;
+  }
+
+  return response.json() as Promise<GraphProfilePayload>;
+};
+
+const GRAPH_ME_PROFILE_SELECT = 'displayName,mail,userPrincipalName,mobilePhone,businessPhones';
+
+const syncEmployeePhoneFromGraph = async (employeeId: string, graphAccessToken: string): Promise<{ graphCallSucceeded: boolean; hasMobilePhone: boolean; hasBusinessPhones: boolean }> => {
+  try {
+    const payload = await readGraphProfile(`https://graph.microsoft.com/v1.0/me?$select=${encodeURIComponent(GRAPH_ME_PROFILE_SELECT)}`, graphAccessToken);
+    if (!payload) return { graphCallSucceeded: false, hasMobilePhone: false, hasBusinessPhones: false };
+    const result = await saveEmployeeGraphProfile(employeeId, payload);
+    return { graphCallSucceeded: true, hasMobilePhone: result.hasMobilePhone, hasBusinessPhones: result.hasBusinessPhones };
   } catch {
-    return;
+    return { graphCallSucceeded: false, hasMobilePhone: false, hasBusinessPhones: false };
   }
 };
 
-const syncEmployeePhoneWithAppToken = async (employee: { id: string; entraOid: string | null; email: string; entraTenantId?: string | null }) => {
+const syncEmployeePhoneWithAppToken = async (employee: { id: string; entraOid: string | null; email: string; entraTenantId?: string | null }): Promise<{ graphCallSucceeded: boolean; hasMobilePhone: boolean; hasBusinessPhones: boolean }> => {
   const resolvedTenantId = normalizeEntraTenantId(employee.entraTenantId) ?? normalizeEntraTenantId(ENTRA_TENANT_ID);
-  if (!resolvedTenantId) return;
+  if (!resolvedTenantId) return { graphCallSucceeded: false, hasMobilePhone: false, hasBusinessPhones: false };
 
   const appAccessToken = await getGraphAppAccessToken(resolvedTenantId);
-  if (!appAccessToken) return;
+  if (!appAccessToken) return { graphCallSucceeded: false, hasMobilePhone: false, hasBusinessPhones: false };
 
   const graphUserIdentifier = employee.entraOid ?? employee.email;
 
   try {
     const encodedUserId = encodeURIComponent(graphUserIdentifier);
-    const response = await fetch(`https://graph.microsoft.com/v1.0/users/${encodedUserId}?$select=mobilePhone,businessPhones`, {
-      headers: { authorization: `Bearer ${appAccessToken}` }
-    });
-
-    if (!response.ok) return;
-    const payload = await response.json() as GraphContactPayload;
-    await saveEmployeePhone(employee.id, chooseGraphPhone(payload));
+    const payload = await readGraphProfile(`https://graph.microsoft.com/v1.0/users/${encodedUserId}?$select=${encodeURIComponent(GRAPH_ME_PROFILE_SELECT)}`, appAccessToken);
+    if (!payload) return { graphCallSucceeded: false, hasMobilePhone: false, hasBusinessPhones: false };
+    const result = await saveEmployeeGraphProfile(employee.id, payload);
+    return { graphCallSucceeded: true, hasMobilePhone: result.hasMobilePhone, hasBusinessPhones: result.hasBusinessPhones };
   } catch {
-    return;
+    return { graphCallSucceeded: false, hasMobilePhone: false, hasBusinessPhones: false };
   }
 };
 
@@ -1971,10 +2033,40 @@ app.post('/admin/employees/:id/refresh-profile', requireAdmin, async (req, res) 
     return;
   }
 
-  await Promise.all([
-    syncEmployeePhotoWithAppToken(employee),
-    syncEmployeePhoneWithAppToken(employee)
-  ]);
+  const sessionToken = req.authSession?.graphAccessToken;
+  const sessionTokenExpiresAt = req.authSession?.graphTokenExpiresAt;
+  const isSelfRefresh = req.authSession?.employeeId === employee.id;
+  const hasValidSessionGraphToken = Boolean(sessionToken && sessionTokenExpiresAt && sessionTokenExpiresAt.getTime() > Date.now());
+
+  const refreshMode = isSelfRefresh && hasValidSessionGraphToken && sessionToken ? 'delegated_me' : 'app_users';
+  let phoneSyncResult: { graphCallSucceeded: boolean; hasMobilePhone: boolean; hasBusinessPhones: boolean } = {
+    graphCallSucceeded: false,
+    hasMobilePhone: false,
+    hasBusinessPhones: false
+  };
+
+  if (refreshMode === 'delegated_me' && sessionToken) {
+    const [, phoneResult] = await Promise.all([
+      syncEmployeePhotoFromGraph(employee.id, sessionToken),
+      syncEmployeePhoneFromGraph(employee.id, sessionToken)
+    ]);
+    phoneSyncResult = phoneResult;
+  } else {
+    const [, phoneResult] = await Promise.all([
+      syncEmployeePhotoWithAppToken(employee),
+      syncEmployeePhoneWithAppToken(employee)
+    ]);
+    phoneSyncResult = phoneResult;
+  }
+
+  console.info('EMPLOYEE_PROFILE_REFRESH_GRAPH', {
+    requestId: req.requestId ?? 'unknown',
+    employeeId: employee.id,
+    mode: refreshMode,
+    graphCallSucceeded: phoneSyncResult.graphCallSucceeded,
+    hasMobilePhone: phoneSyncResult.hasMobilePhone,
+    hasBusinessPhones: phoneSyncResult.hasBusinessPhones
+  });
 
   const updated = await prisma.employee.findUnique({ where: { id }, select: employeeSelect });
   if (!updated) {
