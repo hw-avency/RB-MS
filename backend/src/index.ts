@@ -3310,7 +3310,7 @@ app.post('/bookings', async (req, res) => {
     }
     await acquireBookingLock(tx, bookingDeskKeyForDate(deskId, parsedDate));
 
-    const conflictingUserBookings = identity
+    const userKindBookings = identity
       ? (await tx.booking.findMany({
         where: {
           date: parsedDate,
@@ -3320,11 +3320,13 @@ app.post('/bookings', async (req, res) => {
         },
         include: { desk: { select: { name: true, kind: true } } },
         orderBy: [{ createdAt: 'desc' }, { id: 'desc' }]
-      })).filter((booking) => {
+      }))
+      : [];
+
+    const conflictingUserBookings = userKindBookings.filter((booking) => {
         const candidateWindow = bookingToWindow(booking);
         return candidateWindow ? windowsOverlap(bookingWindow, candidateWindow) : false;
-      })
-      : [];
+      });
 
     const existingUserBooking = conflictingUserBookings[0] ?? null;
     if (identity && existingUserBooking && existingUserBooking.deskId !== deskId && !shouldReplaceExisting) {
@@ -3370,8 +3372,12 @@ app.post('/bookings', async (req, res) => {
       return { kind: 'conflict' as const, message: 'Desk is already booked for this Zeitraum', details: { deskId, date, bookingId: targetDeskBooking.id } };
     }
 
-    if (identity && bookingWindow.mode === 'day' && shouldReplaceExisting && conflictingUserBookings.length > 0) {
-      await tx.booking.deleteMany({ where: { id: { in: conflictingUserBookings.map((booking) => booking.id) } } });
+    const bookingsToReplace = shouldReplaceExisting
+      ? (desk.kind === 'PARKPLATZ' ? userKindBookings : conflictingUserBookings)
+      : [];
+
+    if (identity && bookingsToReplace.length > 0) {
+      await tx.booking.deleteMany({ where: { id: { in: bookingsToReplace.map((booking) => booking.id) } } });
     }
 
     const created = await tx.booking.create({
