@@ -1,5 +1,17 @@
 [
   {
+    "version": "1.5.21",
+    "date": "2026-02-18",
+    "type": "bugfix",
+    "title": "Entra-Logins erscheinen jetzt im Admin-Log",
+    "summary": "Das Admin-Log zeigt jetzt auch erfolgreiche und fehlgeschlagene Entra-Useranmeldungen mit klaren Fehlergründen.",
+    "items": [
+      "Beim Entra-Login werden fehlende Callback-Parameter, Token-Austausch-Fehler und fehlende Claims jetzt als Warnung protokolliert.",
+      "Nicht erlaubte Tenants werden explizit als fehlgeschlagener Login mit Tenant-Hinweis geloggt.",
+      "Erfolgreiche Entra-Logins werden als Info mit Mitarbeiter- und Tenant-Bezug im Admin-Log erfasst."
+    ]
+  },
+  {
     "version": "1.5.20",
     "date": "2026-02-18",
     "type": "bugfix",
