@@ -76,3 +76,12 @@ Keine manuellen Shell-Schritte beim Nutzer voraussetzen.
     - `Build in Codex runner not executable due to npm registry E403 / proxy policy. Render build is source of truth.`
   - Keine lokalen Build-Erfolgsclaims (z. B. "build verified"). Stattdessen:
     - `Changes are type-consistent by inspection; needs Render build to confirm.`
+
+## Release Notes Pflege (verbindlich)
+- Es gibt eine zentrale Datei: `frontend/public/release-notes.json`.
+- Bei **jedem Commit mit funktionaler Änderung** muss diese Datei aktualisiert werden.
+- Eintrag-Regeln:
+  - Nur wichtige Features oder relevante Bugfixes aufnehmen.
+  - Nicht zu technisch formulieren (verständliche Produkt-Sprache).
+  - Neueste Version immer oben einfügen.
+  - Version muss zur App-Version in `frontend/package.json` passen.

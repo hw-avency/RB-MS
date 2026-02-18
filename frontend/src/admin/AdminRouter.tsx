@@ -21,6 +21,14 @@ type DbTable = { name: string; model: string; columns: DbColumn[] };
 type RouteProps = { path: string; navigate: (to: string) => void; onRoleStateChanged: () => Promise<void>; onLogout: () => Promise<void>; currentUser?: AdminSession | null };
 type AdminSession = { id?: string; email: string; name?: string; displayName?: string; role: 'admin' | 'user'; isActive?: boolean };
 type DataState = { loading: boolean; error: string; ready: boolean };
+type ReleaseNote = {
+  version: string;
+  date: string;
+  type: 'feature' | 'bugfix';
+  title: string;
+  summary: string;
+  items: string[];
+};
 
 type DeskFormState = {
   floorplanId: string;
@@ -40,6 +48,7 @@ const navItems = [
   { to: '/admin/bookings', label: 'Buchungen' },
   { to: '/admin/employees', label: 'Mitarbeiter' },
   { to: '/admin/tenants', label: 'Mandanten' },
+  { to: '/admin/release-notes', label: 'Release Notes' },
   { to: '/admin/db-admin', label: 'DB Admin' }
 ];
 
@@ -1757,6 +1766,63 @@ function TenantsPage({ path, navigate, onLogout, currentUser }: RouteProps) {
   );
 }
 
+
+function ReleaseNotesPage({ path, navigate, onLogout, currentUser }: RouteProps) {
+  const [notes, setNotes] = useState<ReleaseNote[]>([]);
+  const [state, setState] = useState<DataState>({ loading: true, error: '', ready: false });
+
+  useEffect(() => {
+    void (async () => {
+      setState({ loading: true, error: '', ready: false });
+      try {
+        const response = await fetch('/release-notes.json');
+        if (!response.ok) {
+          throw new Error(`Release Notes konnten nicht geladen werden (${response.status})`);
+        }
+        const payload = (await response.json()) as ReleaseNote[];
+        setNotes(Array.isArray(payload) ? payload : []);
+        setState({ loading: false, error: '', ready: true });
+      } catch (error) {
+        setState({ loading: false, error: error instanceof Error ? error.message : 'Release Notes konnten nicht geladen werden', ready: false });
+      }
+    })();
+  }, []);
+
+  return (
+    <AdminLayout path={path} navigate={navigate} title="Release Notes" onLogout={onLogout} currentUser={currentUser ?? null}>
+      <section className="card stack-sm">
+        <div>
+          <h3>Was ist neu?</h3>
+          <p className="muted">Hier stehen nur die wichtigsten Verbesserungen und Bugfixes der letzten Versionen.</p>
+        </div>
+        {state.loading && <p className="muted">Release Notes werden geladen …</p>}
+        {state.error && <ErrorState text={state.error} onRetry={() => window.location.reload()} />}
+        {!state.loading && !state.error && notes.length === 0 && <EmptyState text="Noch keine Release Notes vorhanden." />}
+        <div className="release-notes-list stack-sm">
+          {notes.map((note) => (
+            <article key={`${note.version}-${note.date}`} className="release-note-item stack-sm">
+              <div className="inline-between release-note-header">
+                <div>
+                  <strong>v{note.version}</strong>
+                  <p className="muted">{formatDateOnly(note.date)}</p>
+                </div>
+                <Badge tone={note.type === 'bugfix' ? 'warn' : 'ok'}>{note.type === 'bugfix' ? 'Bugfix' : 'Feature'}</Badge>
+              </div>
+              <div>
+                <h4>{note.title}</h4>
+                <p>{note.summary}</p>
+              </div>
+              <ul className="release-note-bullets">
+                {note.items.map((item) => <li key={item}>{item}</li>)}
+              </ul>
+            </article>
+          ))}
+        </div>
+      </section>
+    </AdminLayout>
+  );
+}
+
 export function AdminRouter({ path, navigate, onRoleStateChanged, onLogout, currentUser }: RouteProps) {
   const [adminSession, setAdminSession] = useState<AdminSession | null>(currentUser ?? null);
   const route = basePath(path);
@@ -1783,6 +1849,7 @@ export function AdminRouter({ path, navigate, onRoleStateChanged, onLogout, curr
   if (route === '/admin/bookings') return <BookingsPage path={path} navigate={navigate} onRoleStateChanged={onRoleStateChanged} onLogout={onLogout} currentUser={adminSession} />;
   if (route === '/admin/employees') return <EmployeesPage path={path} navigate={navigate} onRoleStateChanged={onRoleStateChanged} onLogout={onLogout} currentAdminEmail={adminSession?.email ?? ''} currentUser={adminSession} />;
   if (route === '/admin/tenants') return <TenantsPage path={path} navigate={navigate} onRoleStateChanged={onRoleStateChanged} onLogout={onLogout} currentUser={adminSession} />;
+  if (route === '/admin/release-notes') return <ReleaseNotesPage path={path} navigate={navigate} onRoleStateChanged={onRoleStateChanged} onLogout={onLogout} currentUser={adminSession} />;
   if (route === '/admin/db-admin') return <DbAdminPage path={path} navigate={navigate} onRoleStateChanged={onRoleStateChanged} onLogout={onLogout} currentUser={adminSession} />;
 
   return <main className="app-shell"><section className="card stack-sm down-card"><h2>Admin-Seite nicht gefunden</h2><button className="btn" onClick={() => navigate('/admin')}>Zum Dashboard</button></section></main>;
