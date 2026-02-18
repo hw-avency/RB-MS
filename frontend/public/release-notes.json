@@ -1,5 +1,18 @@
 [
   {
+    "version": "1.5.6",
+    "date": "2026-02-18",
+    "type": "bugfix",
+    "title": "Mitarbeiter-Refresh zeigt Telefonstatus sofort und transparent",
+    "summary": "Nach dem Entra-Refresh werden Telefonnummern sofort sichtbar aktualisiert; bei fehlenden Graph-Telefonfeldern gibt es jetzt einen klaren Hinweis statt stillem Erfolg.",
+    "items": [
+      "Der Admin-Refresh liefert jetzt direkte Sync-Infos mit Quelle (me/users) und Grund, falls keine Telefonnummer übernommen wurde.",
+      "In der Mitarbeiterliste wird die Telefonnummer explizit angezeigt und nach Refresh sofort aus der API-Response ersetzt.",
+      "Wenn Entra keine mobilePhone/businessPhones liefert, erscheint zusätzlich ein Hinweis-Toast.",
+      "Server-Logs enthalten pro Refresh strukturierte Felder zu Quelle, Telefonfeldern und Ergebnis der Datenbank-Aktualisierung."
+    ]
+  },
+  {
     "version": "1.5.5",
     "date": "2026-02-18",
     "type": "bugfix",
