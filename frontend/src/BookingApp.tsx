@@ -1996,7 +1996,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
       toast.success('Parkplatz gebucht');
       setParkingSmartProposal(null);
       closeBookingFlow();
-      refreshOccupancy({ keepSelection: true, force: true }).catch(() => undefined);
+      reloadBookings().catch(() => undefined);
     } catch (error) {
       setParkingSmartError(getApiErrorMessage(error, 'Nicht mehr verfügbar, bitte neu zuweisen.'));
     } finally {

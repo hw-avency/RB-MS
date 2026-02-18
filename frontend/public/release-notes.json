@@ -1,5 +1,17 @@
 [
   {
+    "version": "1.5.18",
+    "date": "2026-02-18",
+    "type": "bugfix",
+    "title": "Smart-Parking-Buchung aktualisiert Belegung wieder korrekt",
+    "summary": "Nach dem Bestätigen einer Smart-Parking-Empfehlung wird die Belegung jetzt wieder zuverlässig neu geladen, statt wegen eines internen Fehlers stehen zu bleiben.",
+    "items": [
+      "Die Bestätigung einer Smart-Parking-Buchung stößt nun die vorhandene Belegungs-Aktualisierung direkt an.",
+      "Dadurch erscheinen neu erstellte Parkplatz-Buchungen nach dem Abschließen wieder sofort in der Ansicht.",
+      "Ein TypeScript-Fehler durch einen veralteten Funktionsnamen im Buchungsflow ist damit behoben."
+    ]
+  },
+  {
     "version": "1.5.17",
     "date": "2026-02-18",
     "type": "feature",
