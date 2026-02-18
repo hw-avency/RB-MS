@@ -1898,11 +1898,14 @@ app.get('/auth/entra/config', (_req, res) => {
 });
 
 app.get('/auth/entra/callback', async (req, res) => {
+  const requestId = req.requestId ?? 'unknown';
+
   try {
     const code = typeof req.query.code === 'string' ? req.query.code : null;
     const stateParam = typeof req.query.state === 'string' ? req.query.state : '';
     const oidcState = await consumeOidcState(stateParam);
     if (!code || !oidcState) {
+      console.warn('ENTRA_LOGIN_FAIL_CALLBACK_PARAMS', { requestId, hasCode: Boolean(code), hasValidState: Boolean(oidcState), ip: req.ip });
       res.status(401).json({ code: 'OIDC_VALIDATION_FAILED', message: 'Invalid callback parameters' });
       return;
     }
@@ -1922,12 +1925,14 @@ app.get('/auth/entra/callback', async (req, res) => {
     });
 
     if (!tokenResponse.ok) {
+      console.warn('ENTRA_LOGIN_FAIL_TOKEN_EXCHANGE', { requestId, status: tokenResponse.status });
       res.status(401).json({ code: 'OIDC_VALIDATION_FAILED', message: 'Token exchange failed' });
       return;
     }
 
     const tokenPayload = await tokenResponse.json() as { id_token?: string; access_token?: string; expires_in?: number };
     if (!tokenPayload.id_token) {
+      console.warn('ENTRA_LOGIN_FAIL_ID_TOKEN_MISSING', { requestId });
       res.status(401).json({ code: 'OIDC_VALIDATION_FAILED', message: 'id_token is missing' });
       return;
     }
@@ -1939,6 +1944,7 @@ app.get('/auth/entra/callback', async (req, res) => {
     const normalizedTid = normalizeEntraTenantId(tid);
     const allowedTenantIds = await loadAllowedEntraTenantIds();
     if (!normalizedTid || !allowedTenantIds.has(normalizedTid)) {
+      console.warn('ENTRA_LOGIN_FAIL_TENANT_NOT_ALLOWED', { requestId, tenantId: normalizedTid ?? tid ?? null });
       res.status(403).json({ code: 'TENANT_NOT_ALLOWED', message: 'Tenant not allowed' });
       return;
     }
@@ -1948,6 +1954,7 @@ app.get('/auth/entra/callback', async (req, res) => {
     const name = typeof claims.name === 'string' ? claims.name.trim() : '';
 
     if (!oid || !email || !name) {
+      console.warn('ENTRA_LOGIN_FAIL_REQUIRED_CLAIMS_MISSING', { requestId, hasOid: Boolean(oid), hasEmail: Boolean(email), hasName: Boolean(name) });
       res.status(401).json({ code: 'OIDC_VALIDATION_FAILED', message: 'Required claims are missing' });
       return;
     }
@@ -1970,9 +1977,10 @@ app.get('/auth/entra/callback', async (req, res) => {
     });
     applySessionCookies(res, session);
 
+    console.info('ENTRA_LOGIN_SUCCESS', { requestId, employeeId: user.employeeId, email, tenantId: normalizedTid });
+
     res.redirect(302, ENTRA_POST_LOGIN_REDIRECT);
   } catch (error) {
-    const requestId = req.requestId ?? 'unknown';
     console.error('ENTRA_CALLBACK_ERROR', { requestId, errorName: error instanceof Error ? error.name : 'UnknownError' });
     res.status(401).json({ code: 'OIDC_VALIDATION_FAILED', message: 'Entra callback validation failed' });
   }
