@@ -75,6 +75,7 @@ model Tenant {
   id          String      @id @default(cuid())
   domain      String      @unique
   name        String?
+  entraTenantId String?   @unique
   createdAt   DateTime    @default(now())
   updatedAt   DateTime    @updatedAt
   employees   Employee[]
