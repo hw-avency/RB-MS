@@ -321,10 +321,11 @@ const formatDaySlotLabel = (slot?: string): string | undefined => {
 
 const bookingSlotLabel = (booking?: OccupancyBooking | null): string => {
   if (!booking) return 'Ganztägig';
+  if (booking.startTime && booking.endTime) return `${booking.startTime}–${booking.endTime}`;
+  if (booking.slot === 'CUSTOM') return `${booking.startTime ?? '--:--'}–${booking.endTime ?? '--:--'}`;
   if (booking.daySlot === 'AM' || booking.slot === 'MORNING') return 'Vormittag';
   if (booking.daySlot === 'PM' || booking.slot === 'AFTERNOON') return 'Nachmittag';
   if (booking.daySlot === 'FULL' || booking.slot === 'FULL_DAY') return 'Ganztägig';
-  if (booking.slot === 'CUSTOM') return `${booking.startTime ?? '--:--'}–${booking.endTime ?? '--:--'}`;
   return 'Ganztägig';
 };
 
@@ -357,6 +358,8 @@ const toTeamsChatUrl = (email: string): string => `https://teams.microsoft.com/l
 const toTeamsChatClientUrl = (email: string): string => `msteams:/l/chat/0/0?users=${encodeURIComponent(email)}`;
 
 const callLabelForBooking = (booking: OccupancyBooking): string => {
+  if (booking.startTime && booking.endTime) return `${booking.startTime}–${booking.endTime}`;
+  if (booking.slot === 'CUSTOM') return `${booking.startTime ?? '--:--'}–${booking.endTime ?? '--:--'}`;
   if (booking.daySlot === 'AM' || booking.slot === 'MORNING') return 'Vormittags';
   if (booking.daySlot === 'PM' || booking.slot === 'AFTERNOON') return 'Nachmittags';
   return 'Ganztags';
@@ -428,7 +431,7 @@ const isTimeBasedResource = (desk?: OccupancyDesk | null): boolean => desk?.kind
 const canBookDesk = (desk?: OccupancyDesk | null): boolean => {
   if (!desk) return false;
   if (desk.isBookableForMe === false) return false;
-  if (isRoomResource(desk)) return true;
+  if (isTimeBasedResource(desk)) return true;
   return getDefaultSlotForDesk(desk) !== null;
 };
 
