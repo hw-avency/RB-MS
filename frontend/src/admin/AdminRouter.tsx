@@ -14,6 +14,7 @@ type Floorplan = { id: string; name: string; imageUrl: string; isDefault?: boole
 type Desk = { id: string; floorplanId: string; name: string; kind?: ResourceKind; allowSeriesOverride?: boolean | null; effectiveAllowSeries?: boolean; x: number | null; y: number | null; position?: { x: number; y: number } | null; tenantScope?: 'ALL' | 'SELECTED'; tenantIds?: string[]; createdAt?: string; updatedAt?: string };
 type Employee = { id: string; email: string; displayName: string; role: 'admin' | 'user'; isActive: boolean; photoUrl?: string | null; createdAt?: string; updatedAt?: string };
 type Tenant = { id: string; domain: string; name?: string | null; entraTenantId?: string | null; employeeCount?: number; createdAt?: string; updatedAt?: string };
+type EntraConfig = { clientId: string | null; redirectUri: string | null };
 type Booking = { id: string; deskId: string; userEmail: string; userDisplayName?: string; employeeId?: string; date: string; slot?: 'FULL_DAY' | 'MORNING' | 'AFTERNOON' | 'CUSTOM'; startTime?: string; endTime?: string; createdAt?: string; updatedAt?: string; bookedFor?: 'SELF' | 'GUEST'; guestName?: string | null; createdByUserId?: string; createdBy?: { id: string; displayName?: string | null; email: string }; user?: { id: string; displayName?: string | null; email: string } | null };
 type DbColumn = { name: string; type: string; required: boolean; id: boolean; hasDefaultValue: boolean };
 type DbTable = { name: string; model: string; columns: DbColumn[] };
@@ -1684,6 +1685,7 @@ function TenantsPage({ path, navigate, onLogout, currentUser }: RouteProps) {
   const toasts = useToast();
   const [state, setState] = useState<DataState>({ loading: true, error: '', ready: false });
   const [tenants, setTenants] = useState<Tenant[]>([]);
+  const [entraConfig, setEntraConfig] = useState<EntraConfig>({ clientId: null, redirectUri: null });
   const [editing, setEditing] = useState<Tenant | null>(null);
   const [creating, setCreating] = useState(false);
   const [domain, setDomain] = useState('');
@@ -1702,9 +1704,40 @@ function TenantsPage({ path, navigate, onLogout, currentUser }: RouteProps) {
   };
 
   useEffect(() => { void load(); }, []);
+  useEffect(() => {
+    void (async () => {
+      try {
+        const config = await get<EntraConfig>('/auth/entra/config');
+        setEntraConfig(config);
+      } catch {
+        setEntraConfig({ clientId: null, redirectUri: null });
+      }
+    })();
+  }, []);
+
   const normalizedDomain = domain.trim().toLowerCase().replace(/^@+/, '');
   const normalizedEntraTenantId = entraTenantId.trim().toLowerCase();
   const isValidEntraTenantId = normalizedEntraTenantId.length === 0 || /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(normalizedEntraTenantId);
+  const getAdminConsentLink = (tenantId?: string | null): string | null => {
+    const normalizedTenantId = tenantId?.trim().toLowerCase() ?? '';
+    if (!normalizedTenantId || !entraConfig.clientId || !entraConfig.redirectUri) return null;
+    return `https://login.microsoftonline.com/${normalizedTenantId}/adminconsent?client_id=${encodeURIComponent(entraConfig.clientId)}&redirect_uri=${encodeURIComponent(entraConfig.redirectUri)}`;
+  };
+
+  const copyConsentLink = async (tenant: Tenant) => {
+    const consentLink = getAdminConsentLink(tenant.entraTenantId);
+    if (!consentLink) {
+      toasts.error('Consent-Link nicht verfügbar (Tenant-ID oder Entra-Konfiguration fehlt).');
+      return;
+    }
+
+    try {
+      await navigator.clipboard.writeText(consentLink);
+      toasts.success('Consent-Link kopiert');
+    } catch {
+      toasts.error('Consent-Link konnte nicht kopiert werden');
+    }
+  };
 
   return (
     <AdminLayout path={path} navigate={navigate} title="Mandanten" onLogout={onLogout} currentUser={currentUser ?? null}>
@@ -1715,7 +1748,7 @@ function TenantsPage({ path, navigate, onLogout, currentUser }: RouteProps) {
           actions={<button className="btn" onClick={() => { setCreating(true); setEditing(null); setDomain(''); setName(''); setEntraTenantId(''); }}>Neuer Mandant</button>}
         />
         {state.error && <ErrorState text={state.error} onRetry={() => void load()} />}
-        <div className="table-wrap"><table className="admin-table"><thead><tr><th>Domain</th><th>Name</th><th>Entra Tenant ID</th><th>Mitarbeiter</th><th className="align-right">Aktionen</th></tr></thead>{state.loading && !state.ready ? <SkeletonRows columns={5} /> : <tbody>{tenants.map((tenant) => <tr key={tenant.id}><td>{tenant.domain}</td><td>{tenant.name ?? '—'}</td><td>{tenant.entraTenantId ?? '—'}</td><td>{tenant.employeeCount ?? '—'}</td><td className="align-right"><RowMenu items={[{ label: 'Bearbeiten', onSelect: () => { setEditing(tenant); setCreating(true); setDomain(tenant.domain); setName(tenant.name ?? ''); setEntraTenantId(tenant.entraTenantId ?? ''); } }, { label: 'Löschen', danger: true, onSelect: async () => { try { await del(`/admin/tenants/${tenant.id}`); toasts.success('Mandant gelöscht'); await load(); } catch (error) { toasts.error(error instanceof Error ? error.message : 'Löschen fehlgeschlagen'); } } }]} /></td></tr>)}</tbody>}</table></div>
+        <div className="table-wrap"><table className="admin-table"><thead><tr><th>Domain</th><th>Name</th><th>Entra Tenant ID</th><th>Mitarbeiter</th><th className="align-right">Aktionen</th></tr></thead>{state.loading && !state.ready ? <SkeletonRows columns={5} /> : <tbody>{tenants.map((tenant) => <tr key={tenant.id}><td>{tenant.domain}</td><td>{tenant.name ?? '—'}</td><td>{tenant.entraTenantId ?? '—'}</td><td>{tenant.employeeCount ?? '—'}</td><td className="align-right"><RowMenu items={[{ label: 'Bearbeiten', onSelect: () => { setEditing(tenant); setCreating(true); setDomain(tenant.domain); setName(tenant.name ?? ''); setEntraTenantId(tenant.entraTenantId ?? ''); } }, { label: 'Admin-Consent Link kopieren', onSelect: () => { void copyConsentLink(tenant); } }, { label: 'Löschen', danger: true, onSelect: async () => { try { await del(`/admin/tenants/${tenant.id}`); toasts.success('Mandant gelöscht'); await load(); } catch (error) { toasts.error(error instanceof Error ? error.message : 'Löschen fehlgeschlagen'); } } }]} /></td></tr>)}</tbody>}</table></div>
       </section>
       {creating && (
         <div className="overlay"><section className="card dialog stack-sm"><h3>{editing ? 'Mandant bearbeiten' : 'Mandant anlegen'}</h3><form className="stack-sm" onSubmit={async (event) => { event.preventDefault(); try { const payload = { domain: normalizedDomain, name, entraTenantId: normalizedEntraTenantId || null }; if (editing) { await patch(`/admin/tenants/${editing.id}`, payload); } else { await post('/admin/tenants', payload); } setCreating(false); setEditing(null); setDomain(''); setName(''); setEntraTenantId(''); toasts.success('Mandant gespeichert'); await load(); } catch (error) { toasts.error(error instanceof Error ? error.message : 'Speichern fehlgeschlagen'); } }}><label className="field"><span>Domain</span><input required value={domain} onChange={(event) => setDomain(event.target.value)} placeholder="avency.de" /></label><label className="field"><span>Name</span><input value={name} onChange={(event) => setName(event.target.value)} placeholder="optional" /></label><label className="field"><span>Entra Tenant ID</span><input value={entraTenantId} onChange={(event) => setEntraTenantId(event.target.value)} placeholder="00000000-0000-0000-0000-000000000000" /></label><div className="inline-end"><button type="button" className="btn btn-outline" onClick={() => setCreating(false)}>Abbrechen</button><button className="btn" disabled={!normalizedDomain || !normalizedDomain.includes('.') || !isValidEntraTenantId}>Speichern</button></div></form></section></div>

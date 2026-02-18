@@ -18,10 +18,10 @@
 
 ---
 
-## Microsoft Entra ID (Single Tenant) einrichten
+## Microsoft Entra ID (Multi Tenant / Option A) einrichten
 
 1. Azure Portal → **App registrations** → **New registration**
-2. **Supported account types**: `Accounts in this organizational directory only` (Single tenant)
+2. **Supported account types**: `Accounts in any organizational directory` (Multitenant)
 3. Redirect URI (Web):
    - `https://<BACKEND_HOST>/auth/entra/callback`
 4. Optional Front-channel/Post-logout Redirect:
@@ -32,7 +32,13 @@
    - Für OIDC Login reichen Scopes `openid profile email`
    - Optional Microsoft Graph `User.Read` (delegated), falls später benötigt
 
-**Wichtig:** Das Backend akzeptiert nur Logins mit `tid === ENTRA_TENANT_ID`.
+### Tenant-Allowlist (Source of Truth)
+- Das Backend verwendet bei `GET /auth/entra/callback` die Tenant-ID aus dem `tid` Claim.
+- Ein Login ist nur erlaubt, wenn ein Datensatz unter **Admin → Mandanten** existiert und dort `entraTenantId` gepflegt ist.
+- Für den Erstzugriff eines neuen Tenants ist im jeweiligen Tenant ein **Admin-Consent** für die Multitenant-App erforderlich.
+- Der Consent-Link kann direkt in der Admin-UI unter **Mandanten** pro Tenant erzeugt/kopiert werden.
+
+**Legacy-Fallback:** `ENTRA_TENANT_ID` kann optional noch als zusätzlicher Fallback in der Allowlist verwendet werden, falls bestehende Deployments darauf angewiesen sind.
 
 ---
 
@@ -73,14 +79,15 @@
 - `ADMIN_PASSWORD=<starkes-passwort>`
 
 ### Entra (required)
-- `ENTRA_TENANT_ID=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx`
 - `ENTRA_CLIENT_ID=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx`
 - `ENTRA_CLIENT_SECRET=<secret-value>`
 - `ENTRA_REDIRECT_URI=https://rb-ms.onrender.com/auth/entra/callback`
 - `ENTRA_POST_LOGIN_REDIRECT=https://rb-ms-1.onrender.com/#/`
 
 ### Entra (optional)
+- `ENTRA_TENANT_ID=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx` (Legacy-Fallback für Allowlist)
 - `ENTRA_LOGOUT_REDIRECT=https://rb-ms-1.onrender.com/#/login`
+- `ENTRA_DISCOVERY_TENANT=organizations` (Default für Multitenant Discovery/Authority)
 
 ### Backend (optional)
 - `APP_TITLE=RB-MS` (fällt sonst auf `PAGE_TITLE`/`VITE_PAGE_TITLE` zurück)
@@ -106,6 +113,7 @@
 - `GET /health`
 - `GET /auth/entra/start`
 - `GET /auth/entra/callback`
+- `GET /auth/entra/config` (liefert `clientId` + `redirectUri` für Consent-Link-Erzeugung in der Admin-UI)
 - `POST /auth/login` (Breakglass)
 - `POST /auth/logout`
 - `GET /auth/me`
