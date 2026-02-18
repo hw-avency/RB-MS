@@ -13,6 +13,77 @@ const configuredTitle = process.env.APP_TITLE ?? process.env.PAGE_TITLE ?? proce
 const APP_TITLE = configuredTitle?.trim() || 'RB-MS';
 app.set('trust proxy', 1);
 
+type AppLogLevel = 'info' | 'warn' | 'error' | 'debug';
+type AppLogEntry = {
+  id: string;
+  timestamp: string;
+  level: AppLogLevel;
+  message: string;
+  context?: string;
+};
+
+const APP_LOG_BUFFER_LIMIT = 2000;
+const appLogBuffer: AppLogEntry[] = [];
+
+const serializeLogArg = (value: unknown): string => {
+  if (typeof value === 'string') return value;
+  if (value instanceof Error) {
+    return `${value.name}: ${value.message}${value.stack ? `\n${value.stack}` : ''}`;
+  }
+
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
+};
+
+const pushAppLog = (level: AppLogLevel, args: unknown[]): void => {
+  const parts = args.map((value) => serializeLogArg(value));
+  const message = parts.join(' ').trim();
+  if (!message) return;
+
+  const entry: AppLogEntry = {
+    id: typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
+    timestamp: new Date().toISOString(),
+    level,
+    message,
+    context: parts.length > 1 ? parts.slice(1).join(' ') : undefined
+  };
+
+  appLogBuffer.push(entry);
+  if (appLogBuffer.length > APP_LOG_BUFFER_LIMIT) {
+    appLogBuffer.splice(0, appLogBuffer.length - APP_LOG_BUFFER_LIMIT);
+  }
+};
+
+const originalConsole = {
+  log: console.log.bind(console),
+  warn: console.warn.bind(console),
+  error: console.error.bind(console),
+  debug: console.debug.bind(console)
+};
+
+console.log = (...args: unknown[]) => {
+  pushAppLog('info', args);
+  originalConsole.log(...args);
+};
+
+console.warn = (...args: unknown[]) => {
+  pushAppLog('warn', args);
+  originalConsole.warn(...args);
+};
+
+console.error = (...args: unknown[]) => {
+  pushAppLog('error', args);
+  originalConsole.error(...args);
+};
+
+console.debug = (...args: unknown[]) => {
+  pushAppLog('debug', args);
+  originalConsole.debug(...args);
+};
+
 const ADMIN_EMAIL = process.env.ADMIN_EMAIL?.trim().toLowerCase();
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD;
 const configuredOrigins = (process.env.FRONTEND_URL ?? process.env.CORS_ORIGIN ?? process.env.FRONTEND_ORIGIN ?? '')
@@ -1863,6 +1934,42 @@ app.get('/user/me/photo', requireAuthenticated, async (req, res) => {
 
 app.use(requireAuthenticated);
 
+
+app.get('/admin/logs', requireAdmin, (req, res) => {
+  const page = Math.max(Number.parseInt(String(req.query.page ?? '1'), 10) || 1, 1);
+  const pageSize = Math.min(Math.max(Number.parseInt(String(req.query.pageSize ?? '50'), 10) || 50, 1), 200);
+  const query = String(req.query.query ?? '').trim().toLowerCase();
+  const levelFilterRaw = String(req.query.level ?? 'all').trim().toLowerCase();
+  const allowedLevels = new Set<AppLogLevel>(['info', 'warn', 'error', 'debug']);
+  const levelFilter = allowedLevels.has(levelFilterRaw as AppLogLevel) ? levelFilterRaw as AppLogLevel : 'all';
+
+  const filtered = [...appLogBuffer]
+    .reverse()
+    .filter((entry) => {
+      if (levelFilter !== 'all' && entry.level !== levelFilter) {
+        return false;
+      }
+
+      if (!query) return true;
+      return entry.message.toLowerCase().includes(query) || entry.context?.toLowerCase().includes(query);
+    });
+
+  const total = filtered.length;
+  const totalPages = total === 0 ? 1 : Math.ceil(total / pageSize);
+  const safePage = Math.min(page, totalPages);
+  const start = (safePage - 1) * pageSize;
+  const items = filtered.slice(start, start + pageSize);
+
+  res.json({
+    items,
+    meta: {
+      total,
+      page: safePage,
+      pageSize,
+      totalPages
+    }
+  });
+});
 
 app.get('/admin/db/tables', requireAdmin, (_req, res) => {
   res.json(DB_TABLES.map((table) => ({
