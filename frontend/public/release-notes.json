@@ -1,5 +1,17 @@
 [
   {
+    "version": "1.5.5",
+    "date": "2026-02-18",
+    "type": "bugfix",
+    "title": "Admin-Status-Badges nutzen jetzt strikt erlaubte Varianten",
+    "summary": "Die Variantenzuordnung im Admin-Router wurde typisiert, damit nur noch gültige Badge-Varianten genutzt werden.",
+    "items": [
+      "Eine neue Mapper-Funktion übersetzt eingehende Variant-Werte zuverlässig auf default, ok oder warn.",
+      "Feedback-Status-Badges verwenden diese Zuordnung nun konsistent und mit sicherem Fallback auf default.",
+      "Damit ist der TS2322-Typfehler im AdminRouter behoben, ohne unsichere String-Casts."
+    ]
+  },
+  {
     "version": "1.5.4",
     "date": "2026-02-18",
     "type": "feature",
