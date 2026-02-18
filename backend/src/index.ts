@@ -3,7 +3,7 @@ import { canCancelBooking } from './auth/bookingAuth';
 import express from 'express';
 import crypto from 'crypto';
 import bcrypt from 'bcryptjs';
-import { BookedFor, BookingSlot, DaySlot, DeskTenantScope, FloorplanTenantScope, Prisma, RecurrencePatternType, RecurringBooking, ResourceKind } from '@prisma/client';
+import { BookedFor, BookingSlot, DaySlot, DeskTenantScope, FeedbackReportType, FloorplanTenantScope, Prisma, RecurrencePatternType, RecurringBooking, ResourceKind } from '@prisma/client';
 import { prisma } from './prisma';
 import { expandRecurrence, MAX_SERIES_OCCURRENCES, type RecurrenceDefinition, validateRecurrenceDefinition } from './recurrence';
 
@@ -75,6 +75,7 @@ const DESK_TENANT_SCOPES = new Set<DeskTenantScope>(['ALL', 'SELECTED']);
 const FLOORPLAN_TENANT_SCOPES = new Set<FloorplanTenantScope>(['ALL', 'SELECTED']);
 const BOOKED_FOR_VALUES = new Set<BookedFor>(['SELF', 'GUEST']);
 const RECURRENCE_PATTERN_VALUES = new Set<RecurrencePatternType>(['DAILY', 'WEEKLY', 'MONTHLY', 'YEARLY']);
+const FEEDBACK_REPORT_TYPES = new Set<FeedbackReportType>(['BUG', 'FEATURE_REQUEST']);
 const SERIES_BOOKING_CHUNK_SIZE = 100;
 
 const parseResourceKind = (value: unknown): ResourceKind | null => {
@@ -99,6 +100,12 @@ const parseBookedFor = (value: unknown): BookedFor => {
   if (typeof value !== 'string') return 'SELF';
   const normalized = value.trim().toUpperCase() as BookedFor;
   return BOOKED_FOR_VALUES.has(normalized) ? normalized : 'SELF';
+};
+
+const parseFeedbackReportType = (value: unknown): FeedbackReportType | null => {
+  if (typeof value !== 'string') return null;
+  const normalized = value.trim().toUpperCase() as FeedbackReportType;
+  return FEEDBACK_REPORT_TYPES.has(normalized) ? normalized : null;
 };
 
 const normalizeGuestName = (value: unknown): string | null => {
@@ -2319,6 +2326,102 @@ app.delete('/admin/tenants/:id', requireAdmin, async (req, res) => {
 
   await prisma.tenant.delete({ where: { id } });
   res.status(204).send();
+});
+
+app.post('/feedback-reports', requireAuthenticated, async (req, res) => {
+  const type = parseFeedbackReportType(req.body?.type);
+  const message = typeof req.body?.message === 'string' ? req.body.message.trim() : '';
+
+  if (!type) {
+    res.status(400).json({ error: 'invalid_type', message: 'type must be BUG or FEATURE_REQUEST' });
+    return;
+  }
+
+  if (message.length < 10 || message.length > 2000) {
+    res.status(400).json({ error: 'invalid_message', message: 'message must be between 10 and 2000 characters' });
+    return;
+  }
+
+  if (!req.authUser) {
+    res.status(401).json({ error: 'unauthorized', message: 'Authentication required' });
+    return;
+  }
+
+  const created = await prisma.feedbackReport.create({
+    data: {
+      type,
+      message,
+      reporterEmail: req.authUser.email,
+      reporterDisplayName: req.authUser.displayName,
+      reporterUserId: req.authUser.source === 'local' ? req.authUser.id : null,
+      reporterEmployeeId: req.authUser.source === 'entra' ? req.authUser.id : null
+    }
+  });
+
+  res.status(201).json({
+    id: created.id,
+    type: created.type,
+    message: created.message,
+    createdAt: created.createdAt.toISOString()
+  });
+});
+
+app.get('/admin/feedback-reports', requireAdmin, async (req, res) => {
+  const type = req.query.type ? parseFeedbackReportType(req.query.type) : null;
+  if (req.query.type && !type) {
+    res.status(400).json({ error: 'invalid_type', message: 'type must be BUG or FEATURE_REQUEST' });
+    return;
+  }
+
+  const reporter = typeof req.query.reporter === 'string' ? req.query.reporter.trim() : '';
+  const sortDirection = req.query.sort === 'asc' ? 'asc' : 'desc';
+  const fromDate = typeof req.query.fromDate === 'string' ? toDateOnly(req.query.fromDate) : null;
+  const toDate = typeof req.query.toDate === 'string' ? toDateOnly(req.query.toDate) : null;
+
+  if (req.query.fromDate && !fromDate) {
+    res.status(400).json({ error: 'invalid_from_date', message: 'fromDate must use YYYY-MM-DD' });
+    return;
+  }
+
+  if (req.query.toDate && !toDate) {
+    res.status(400).json({ error: 'invalid_to_date', message: 'toDate must use YYYY-MM-DD' });
+    return;
+  }
+
+  const createdAtFilter: Prisma.DateTimeFilter = {};
+  if (fromDate) {
+    createdAtFilter.gte = fromDate;
+  }
+  if (toDate) {
+    const inclusiveEnd = new Date(toDate);
+    inclusiveEnd.setUTCDate(inclusiveEnd.getUTCDate() + 1);
+    createdAtFilter.lt = inclusiveEnd;
+  }
+
+  const reports = await prisma.feedbackReport.findMany({
+    where: {
+      ...(type ? { type } : {}),
+      ...(reporter ? {
+        OR: [
+          { reporterDisplayName: { contains: reporter, mode: 'insensitive' } },
+          { reporterEmail: { contains: reporter, mode: 'insensitive' } }
+        ]
+      } : {}),
+      ...(Object.keys(createdAtFilter).length > 0 ? { createdAt: createdAtFilter } : {})
+    },
+    orderBy: { createdAt: sortDirection }
+  });
+
+  res.json({
+    reports: reports.map((report) => ({
+      id: report.id,
+      type: report.type,
+      message: report.message,
+      reporterDisplayName: report.reporterDisplayName,
+      reporterEmail: report.reporterEmail,
+      createdAt: report.createdAt.toISOString()
+    }))
+  });
 });
 
 app.get('/me', (req, res) => {

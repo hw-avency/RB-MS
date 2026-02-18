@@ -16,6 +16,8 @@ type Employee = { id: string; email: string; displayName: string; role: 'admin' 
 type Tenant = { id: string; domain: string; name?: string | null; entraTenantId?: string | null; employeeCount?: number; createdAt?: string; updatedAt?: string };
 type EntraConfig = { clientId: string | null; redirectUri: string | null };
 type Booking = { id: string; deskId: string; userEmail: string; userDisplayName?: string; employeeId?: string; date: string; slot?: 'FULL_DAY' | 'MORNING' | 'AFTERNOON' | 'CUSTOM'; startTime?: string; endTime?: string; createdAt?: string; updatedAt?: string; bookedFor?: 'SELF' | 'GUEST'; guestName?: string | null; createdByUserId?: string; createdBy?: { id: string; displayName?: string | null; email: string }; user?: { id: string; displayName?: string | null; email: string } | null };
+type FeedbackReportType = 'BUG' | 'FEATURE_REQUEST';
+type FeedbackReport = { id: string; type: FeedbackReportType; message: string; reporterDisplayName: string; reporterEmail: string; createdAt: string };
 type DbColumn = { name: string; type: string; required: boolean; id: boolean; hasDefaultValue: boolean };
 type DbTable = { name: string; model: string; columns: DbColumn[] };
 type RouteProps = { path: string; navigate: (to: string) => void; onRoleStateChanged: () => Promise<void>; onLogout: () => Promise<void>; currentUser?: AdminSession | null };
@@ -48,6 +50,7 @@ const navItems = [
   { to: '/admin/bookings', label: 'Buchungen' },
   { to: '/admin/employees', label: 'Mitarbeiter' },
   { to: '/admin/tenants', label: 'Mandanten' },
+  { to: '/admin/feedback-reports', label: 'Feature Requests/Bug Reports' },
   { to: '/admin/release-notes', label: 'Release Notes' },
   { to: '/admin/db-admin', label: 'DB Admin' }
 ];
@@ -1828,6 +1831,127 @@ function TenantsPage({ path, navigate, onLogout, currentUser }: RouteProps) {
 }
 
 
+function FeedbackReportsPage({ path, navigate, onLogout, currentUser }: RouteProps) {
+  const [reports, setReports] = useState<FeedbackReport[]>([]);
+  const [state, setState] = useState<DataState>({ loading: true, error: '', ready: false });
+  const [reporterFilter, setReporterFilter] = useState('');
+  const [typeFilter, setTypeFilter] = useState<'ALL' | FeedbackReportType>('ALL');
+  const [fromDate, setFromDate] = useState('');
+  const [toDate, setToDate] = useState('');
+  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
+
+  const load = async () => {
+    setState({ loading: true, error: '', ready: false });
+    try {
+      const query = new URLSearchParams();
+      if (typeFilter !== 'ALL') query.set('type', typeFilter);
+      if (reporterFilter.trim()) query.set('reporter', reporterFilter.trim());
+      if (fromDate) query.set('fromDate', fromDate);
+      if (toDate) query.set('toDate', toDate);
+      query.set('sort', sortDirection);
+      const response = await get<{ reports: FeedbackReport[] }>(`/admin/feedback-reports?${query.toString()}`);
+      setReports(Array.isArray(response.reports) ? response.reports : []);
+      setState({ loading: false, error: '', ready: true });
+    } catch (error) {
+      setState({ loading: false, error: error instanceof Error ? error.message : 'Meldungen konnten nicht geladen werden', ready: false });
+    }
+  };
+
+  useEffect(() => {
+    void load();
+  }, [typeFilter, sortDirection, fromDate, toDate]);
+
+  return (
+    <AdminLayout path={path} navigate={navigate} title="Feature Requests/Bug Reports" onLogout={onLogout} currentUser={currentUser ?? null}>
+      <section className="card stack-sm">
+        <ListToolbar
+          title="Meldungen"
+          count={reports.length}
+          filters={(
+            <>
+              <div className="admin-search">
+                🔎
+                <input
+                  value={reporterFilter}
+                  onChange={(event) => setReporterFilter(event.target.value)}
+                  placeholder="Nach User filtern"
+                />
+              </div>
+              <label className="field">
+                <span>Typ</span>
+                <select value={typeFilter} onChange={(event) => setTypeFilter(event.target.value as 'ALL' | FeedbackReportType)}>
+                  <option value="ALL">Alle</option>
+                  <option value="BUG">Bug</option>
+                  <option value="FEATURE_REQUEST">Feature Request</option>
+                </select>
+              </label>
+              <label className="field">
+                <span>Von</span>
+                <input type="date" value={fromDate} onChange={(event) => setFromDate(event.target.value)} />
+              </label>
+              <label className="field">
+                <span>Bis</span>
+                <input type="date" value={toDate} onChange={(event) => setToDate(event.target.value)} />
+              </label>
+              <label className="field">
+                <span>Sortierung</span>
+                <select value={sortDirection} onChange={(event) => setSortDirection(event.target.value as 'asc' | 'desc')}>
+                  <option value="desc">Neueste zuerst</option>
+                  <option value="asc">Älteste zuerst</option>
+                </select>
+              </label>
+              <button className="btn btn-outline" onClick={() => void load()}>Aktualisieren</button>
+            </>
+          )}
+          actions={<button className="btn btn-outline" onClick={() => { setReporterFilter(''); setTypeFilter('ALL'); setFromDate(''); setToDate(''); setSortDirection('desc'); }}>Filter zurücksetzen</button>}
+        />
+
+        {state.loading && <p className="muted">Meldungen werden geladen …</p>}
+        {state.error && <ErrorState text={state.error} onRetry={() => void load()} />}
+
+        {!state.loading && !state.error && reports.length === 0 && <EmptyState text="Keine Meldungen gefunden." />}
+
+        {!state.loading && !state.error && reports.length > 0 && (
+          <div className="table-wrap">
+            <table className="admin-table">
+              <thead>
+                <tr>
+                  <th>Datum</th>
+                  <th>User</th>
+                  <th>Typ</th>
+                  <th>Nachricht</th>
+                </tr>
+              </thead>
+              <tbody>
+                {reports
+                  .filter((report) => {
+                    const needle = reporterFilter.trim().toLowerCase();
+                    if (!needle) return true;
+                    return report.reporterDisplayName.toLowerCase().includes(needle) || report.reporterEmail.toLowerCase().includes(needle);
+                  })
+                  .map((report) => (
+                    <tr key={report.id}>
+                      <td>{formatDate(report.createdAt)}</td>
+                      <td>
+                        <div>
+                          <strong>{report.reporterDisplayName}</strong>
+                          <p className="muted">{report.reporterEmail}</p>
+                        </div>
+                      </td>
+                      <td>{report.type === 'BUG' ? 'Bug' : 'Feature Request'}</td>
+                      <td style={{ whiteSpace: 'pre-wrap' }}>{report.message}</td>
+                    </tr>
+                  ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+    </AdminLayout>
+  );
+}
+
+
 function ReleaseNotesPage({ path, navigate, onLogout, currentUser }: RouteProps) {
   const [notes, setNotes] = useState<ReleaseNote[]>([]);
   const [state, setState] = useState<DataState>({ loading: true, error: '', ready: false });
@@ -1910,6 +2034,7 @@ export function AdminRouter({ path, navigate, onRoleStateChanged, onLogout, curr
   if (route === '/admin/bookings') return <BookingsPage path={path} navigate={navigate} onRoleStateChanged={onRoleStateChanged} onLogout={onLogout} currentUser={adminSession} />;
   if (route === '/admin/employees') return <EmployeesPage path={path} navigate={navigate} onRoleStateChanged={onRoleStateChanged} onLogout={onLogout} currentAdminEmail={adminSession?.email ?? ''} currentUser={adminSession} />;
   if (route === '/admin/tenants') return <TenantsPage path={path} navigate={navigate} onRoleStateChanged={onRoleStateChanged} onLogout={onLogout} currentUser={adminSession} />;
+  if (route === '/admin/feedback-reports') return <FeedbackReportsPage path={path} navigate={navigate} onRoleStateChanged={onRoleStateChanged} onLogout={onLogout} currentUser={adminSession} />;
   if (route === '/admin/release-notes') return <ReleaseNotesPage path={path} navigate={navigate} onRoleStateChanged={onRoleStateChanged} onLogout={onLogout} currentUser={adminSession} />;
   if (route === '/admin/db-admin') return <DbAdminPage path={path} navigate={navigate} onRoleStateChanged={onRoleStateChanged} onLogout={onLogout} currentUser={adminSession} />;
 
