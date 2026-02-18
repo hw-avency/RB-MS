@@ -1,5 +1,17 @@
 [
   {
+    "version": "1.5.13",
+    "date": "2026-02-18",
+    "type": "feature",
+    "title": "Admin kann Neu-Anmeldung für alle Mitarbeitenden erzwingen",
+    "summary": "Im Menüpunkt Mitarbeiter gibt es jetzt eine zentrale Aktion, um alle aktiven Sitzungen graceful zu beenden und eine klare Re-Login-Meldung anzuzeigen.",
+    "items": [
+      "Im Bereich Mitarbeiter steht eine neue Aktion \"Neu anmelden erzwingen\" inklusive Sicherheitsabfrage zur Verfügung.",
+      "Nach dem Auslösen müssen sich alle Mitarbeitenden bei ihrem nächsten API-Aufruf neu anmelden.",
+      "Betroffene Nutzer sehen auf der Login-Seite den Hinweis, dass ihre Sitzung wegen eines Updates beendet wurde."
+    ]
+  },
+  {
     "version": "1.5.12",
     "date": "2026-02-18",
     "type": "bugfix",

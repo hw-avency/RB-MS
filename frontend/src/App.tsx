@@ -15,6 +15,8 @@ type LoginDebugInfo = {
   requestId?: string;
 };
 
+const AUTH_NOTICE_STORAGE_KEY = 'rbms_auth_notice';
+
 const toRoutePath = (hash: string) => {
   if (!hash || hash === '#') return '/';
   const raw = hash.startsWith('#') ? hash.slice(1) : hash;
@@ -31,6 +33,15 @@ const navigate = (to: string) => {
 };
 
 function MicrosoftLoginPage() {
+  const [notice] = useState(() => {
+    if (typeof window === 'undefined') return '';
+    const value = window.sessionStorage.getItem(AUTH_NOTICE_STORAGE_KEY) ?? '';
+    if (value) {
+      window.sessionStorage.removeItem(AUTH_NOTICE_STORAGE_KEY);
+    }
+    return value;
+  });
+
   const startMicrosoftLogin = () => {
     window.location.href = `${API_BASE}/auth/entra/start`;
   };
@@ -39,6 +50,7 @@ function MicrosoftLoginPage() {
     <main className="ms-login-layout">
       <section className="ms-login-card" aria-label="Login panel">
         <h1 className="ms-login-title">{APP_TITLE}</h1>
+        {notice && <p className="muted" style={{ marginTop: 0 }}>{notice}</p>}
         <button
           className="ms-login-button"
           type="button"
@@ -143,6 +155,11 @@ export function App() {
       if (import.meta.env.DEV && trigger) {
         console.warn('AUTH_REDIRECT_TRIGGERED_BY', trigger);
       }
+
+      if (trigger?.code === 'FORCED_RELOGIN_REQUIRED' && typeof window !== 'undefined') {
+        window.sessionStorage.setItem(AUTH_NOTICE_STORAGE_KEY, 'Bitte neu anmelden: Wegen eines Updates wurde deine Sitzung beendet.');
+      }
+
       navigate('/login');
     }
     return <MicrosoftLoginPage />;
