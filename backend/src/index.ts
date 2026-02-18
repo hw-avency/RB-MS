@@ -134,7 +134,7 @@ const corsOptions = {
 
 app.use(cors(corsOptions));
 app.options('*', cors(corsOptions));
-app.use(express.json());
+app.use(express.json({ limit: '6mb' }));
 
 const bookingNoStorePaths = new Set(['/bookings', '/occupancy', '/admin/bookings']);
 app.use((req, res, next) => {
@@ -190,6 +190,28 @@ const parseFeedbackReportStatus = (value: unknown): FeedbackReportStatus | null 
   if (typeof value !== 'string') return null;
   const normalized = value.trim().toUpperCase() as FeedbackReportStatus;
   return FEEDBACK_REPORT_STATUSES.has(normalized) ? normalized : null;
+};
+
+const FEEDBACK_SCREENSHOT_ALLOWED_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp']);
+const FEEDBACK_SCREENSHOT_MAX_BYTES = 3 * 1024 * 1024;
+
+const parseFeedbackScreenshot = (value: unknown): { bytes: Uint8Array; mimeType: string } | null => {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+
+  const match = /^data:(image\/[a-zA-Z0-9.+-]+);base64,([A-Za-z0-9+/=\s]+)$/.exec(trimmed);
+  if (!match) return null;
+
+  const mimeType = match[1].toLowerCase();
+  if (!FEEDBACK_SCREENSHOT_ALLOWED_TYPES.has(mimeType)) return null;
+
+  const base64Payload = match[2].replace(/\s+/g, '');
+  const buffer = Buffer.from(base64Payload, 'base64');
+  if (!buffer.length) return null;
+  if (buffer.length > FEEDBACK_SCREENSHOT_MAX_BYTES) return null;
+
+  return { bytes: Uint8Array.from(buffer), mimeType };
 };
 
 const normalizeGuestName = (value: unknown): string | null => {
@@ -2791,6 +2813,7 @@ app.delete('/admin/tenants/:id', requireAdmin, async (req, res) => {
 app.post('/feedback-reports', requireAuthenticated, async (req, res) => {
   const type = parseFeedbackReportType(req.body?.type);
   const message = typeof req.body?.message === 'string' ? req.body.message.trim() : '';
+  const screenshot = parseFeedbackScreenshot(req.body?.screenshotDataUrl);
 
   if (!type) {
     res.status(400).json({ error: 'invalid_type', message: 'type must be BUG or FEATURE_REQUEST' });
@@ -2799,6 +2822,11 @@ app.post('/feedback-reports', requireAuthenticated, async (req, res) => {
 
   if (message.length < 10 || message.length > 2000) {
     res.status(400).json({ error: 'invalid_message', message: 'message must be between 10 and 2000 characters' });
+    return;
+  }
+
+  if (req.body?.screenshotDataUrl !== undefined && !screenshot) {
+    res.status(400).json({ error: 'invalid_screenshot', message: 'screenshotDataUrl must be a valid PNG, JPEG or WEBP data URL up to 3 MB' });
     return;
   }
 
@@ -2811,6 +2839,8 @@ app.post('/feedback-reports', requireAuthenticated, async (req, res) => {
     data: {
       type,
       message,
+      screenshotData: screenshot ? (screenshot.bytes as unknown as Uint8Array<ArrayBuffer>) : undefined,
+      screenshotMimeType: screenshot?.mimeType,
       reporterEmail: req.authUser.email,
       reporterDisplayName: req.authUser.displayName,
       reporterUserId: req.authUser.source === 'local' ? req.authUser.id : null,
@@ -2822,6 +2852,7 @@ app.post('/feedback-reports', requireAuthenticated, async (req, res) => {
     id: created.id,
     type: created.type,
     message: created.message,
+    hasScreenshot: Boolean(created.screenshotData),
     createdAt: created.createdAt.toISOString()
   });
 });
@@ -2876,7 +2907,17 @@ app.get('/admin/feedback-reports', requireAdmin, async (req, res) => {
       } : {}),
       ...(Object.keys(createdAtFilter).length > 0 ? { createdAt: createdAtFilter } : {})
     },
-    orderBy: { createdAt: sortDirection }
+    orderBy: { createdAt: sortDirection },
+    select: {
+      id: true,
+      type: true,
+      status: true,
+      message: true,
+      reporterDisplayName: true,
+      reporterEmail: true,
+      screenshotMimeType: true,
+      createdAt: true
+    }
   });
 
   res.json({
@@ -2887,9 +2928,36 @@ app.get('/admin/feedback-reports', requireAdmin, async (req, res) => {
       message: report.message,
       reporterDisplayName: report.reporterDisplayName,
       reporterEmail: report.reporterEmail,
+      hasScreenshot: Boolean(report.screenshotMimeType),
       createdAt: report.createdAt.toISOString()
     }))
   });
+});
+
+app.get('/admin/feedback-reports/:id/screenshot', requireAdmin, async (req, res) => {
+  const id = getRouteId(req.params.id);
+  if (!id) {
+    res.status(400).json({ error: 'validation', message: 'id is required' });
+    return;
+  }
+
+  const report = await prisma.feedbackReport.findUnique({
+    where: { id },
+    select: { screenshotData: true, screenshotMimeType: true, updatedAt: true }
+  });
+
+  if (!report?.screenshotData) {
+    res.status(404).json({ error: 'not_found', message: 'Screenshot not found' });
+    return;
+  }
+
+  if (report.updatedAt) {
+    res.setHeader('Last-Modified', report.updatedAt.toUTCString());
+  }
+
+  res.setHeader('Cache-Control', 'private, max-age=300');
+  res.setHeader('Content-Type', report.screenshotMimeType ?? 'image/png');
+  res.status(200).send(Buffer.from(report.screenshotData));
 });
 
 app.patch('/admin/feedback-reports/:id/status', requireAdmin, async (req, res) => {

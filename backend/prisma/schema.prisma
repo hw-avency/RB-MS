@@ -271,6 +271,8 @@ model FeedbackReport {
   type               FeedbackReportType
   status             FeedbackReportStatus @default(IN_ARBEIT)
   message            String
+  screenshotData     Bytes?
+  screenshotMimeType String?
   reporterUserId     String?
   reporterEmployeeId String?
   reporterEmail      String

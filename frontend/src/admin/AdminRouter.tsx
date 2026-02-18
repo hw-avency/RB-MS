@@ -31,7 +31,7 @@ type EntraConfig = { clientId: string | null; redirectUri: string | null };
 type Booking = { id: string; deskId: string; userEmail: string; userDisplayName?: string; employeeId?: string; date: string; slot?: 'FULL_DAY' | 'MORNING' | 'AFTERNOON' | 'CUSTOM'; startTime?: string; endTime?: string; createdAt?: string; updatedAt?: string; bookedFor?: 'SELF' | 'GUEST'; guestName?: string | null; createdByUserId?: string; createdBy?: { id: string; displayName?: string | null; email: string }; user?: { id: string; displayName?: string | null; email: string } | null };
 type FeedbackReportType = 'BUG' | 'FEATURE_REQUEST';
 type FeedbackReportStatus = 'IN_ARBEIT' | 'ABGELEHNT' | 'ERLEDIGT';
-type FeedbackReport = { id: string; type: FeedbackReportType; status: FeedbackReportStatus; message: string; reporterDisplayName: string; reporterEmail: string; createdAt: string; updatedAt?: string };
+type FeedbackReport = { id: string; type: FeedbackReportType; status: FeedbackReportStatus; message: string; reporterDisplayName: string; reporterEmail: string; hasScreenshot?: boolean; createdAt: string; updatedAt?: string };
 type DbColumn = { name: string; type: string; required: boolean; id: boolean; hasDefaultValue: boolean };
 type DbTable = { name: string; model: string; columns: DbColumn[] };
 type RouteProps = { path: string; navigate: (to: string) => void; onRoleStateChanged: () => Promise<void>; onLogout: () => Promise<void>; currentUser?: AdminSession | null };
@@ -2061,7 +2061,7 @@ function FeedbackReportsPage({ path, navigate, onLogout, currentUser }: RoutePro
                         <p className="muted">{report.reporterEmail}</p>
                       </div>
                     </td>
-                    <td>{report.type === 'BUG' ? 'Bug' : 'Feature Request'}</td>
+                    <td>{report.type === 'BUG' ? 'Bug' : 'Feature Request'}{report.hasScreenshot ? ' · 📎' : ''}</td>
                     <td><Badge tone={feedbackStatusTone(report.status)}>{feedbackStatusLabel(report.status)}</Badge></td>
                     <td className="feedback-message-col" style={{ whiteSpace: 'pre-wrap' }}>{report.message}</td>
                     <td className="align-right" onClick={(event) => event.stopPropagation()}>
@@ -2113,6 +2113,25 @@ function FeedbackReportsPage({ path, navigate, onLogout, currentUser }: RoutePro
               <strong>Nachricht</strong>
               <div className="feedback-message-box">{selectedReport.message}</div>
             </div>
+            {selectedReport.hasScreenshot && (
+              <div className="stack-xs">
+                <strong>Screenshot</strong>
+                <a
+                  href={resolveApiUrl(`/admin/feedback-reports/${selectedReport.id}/screenshot`)}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="feedback-screenshot-link"
+                >
+                  <img
+                    src={resolveApiUrl(`/admin/feedback-reports/${selectedReport.id}/screenshot`)}
+                    alt="Gemeldeter Screenshot"
+                    className="feedback-screenshot-preview"
+                    loading="lazy"
+                  />
+                </a>
+                <span className="muted">Klick öffnet den Screenshot in voller Größe.</span>
+              </div>
+            )}
             <div className="inline-between">
               <button className="btn btn-danger" onClick={() => setDeleteTarget(selectedReport)} disabled={deletingReportId === selectedReport.id}>Löschen</button>
               <button className="btn btn-outline" onClick={() => setSelectedReport(null)}>Schließen</button>
