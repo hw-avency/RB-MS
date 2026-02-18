@@ -1311,12 +1311,12 @@ function BookingEditor({ booking, desks, employees, floorplans, onClose, onSaved
   const [date, setDate] = useState(booking?.date?.slice(0, 10) ?? today);
   const [userEmail, setUserEmail] = useState(booking?.userEmail ?? employees[0]?.email ?? '');
   const [slot, setSlot] = useState<'FULL_DAY' | 'MORNING' | 'AFTERNOON'>(booking?.slot === 'MORNING' || booking?.slot === 'AFTERNOON' ? booking.slot : 'FULL_DAY');
-  const [startTime, setStartTime] = useState(booking?.startTime ?? '09:00');
-  const [endTime, setEndTime] = useState(booking?.endTime ?? '10:00');
+  const [startTime, setStartTime] = useState(booking?.startTime ?? (booking?.slot === 'MORNING' ? '06:00' : booking?.slot === 'AFTERNOON' ? '12:00' : '09:00'));
+  const [endTime, setEndTime] = useState(booking?.endTime ?? (booking?.slot === 'MORNING' ? '12:00' : booking?.slot === 'AFTERNOON' ? '18:00' : '10:00'));
   const floorDesks = desks.filter((desk) => desk.floorplanId === floorplanId);
   const selectedFloor = floorplans.find((floor) => floor.id === floorplanId) ?? null;
   const selectedDesk = floorDesks.find((desk) => desk.id === deskId) ?? null;
-  const isRoomDesk = selectedDesk?.kind === 'RAUM';
+  const isTimeBasedDesk = selectedDesk?.kind === 'RAUM' || selectedDesk?.kind === 'PARKPLATZ';
 
   useEffect(() => {
     if (deskId && floorDesks.some((desk) => desk.id === deskId)) return;
@@ -1327,10 +1327,10 @@ function BookingEditor({ booking, desks, employees, floorplans, onClose, onSaved
     event.preventDefault();
     try {
       if (booking) {
-        await patch(`/admin/bookings/${booking.id}`, { deskId, date, userEmail, slot: isRoomDesk ? undefined : slot, startTime: isRoomDesk ? startTime : undefined, endTime: isRoomDesk ? endTime : undefined });
+        await patch(`/admin/bookings/${booking.id}`, { deskId, date, userEmail, slot: isTimeBasedDesk ? undefined : slot, startTime: isTimeBasedDesk ? startTime : undefined, endTime: isTimeBasedDesk ? endTime : undefined });
         await onSaved('Buchung aktualisiert');
       } else {
-        await post('/bookings', { deskId, date, userEmail, slot: isRoomDesk ? undefined : slot, startTime: isRoomDesk ? startTime : undefined, endTime: isRoomDesk ? endTime : undefined });
+        await post('/bookings', { deskId, date, userEmail, slot: isTimeBasedDesk ? undefined : slot, startTime: isTimeBasedDesk ? startTime : undefined, endTime: isTimeBasedDesk ? endTime : undefined });
         await onSaved('Buchung angelegt');
       }
     } catch (err) {
@@ -1364,7 +1364,7 @@ function BookingEditor({ booking, desks, employees, floorplans, onClose, onSaved
                 </select>
               </label>
               <input required type="date" value={date} onChange={(e) => setDate(e.target.value)} />
-              {isRoomDesk ? (
+              {isTimeBasedDesk ? (
                 <div className="split">
                   <input required type="time" value={startTime} onChange={(e) => setStartTime(e.target.value)} />
                   <input required type="time" value={endTime} onChange={(e) => setEndTime(e.target.value)} />

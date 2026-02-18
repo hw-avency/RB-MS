@@ -1,5 +1,17 @@
 [
   {
+    "version": "1.5.28",
+    "date": "2026-02-18",
+    "type": "bugfix",
+    "title": "Admin-Parkplatzdialog nutzt Uhrzeiten und Logs sind verständlicher",
+    "summary": "Im Admin-Buchungsdialog werden Parkplätze jetzt wie Räume über konkrete Uhrzeiten gebucht. Zusätzlich ersetzen Backend-Logs technische IDs für Mitarbeitende, Mandanten und Ressourcen automatisch durch lesbare E-Mail-, Domain- und Ressourcennamen.",
+    "items": [
+      "Bei Parkplatz-Buchungen im Admin-Dialog gibt es keine Vormittag/Nachmittag/Ganztag-Auswahl mehr, sondern nur noch Start- und Endzeit.",
+      "Beim Bearbeiten älterer Parkplatz-Buchungen werden frühere Tages-Slots automatisch auf sinnvolle Uhrzeiten abgebildet.",
+      "Backend-Logs schreiben employeeId als E-Mail, tenantId als Tenant-Domain und deskId als Ressourcenname, damit Ereignisse ohne Nachschlagen verständlich sind."
+    ]
+  },
+  {
     "version": "1.5.27",
     "date": "2026-02-18",
     "type": "bugfix",
