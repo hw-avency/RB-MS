@@ -187,8 +187,8 @@ const DeskOverlay = memo(function DeskOverlay({ markers, selectedDeskId, hovered
                 `percent booked: ${(roomOccupancy.occupiedRatio * 100).toFixed(1)}%`
               ].join('\n')
             : undefined;
-          const amColor = slotColor(amBooking);
-          const pmColor = slotColor(pmBooking);
+          const amColor = isTenantBlocked ? 'var(--resource-neutral)' : slotColor(amBooking);
+          const pmColor = isTenantBlocked ? 'var(--resource-neutral)' : slotColor(pmBooking);
           const isFullDay = Boolean(fullBooking);
           const nonRoomPeriod = isFullDay ? 'FULL' : amBooking && !pmBooking ? 'AM' : pmBooking && !amBooking ? 'PM' : 'MIXED';
 
