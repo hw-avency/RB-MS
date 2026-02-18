@@ -228,7 +228,7 @@ type IdTokenClaims = {
 };
 let oidcMetadataCache: OidcMetadata | null = null;
 let jwksCache: { keys: Jwk[] } | null = null;
-let graphAppTokenCache: { token: string; expiresAt: number } | null = null;
+const graphAppTokenCacheByTenant = new Map<string, { token: string; expiresAt: number }>();
 
 const parseBase64UrlJson = <T>(value: string): T => {
   const padded = value.padEnd(value.length + ((4 - (value.length % 4)) % 4), '=');
@@ -334,6 +334,7 @@ const loadAllowedEntraTenantIds = async (): Promise<Set<string>> => {
     }
   }
 
+  // Legacy fallback: keep ENTRA_TENANT_ID in allowlist until all deployments fully use tenant admin data.
   const envTenantId = normalizeEntraTenantId(ENTRA_TENANT_ID);
   if (envTenantId) {
     allowed.add(envTenantId);
@@ -1076,16 +1077,22 @@ const mapBookingResponse = (booking: BookingWithCreator & { employeeId?: string 
 
 const getEmployeePhotoUrl = (employeeId: string): string => `/employees/${employeeId}/photo`;
 
-const getGraphAppAccessToken = async (): Promise<string | null> => {
-  if (!ENTRA_TENANT_ID || !ENTRA_CLIENT_ID || !ENTRA_CLIENT_SECRET) {
+const getGraphAppAccessToken = async (tenantId: string): Promise<string | null> => {
+  if (!ENTRA_CLIENT_ID || !ENTRA_CLIENT_SECRET) {
     return null;
   }
 
-  if (graphAppTokenCache && graphAppTokenCache.expiresAt > Date.now() + 60_000) {
-    return graphAppTokenCache.token;
+  const normalizedTenantId = normalizeEntraTenantId(tenantId);
+  if (!normalizedTenantId) {
+    return null;
   }
 
-  const tokenEndpoint = `https://login.microsoftonline.com/${ENTRA_TENANT_ID}/oauth2/v2.0/token`;
+  const cachedToken = graphAppTokenCacheByTenant.get(normalizedTenantId);
+  if (cachedToken && cachedToken.expiresAt > Date.now() + 60_000) {
+    return cachedToken.token;
+  }
+
+  const tokenEndpoint = `https://login.microsoftonline.com/${normalizedTenantId}/oauth2/v2.0/token`;
   const response = await fetch(tokenEndpoint, {
     method: 'POST',
     headers: { 'content-type': 'application/x-www-form-urlencoded' },
@@ -1106,12 +1113,12 @@ const getGraphAppAccessToken = async (): Promise<string | null> => {
     return null;
   }
 
-  graphAppTokenCache = {
+  graphAppTokenCacheByTenant.set(normalizedTenantId, {
     token: tokenPayload.access_token,
     expiresAt: Date.now() + ((tokenPayload.expires_in ?? 300) * 1000)
-  };
+  });
 
-  return graphAppTokenCache.token;
+  return tokenPayload.access_token;
 };
 
 type GraphPhotoPayload = { photoData: Buffer; photoType: string; photoEtag: string };
@@ -1188,8 +1195,11 @@ const syncEmployeePhotoFromGraph = async (employeeId: string, graphAccessToken: 
   }
 };
 
-const syncEmployeePhotoWithAppToken = async (employee: { id: string; entraOid: string | null; email: string }) => {
-  const appAccessToken = await getGraphAppAccessToken();
+const syncEmployeePhotoWithAppToken = async (employee: { id: string; entraOid: string | null; email: string; entraTenantId?: string | null }) => {
+  const resolvedTenantId = normalizeEntraTenantId(employee.entraTenantId) ?? normalizeEntraTenantId(ENTRA_TENANT_ID);
+  if (!resolvedTenantId) return;
+
+  const appAccessToken = await getGraphAppAccessToken(resolvedTenantId);
   if (!appAccessToken) return;
 
   const graphUserIdentifier = employee.entraOid ?? employee.email;
@@ -1471,6 +1481,13 @@ app.get('/auth/entra/start', async (_req, res) => {
   res.redirect(302, `${metadata.authorization_endpoint}?${query.toString()}`);
 });
 
+app.get('/auth/entra/config', (_req, res) => {
+  res.status(200).json({
+    clientId: ENTRA_CLIENT_ID ?? null,
+    redirectUri: ENTRA_REDIRECT_URI ?? null
+  });
+});
+
 app.get('/auth/entra/callback', async (req, res) => {
   try {
     const code = typeof req.query.code === 'string' ? req.query.code : null;
@@ -1530,7 +1547,7 @@ app.get('/auth/entra/callback', async (req, res) => {
     if (tokenPayload.access_token) {
       await syncEmployeePhotoFromGraph(user.employeeId, tokenPayload.access_token);
     } else {
-      await syncEmployeePhotoWithAppToken({ id: user.employeeId, entraOid: oid, email });
+      await syncEmployeePhotoWithAppToken({ id: user.employeeId, entraOid: oid, email, entraTenantId: normalizedTid });
     }
     const session = await createSession({ employeeId: user.employeeId }, {
       graphAccessToken: tokenPayload.access_token,
@@ -1582,7 +1599,7 @@ app.post('/auth/login', async (req, res) => {
 
     const employee = await prisma.employee.findUnique({
       where: { email: normalizedEmail },
-      select: { id: true, email: true, entraOid: true }
+      select: { id: true, email: true, entraOid: true, entraTenantId: true }
     });
     if (employee) {
       await syncEmployeePhotoWithAppToken(employee);
@@ -1938,7 +1955,11 @@ app.post('/admin/employees', requireAdmin, async (req, res) => {
         data: { photoUrl: getEmployeePhotoUrl(createdEmployee.id) }
       });
 
-      return { id: createdEmployee.id, email: normalizedEmail, entraOid: null };
+      const tenant = tenantId
+        ? await tx.tenant.findUnique({ where: { id: tenantId }, select: { entraTenantId: true } })
+        : null;
+
+      return { id: createdEmployee.id, email: normalizedEmail, entraOid: null, entraTenantId: tenant?.entraTenantId ?? null };
     });
 
     await syncEmployeePhotoWithAppToken(employee);
