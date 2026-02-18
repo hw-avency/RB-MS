@@ -1,5 +1,18 @@
 [
   {
+    "version": "1.5.3",
+    "date": "2026-02-18",
+    "type": "feature",
+    "title": "Feedback-Meldungen mit Status, Detailansicht und Löschfunktion",
+    "summary": "Im Admin-Bereich können Feature-Requests und Bugmeldungen jetzt aktiv bearbeitet werden: mit Status, großer Detailansicht und kompletter Löschoption.",
+    "items": [
+      "Jede Meldung hat jetzt einen Status: In Arbeit, Abgelehnt oder Erledigt.",
+      "Admins können den Status direkt in der Liste und auch im Detail-Popup ändern.",
+      "Meldungen lassen sich vollständig löschen; zusätzlich gibt es eine große Detailansicht beim Klick auf einen Listeneintrag.",
+      "Die Nachrichtenspalte ist breiter, damit längere Texte in der Übersicht besser lesbar sind."
+    ]
+  },
+  {
     "version": "1.5.2",
     "date": "2026-02-18",
     "type": "bugfix",

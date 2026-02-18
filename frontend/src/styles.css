@@ -633,3 +633,9 @@ tr{cursor:pointer}.row-selected{background:hsl(var(--muted))}
   padding-left: 1.2rem;
   color: hsl(var(--muted-foreground));
 }
+
+.feedback-reports-table .feedback-message-col{width:45%}
+.feedback-row-clickable{cursor:pointer}
+.feedback-row-clickable:hover{background:rgba(59,130,246,.08)}
+.feedback-report-dialog{width:min(840px,96vw);max-height:min(88vh,860px);overflow:auto}
+.feedback-message-box{white-space:pre-wrap;background:rgba(15,23,42,.03);border:1px solid rgba(15,23,42,.12);border-radius:10px;padding:12px;max-height:40vh;overflow:auto}

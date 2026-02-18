@@ -254,9 +254,16 @@ enum FeedbackReportType {
   FEATURE_REQUEST
 }
 
+enum FeedbackReportStatus {
+  IN_ARBEIT
+  ABGELEHNT
+  ERLEDIGT
+}
+
 model FeedbackReport {
   id                 String             @id @default(cuid())
   type               FeedbackReportType
+  status             FeedbackReportStatus @default(IN_ARBEIT)
   message            String
   reporterUserId     String?
   reporterEmployeeId String?
@@ -268,7 +275,7 @@ model FeedbackReport {
   reporterUser       User?              @relation("FeedbackReportUser", fields: [reporterUserId], references: [id], onDelete: SetNull)
   reporterEmployee   Employee?          @relation("FeedbackReportEmployee", fields: [reporterEmployeeId], references: [id], onDelete: SetNull)
 
-  @@index([type, createdAt])
+  @@index([type, status, createdAt])
   @@index([reporterEmail, createdAt])
   @@index([reporterUserId])
   @@index([reporterEmployeeId])
