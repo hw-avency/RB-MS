@@ -1,5 +1,29 @@
 [
   {
+    "version": "1.4.3",
+    "date": "2026-02-18",
+    "type": "bugfix",
+    "title": "Tenant-gesperrte Tische zeigen neutralen Status-Kreis",
+    "summary": "Bei nicht buchbaren Tischen wegen Tenant-Mismatch bleibt das Profilbild sichtbar, während der Status-Kreis durchgehend neutral grau angezeigt wird.",
+    "items": [
+      "Der Kreis von tenant-gesperrten Tischen wird nicht mehr rot oder grün dargestellt.",
+      "Profilbild und Pin-Inhalt bleiben unverändert sichtbar, ohne Ausgrauen.",
+      "Die Interaktion bleibt weiterhin gesperrt, aber die visuelle Kennzeichnung erfolgt nur über den grauen Status-Kreis."
+    ]
+  },
+  {
+    "version": "1.4.2",
+    "date": "2026-02-18",
+    "type": "bugfix",
+    "title": "Tenant-gesperrte Ressourcen klarer markiert",
+    "summary": "Nicht buchbare Ressourcen wegen Tenant-Mismatch bleiben vollständig sichtbar; nur der Status-Kreis zeigt jetzt neutral grau den gesperrten Zustand.",
+    "items": [
+      "Desk-/Pin-Icon und Mitarbeiterbild werden nicht mehr ausgegraut oder transparent dargestellt.",
+      "Der gesperrte Zustand wird ausschließlich über den neutral grauen Status-Kreis angezeigt.",
+      "Die Buchungs-Interaktion bleibt weiterhin gesperrt, ohne visuelle Abschwächung des Inhalts im Marker."
+    ]
+  },
+  {
     "version": "1.4.1",
     "date": "2026-02-18",
     "type": "bugfix",

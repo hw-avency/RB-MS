@@ -51,8 +51,9 @@ Keine manuellen Shell-Schritte beim Nutzer voraussetzen.
 - Bei **jedem Commit mit funktionalen Änderungen** Version erhöhen:
   - **Patch** (`X.Y.Z` → `X.Y.Z+1`) für Bugfixes, kleine Änderungen, Texte/kleine UI-Korrekturen.
     - Bei rein kleinen Änderungen darf sich die zweite Zahl (`Y`) **nicht** ändern.
-  - **Minor** (`X.Y.Z` → `X.(Y+1).0`) nur für neue Features, komplett neue UI-Elemente oder größere UI-Reworks.
-    - Die zweite Zahl (`Y`) darf nur in diesen Fällen erhöht werden.
+  - **Minor** (`X.Y.Z` → `X.(Y+1).0`) nur für **major functionality** oder **major UI changes** (deutlich größer als ein normaler Feature-/UI-Fix).
+    - Die zweite Zahl (`Y`) darf ausschließlich bei solchen major Änderungen erhöht werden.
+    - Kleine Features, Bugfixes und UI-Korrekturen bleiben immer **Patch**.
   - **Major** (`X.Y.Z` → `(X+1).0.0`) nur auf explizite Anweisung des Nutzers.
 - Beim Erhöhen von `frontend/package.json` auch `frontend/package-lock.json`-Top-Level-Version konsistent mitziehen.
 
