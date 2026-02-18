@@ -1,5 +1,17 @@
 [
   {
+    "version": "1.5.0",
+    "date": "2026-02-18",
+    "type": "bugfix",
+    "title": "Kompaktere Abstände in den Release Notes",
+    "summary": "Die Karten in den Release Notes wurden visuell verdichtet, damit Version, Datum und Titel näher zusammenstehen.",
+    "items": [
+      "Weniger Leerraum zwischen Versionskopf und Titelbereich.",
+      "Titel und Kurzbeschreibung stehen jetzt kompakter untereinander.",
+      "Inhalte bleiben weiterhin klar lesbar und schnell scannbar."
+    ]
+  },
+  {
     "version": "1.4.0",
     "date": "2026-02-18",
     "type": "feature",

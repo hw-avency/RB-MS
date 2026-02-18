@@ -1808,7 +1808,7 @@ function ReleaseNotesPage({ path, navigate, onLogout, currentUser }: RouteProps)
                 </div>
                 <Badge tone={note.type === 'bugfix' ? 'warn' : 'ok'}>{note.type === 'bugfix' ? 'Bugfix' : 'Feature'}</Badge>
               </div>
-              <div>
+              <div className="release-note-content">
                 <h4>{note.title}</h4>
                 <p>{note.summary}</p>
               </div>
