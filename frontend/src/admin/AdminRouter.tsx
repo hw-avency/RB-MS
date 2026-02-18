@@ -25,6 +25,7 @@ type PhoneSyncInfo = {
   needsGraphAppPermissions: boolean;
 };
 type RefreshEmployeeProfileResponse = Employee & { phoneSyncInfo: PhoneSyncInfo };
+type ForceReauthResponse = { message: string; forceReauthAfter: string; affectedSessions: number };
 type Tenant = { id: string; domain: string; name?: string | null; entraTenantId?: string | null; employeeCount?: number; createdAt?: string; updatedAt?: string };
 type EntraConfig = { clientId: string | null; redirectUri: string | null };
 type Booking = { id: string; deskId: string; userEmail: string; userDisplayName?: string; employeeId?: string; date: string; slot?: 'FULL_DAY' | 'MORNING' | 'AFTERNOON' | 'CUSTOM'; startTime?: string; endTime?: string; createdAt?: string; updatedAt?: string; bookedFor?: 'SELF' | 'GUEST'; guestName?: string | null; createdByUserId?: string; createdBy?: { id: string; displayName?: string | null; email: string }; user?: { id: string; displayName?: string | null; email: string } | null };
@@ -1429,6 +1430,8 @@ function EmployeesPage({ path, navigate, onRoleStateChanged, onLogout, currentAd
   const [pendingDeactivate, setPendingDeactivate] = useState<Employee | null>(null);
   const [updatingRoleId, setUpdatingRoleId] = useState<string | null>(null);
   const [refreshingProfileId, setRefreshingProfileId] = useState<string | null>(null);
+  const [forcingReauth, setForcingReauth] = useState(false);
+  const [confirmForceReauth, setConfirmForceReauth] = useState(false);
 
   const load = async () => {
     setState((current) => ({ ...current, loading: true, error: '' }));
@@ -1496,6 +1499,17 @@ function EmployeesPage({ path, navigate, onRoleStateChanged, onLogout, currentAd
     }
   };
 
+  const forceReauthForAllEmployees = async (anchorRect?: DOMRect) => {
+    setForcingReauth(true);
+    try {
+      const response = await post<ForceReauthResponse>('/admin/employees/force-reauth', {});
+      toasts.success(`Neu-Anmeldung erzwungen (${response.affectedSessions} aktive Sitzungen)`, { anchorRect });
+    } catch (err) {
+      toasts.error(err instanceof Error ? err.message : 'Neu-Anmeldung konnte nicht erzwungen werden');
+    } finally {
+      setForcingReauth(false);
+    }
+  };
 
   return (
     <AdminLayout path={path} navigate={navigate} onLogout={onLogout} title="Mitarbeiter" currentUser={currentUser ?? null}>
@@ -1504,7 +1518,7 @@ function EmployeesPage({ path, navigate, onRoleStateChanged, onLogout, currentAd
           title="Mitarbeiter"
           count={filtered.length}
           filters={<div className="admin-search">🔎<input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Name oder E-Mail" /></div>}
-          actions={<button className="btn" onClick={() => setCreating(true)}>Neu</button>}
+          actions={<div style={{ display: 'inline-flex', gap: 8 }}><button className="btn btn-outline" disabled={forcingReauth} onClick={() => setConfirmForceReauth(true)}>{forcingReauth ? 'Erzwinge…' : 'Neu anmelden erzwingen'}</button><button className="btn" onClick={() => setCreating(true)}>Neu</button></div>}
         />
         {state.error && <ErrorState text={state.error} onRetry={load} />}
         <div className="table-wrap">
@@ -1561,6 +1575,7 @@ function EmployeesPage({ path, navigate, onRoleStateChanged, onLogout, currentAd
       </section>
       {(creating || editing) && <EmployeeEditor employee={editing} onClose={() => { setCreating(false); setEditing(null); navigate('/admin/employees'); }} onSaved={async () => { setCreating(false); setEditing(null); toasts.success('Mitarbeiter gespeichert'); await load(); await onRoleStateChanged(); }} onError={toasts.error} />}
       {pendingDeactivate && <ConfirmDialog title="Mitarbeiter deaktivieren?" description={`${pendingDeactivate.displayName} wird auf inaktiv gesetzt.`} onCancel={() => setPendingDeactivate(null)} onConfirm={async (event) => { const anchorRect = event.currentTarget.getBoundingClientRect(); await patch(`/admin/employees/${pendingDeactivate.id}`, { isActive: false }); setPendingDeactivate(null); toasts.success('Mitarbeiter deaktiviert', { anchorRect }); await load(); }} />}
+      {confirmForceReauth && <ConfirmDialog title="Neu-Anmeldung für alle Mitarbeitenden erzwingen?" description="Alle aktiven Sitzungen werden beim nächsten API-Aufruf beendet. Mitarbeitende erhalten eine Meldung, dass sie sich wegen eines Updates neu anmelden müssen." confirmLabel="Jetzt erzwingen" onCancel={() => setConfirmForceReauth(false)} onConfirm={async (event) => { const anchorRect = event.currentTarget.getBoundingClientRect(); setConfirmForceReauth(false); await forceReauthForAllEmployees(anchorRect); }} />}
     </AdminLayout>
   );
 }
