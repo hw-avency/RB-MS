@@ -1,5 +1,17 @@
 [
   {
+    "version": "1.5.12",
+    "date": "2026-02-18",
+    "type": "bugfix",
+    "title": "Kontaktaktionen in Profilkarten jetzt auch bei fremden Mandanten",
+    "summary": "In Profilkarten von belegten Ressourcen sind Anrufen, Email und Chat jetzt auch dann verfügbar, wenn die Buchung aus einem anderen Mandanten stammt.",
+    "items": [
+      "Profilkarten mit Fremdbuchungen zeigen die Kontaktbuttons jetzt unabhängig davon, ob die Ressource für den eigenen Mandanten buchbar ist.",
+      "Damit bleiben Anrufen, Email und Chat auf jeder Personenkarte konsistent verfügbar.",
+      "Die reine Buchungslogik bleibt unverändert: Nicht buchbare Ressourcen können weiterhin nicht vom eigenen Mandanten gebucht werden."
+    ]
+  },
+  {
     "version": "1.5.11",
     "date": "2026-02-18",
     "type": "bugfix",
