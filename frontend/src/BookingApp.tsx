@@ -1805,7 +1805,10 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
     const ownBooking = popupCancelableBooking;
     if (!ownBooking) return;
     const bookingIds = ownBooking.sourceBookingIds?.length
-      ? ownBooking.sourceBookingIds
+      ? ownBooking.sourceBookingIds.filter((id) => {
+        const sourceBooking = popupDeskBookings.find((booking) => booking.id === id);
+        return Boolean(sourceBooking && canCancelBooking(sourceBooking, meEmployeeId, currentUser?.role === 'admin'));
+      })
       : ownBooking.id
         ? [ownBooking.id]
         : [];
@@ -2825,7 +2828,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
                             <span className="muted">{personPhone ?? 'Kein Telefon hinterlegt'}</span>
                           </div>
                         </div>
-                        <p><span className="muted">Zeitraum</span><strong>{bookingSlotLabel(booking)}</strong></p>
+                        <p><span className="muted">Zeitraum: </span><strong>{bookingSlotLabel(booking)}</strong></p>
                         <button type="button" className="btn btn-outline booking-info-call-btn" onClick={() => handleCallPerson(personPhone)} disabled={!dialablePhone}>📞 Anrufen</button>
                       </article>
                     );
@@ -2848,7 +2851,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
                   <h4>Buchungsdetails</h4>
                   <p><span className="muted">Datum</span><strong>{new Date(`${selectedDate}T00:00:00.000Z`).toLocaleDateString('de-DE')}</strong></p>
                   {popupMySelectedBooking
-                    ? <p><span className="muted">Zeitraum</span><strong>{bookingSlotLabel(popupMySelectedBooking)}</strong></p>
+                    ? <p><span className="muted">Zeitraum: </span><strong>{bookingSlotLabel(popupMySelectedBooking)}</strong></p>
                     : !isRoomResource(popupDesk) && <p><span className="muted">Status</span><strong>{popupDeskState === 'UNBOOKABLE' ? 'Für deinen Mandanten nicht buchbar' : deskAvailabilityLabel(popupDeskAvailability)}</strong></p>}
                   {popupDeskState === 'UNBOOKABLE' && <p className="muted">Für deinen Mandanten nicht buchbar.</p>}
                   {popupDeskBookings.map((booking) => (

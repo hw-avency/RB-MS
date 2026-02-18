@@ -3,9 +3,11 @@ export type DaySlotValue = 'AM' | 'PM' | 'FULL';
 type DaySlotBookingShape = {
   id?: string;
   employeeId?: string;
+  userId?: string | null;
   userEmail?: string | null;
   bookedFor?: 'SELF' | 'GUEST';
   createdByEmployeeId?: string | null;
+  createdByUserId?: string | null;
   guestName?: string | null;
   daySlot?: 'AM' | 'PM' | 'FULL';
   slot?: 'FULL_DAY' | 'MORNING' | 'AFTERNOON' | 'CUSTOM';
@@ -34,10 +36,12 @@ export const normalizeDaySlotBookingsPerEntry = <T extends DaySlotBookingShape>(
 const getBookingIdentity = (booking: DaySlotBookingShape, fallbackIndex: number): string => {
   if (booking.bookedFor === 'GUEST') {
     if (booking.createdByEmployeeId?.trim()) return `guest-creator:${booking.createdByEmployeeId.trim()}`;
+    if (booking.createdByUserId?.trim()) return `guest-user:${booking.createdByUserId.trim()}`;
     if (booking.guestName?.trim()) return `guest-name:${booking.guestName.trim().toLowerCase()}`;
   }
 
   if (booking.employeeId?.trim()) return `self-employee:${booking.employeeId.trim()}`;
+  if (booking.userId?.trim()) return `self-user:${booking.userId.trim()}`;
   if (booking.userEmail?.trim()) return `self-email:${booking.userEmail.trim().toLowerCase()}`;
   return `fallback:${booking.id ?? fallbackIndex}`;
 };
