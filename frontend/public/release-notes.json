@@ -1,8 +1,20 @@
 [
   {
+    "version": "1.5.4",
+    "date": "2026-02-18",
+    "type": "feature",
+    "title": "Neuer Admin-Bereich \"Logs\" mit Such- und Seitenfunktion",
+    "summary": "Admins können System-Logs jetzt direkt im Tool einsehen, filtern und seitenweise durchgehen.",
+    "items": [
+      "Im Admin-Menü gibt es den neuen Punkt \"Logs\" mit einer strukturierten Log-Tabelle.",
+      "Logs lassen sich nach Text durchsuchen und nach Level (Error/Warn/Info/Debug) filtern.",
+      "Die Anzeige unterstützt Pagination mit einstellbarer Seitengröße und manueller Aktualisierung."
+    ]
+  },
+  {
     "version": "1.5.3",
     "date": "2026-02-18",
-    "type": "feature","bugfix"
+    "type": "feature",
     "title": "Feedback-Meldungen mit Status, Detailansicht und Löschfunktion",
     "summary": "Im Admin-Bereich können Feature-Requests und Bugmeldungen jetzt aktiv bearbeitet werden: mit Status, großer Detailansicht und kompletter Löschoption.",
     "items": [

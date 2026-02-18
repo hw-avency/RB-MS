@@ -33,6 +33,15 @@ type ReleaseNote = {
   items: string[];
 };
 
+type AdminLogLevel = 'info' | 'warn' | 'error' | 'debug';
+type AdminLogEntry = {
+  id: string;
+  timestamp: string;
+  level: AdminLogLevel;
+  message: string;
+  context?: string;
+};
+
 type DeskFormState = {
   floorplanId: string;
   name: string;
@@ -53,6 +62,7 @@ const navItems = [
   { to: '/admin/tenants', label: 'Mandanten' },
   { to: '/admin/feedback-reports', label: 'Feature Requests/Bug Reports' },
   { to: '/admin/release-notes', label: 'Release Notes' },
+  { to: '/admin/logs', label: 'Logs' },
   { to: '/admin/db-admin', label: 'DB Admin' }
 ];
 
@@ -2068,6 +2078,110 @@ function FeedbackReportsPage({ path, navigate, onLogout, currentUser }: RoutePro
 }
 
 
+
+function LogsPage({ path, navigate, onLogout, currentUser }: RouteProps) {
+  const [logs, setLogs] = useState<AdminLogEntry[]>([]);
+  const [state, setState] = useState<DataState>({ loading: true, error: '', ready: false });
+  const [searchInput, setSearchInput] = useState('');
+  const [query, setQuery] = useState('');
+  const [level, setLevel] = useState<'all' | AdminLogLevel>('all');
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(50);
+  const [meta, setMeta] = useState({ total: 0, page: 1, pageSize: 50, totalPages: 1 });
+
+  const load = async () => {
+    setState((prev) => ({ ...prev, loading: true, error: '' }));
+    try {
+      const params = new URLSearchParams({
+        page: String(page),
+        pageSize: String(pageSize)
+      });
+      if (query) params.set('query', query);
+      if (level !== 'all') params.set('level', level);
+      const data = await get<{ items: AdminLogEntry[]; meta: { total: number; page: number; pageSize: number; totalPages: number } }>(`/admin/logs?${params.toString()}`);
+      setLogs(Array.isArray(data.items) ? data.items : []);
+      setMeta(data.meta ?? { total: 0, page: 1, pageSize: 50, totalPages: 1 });
+      setState({ loading: false, error: '', ready: true });
+    } catch (error) {
+      setState({ loading: false, error: error instanceof Error ? error.message : 'Logs konnten nicht geladen werden', ready: false });
+    }
+  };
+
+  useEffect(() => {
+    void load();
+  }, [page, pageSize, query, level]);
+
+  const applySearch = (event: FormEvent) => {
+    event.preventDefault();
+    setPage(1);
+    setQuery(searchInput.trim());
+  };
+
+  return (
+    <AdminLayout path={path} navigate={navigate} title="Logs" onLogout={onLogout} currentUser={currentUser ?? null}>
+      <section className="card stack-sm">
+        <ListToolbar
+          title="System-Logs"
+          count={meta.total}
+          filters={(
+            <form className="logs-toolbar" onSubmit={applySearch}>
+              <div className="admin-search"><span>🔎</span><input value={searchInput} placeholder="Suche in Meldungen" onChange={(event) => setSearchInput(event.target.value)} /></div>
+              <select value={level} onChange={(event) => { setLevel(event.target.value as 'all' | AdminLogLevel); setPage(1); }}>
+                <option value="all">Alle Level</option>
+                <option value="error">Error</option>
+                <option value="warn">Warn</option>
+                <option value="info">Info</option>
+                <option value="debug">Debug</option>
+              </select>
+              <select value={String(pageSize)} onChange={(event) => { setPageSize(Number(event.target.value)); setPage(1); }}>
+                <option value="25">25</option>
+                <option value="50">50</option>
+                <option value="100">100</option>
+              </select>
+              <button className="btn" type="submit">Suchen</button>
+            </form>
+          )}
+          actions={<button className="btn btn-outline" onClick={() => void load()}>Aktualisieren</button>}
+        />
+
+        {state.error && <ErrorState text={state.error} onRetry={() => void load()} />}
+        {!state.loading && logs.length === 0 && <EmptyState text="Keine Logs gefunden." />}
+
+        <div className="table-scroll-area logs-table-wrap">
+          <table className="admin-table logs-table">
+            <thead>
+              <tr>
+                <th>Zeit</th>
+                <th>Level</th>
+                <th>Meldung</th>
+              </tr>
+            </thead>
+            <tbody>
+              {logs.map((entry) => (
+                <tr key={entry.id}>
+                  <td>{formatDate(entry.timestamp)}</td>
+                  <td><Badge tone={entry.level === 'error' ? 'warn' : entry.level === 'warn' ? 'warn' : entry.level === 'debug' ? 'default' : 'ok'}>{entry.level.toUpperCase()}</Badge></td>
+                  <td>
+                    <p className="logs-message">{entry.message}</p>
+                    {entry.context && <p className="muted logs-context">{entry.context}</p>}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+
+        <div className="inline-end logs-pagination">
+          <button className="btn btn-outline" disabled={meta.page <= 1 || state.loading} onClick={() => setPage((prev) => Math.max(prev - 1, 1))}>Zurück</button>
+          <span className="muted">Seite {meta.page} / {meta.totalPages}</span>
+          <button className="btn btn-outline" disabled={meta.page >= meta.totalPages || state.loading} onClick={() => setPage((prev) => prev + 1)}>Weiter</button>
+        </div>
+      </section>
+    </AdminLayout>
+  );
+}
+
+
 function ReleaseNotesPage({ path, navigate, onLogout, currentUser }: RouteProps) {
   const [notes, setNotes] = useState<ReleaseNote[]>([]);
   const [state, setState] = useState<DataState>({ loading: true, error: '', ready: false });
@@ -2152,6 +2266,7 @@ export function AdminRouter({ path, navigate, onRoleStateChanged, onLogout, curr
   if (route === '/admin/tenants') return <TenantsPage path={path} navigate={navigate} onRoleStateChanged={onRoleStateChanged} onLogout={onLogout} currentUser={adminSession} />;
   if (route === '/admin/feedback-reports') return <FeedbackReportsPage path={path} navigate={navigate} onRoleStateChanged={onRoleStateChanged} onLogout={onLogout} currentUser={adminSession} />;
   if (route === '/admin/release-notes') return <ReleaseNotesPage path={path} navigate={navigate} onRoleStateChanged={onRoleStateChanged} onLogout={onLogout} currentUser={adminSession} />;
+  if (route === '/admin/logs') return <LogsPage path={path} navigate={navigate} onRoleStateChanged={onRoleStateChanged} onLogout={onLogout} currentUser={adminSession} />;
   if (route === '/admin/db-admin') return <DbAdminPage path={path} navigate={navigate} onRoleStateChanged={onRoleStateChanged} onLogout={onLogout} currentUser={adminSession} />;
 
   return <main className="app-shell"><section className="card stack-sm down-card"><h2>Admin-Seite nicht gefunden</h2><button className="btn" onClick={() => navigate('/admin')}>Zum Dashboard</button></section></main>;
