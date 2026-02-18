@@ -1,5 +1,17 @@
 [
   {
+    "version": "1.4.2",
+    "date": "2026-02-18",
+    "type": "bugfix",
+    "title": "Tenant-gesperrte Ressourcen klarer markiert",
+    "summary": "Nicht buchbare Ressourcen wegen Tenant-Mismatch bleiben vollständig sichtbar; nur der Status-Kreis zeigt jetzt neutral grau den gesperrten Zustand.",
+    "items": [
+      "Desk-/Pin-Icon und Mitarbeiterbild werden nicht mehr ausgegraut oder transparent dargestellt.",
+      "Der gesperrte Zustand wird ausschließlich über den neutral grauen Status-Kreis angezeigt.",
+      "Die Buchungs-Interaktion bleibt weiterhin gesperrt, ohne visuelle Abschwächung des Inhalts im Marker."
+    ]
+  },
+  {
     "version": "1.4.1",
     "date": "2026-02-18",
     "type": "bugfix",
