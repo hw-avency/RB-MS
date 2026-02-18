@@ -378,7 +378,7 @@ const callLabelForBooking = (booking: OccupancyBooking): string => {
 
 const normalizeDeskBookings = (desk: OccupancyDesk): NormalizedOccupancyBooking[] => {
   const bookings = desk.bookings && desk.bookings.length > 0 ? desk.bookings : desk.booking ? [desk.booking] : [];
-  if (desk.kind === 'RAUM') return normalizeDaySlotBookingsPerEntry(bookings);
+  if (desk.kind === 'RAUM' || desk.kind === 'PARKPLATZ') return normalizeDaySlotBookingsPerEntry(bookings);
   return normalizeDaySlotBookings(bookings);
 };
 
@@ -1352,11 +1352,11 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
   const popupMode: BookingMode = popupDesk && popupMyBookings.length > 0 ? 'manage' : 'create';
   const popupDeskState = popupDesk ? (popupDesk.isBookableForMe === false ? 'UNBOOKABLE' : !canBookDesk(popupDesk) ? 'TAKEN' : 'FREE') : null;
   const meEmployeeId = currentUser?.id;
-  const popupCancelableBooking = useMemo(() => {
-    if (!popupDesk || isRoomResource(popupDesk)) return null;
-    return popupDeskBookings.find((booking) => canCancelBooking(booking, meEmployeeId, currentUser?.role === 'admin')) ?? null;
+  const popupCancelableBookings = useMemo(() => {
+    if (!popupDesk || isRoomResource(popupDesk)) return [] as NormalizedOccupancyBooking[];
+    return popupDeskBookings.filter((booking) => canCancelBooking(booking, meEmployeeId, currentUser?.role === 'admin'));
   }, [currentUser?.role, meEmployeeId, popupDesk, popupDeskBookings]);
-  const canCancelHere = Boolean(popupCancelableBooking);
+  const canCancelHere = popupCancelableBookings.length > 0;
   const popupOwnBookingIsRecurring = useMemo(() => popupDeskBookings.some((booking) => booking.isCurrentUser && (Boolean(booking.recurringBookingId) || Boolean(booking.recurringGroupId))), [popupDeskBookings]);
   const popupForeignBookings = useMemo(() => popupDeskBookings.filter((booking) => !isMineBooking(booking, currentUser?.id)), [popupDeskBookings, currentUser?.id]);
   const showForeignBookingInfoDialog = Boolean(
@@ -1867,17 +1867,24 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
   }, [cancelConfirmContext?.bookingIds, cancelConfirmIsSeries, cancelFlowState]);
 
   const openCancelConfirm = () => {
-    if (!deskPopup || !popupDesk || !canCancelHere || !popupCancelableBooking) return;
-    const ownBooking = popupCancelableBooking;
+    if (!deskPopup || !popupDesk || !canCancelHere) return;
+
+    const ownBooking = popupCancelableBookings[0] ?? null;
     if (!ownBooking) return;
-    const bookingIds = ownBooking.sourceBookingIds?.length
-      ? ownBooking.sourceBookingIds.filter((id) => {
-        const sourceBooking = popupDeskBookings.find((booking) => booking.id === id);
-        return Boolean(sourceBooking && canCancelBooking(sourceBooking, meEmployeeId, currentUser?.role === 'admin'));
-      })
-      : ownBooking.id
-        ? [ownBooking.id]
-        : [];
+
+    const isTimeBasedParking = popupDesk.kind === 'PARKPLATZ' && isTimeBasedResource(popupDesk);
+    const bookingIds = isTimeBasedParking
+      ? popupCancelableBookings
+        .map((booking) => booking.id)
+        .filter((id): id is string => Boolean(id))
+      : ownBooking.sourceBookingIds?.length
+        ? ownBooking.sourceBookingIds.filter((id) => {
+          const sourceBooking = popupDeskBookings.find((booking) => booking.id === id);
+          return Boolean(sourceBooking && canCancelBooking(sourceBooking, meEmployeeId, currentUser?.role === 'admin'));
+        })
+        : ownBooking.id
+          ? [ownBooking.id]
+          : [];
     if (bookingIds.length === 0) return;
 
     const recurringMeta = getRecurringMetadataForBooking(popupDesk, ownBooking);
@@ -1885,7 +1892,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
     setCancelConfirmContext({
       ...deskPopup,
       bookingIds,
-      bookingLabel: bookingSlotLabel(ownBooking),
+      bookingLabel: isTimeBasedParking && bookingIds.length > 1 ? `${bookingIds.length} Buchungen` : bookingSlotLabel(ownBooking),
       recurringBookingId: recurringMeta.recurringBookingId,
       recurringGroupId: recurringMeta.recurringGroupId,
       isRecurring: recurringMeta.isRecurring,
@@ -2439,9 +2446,11 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
     event.stopPropagation();
     if (!cancelConfirmDesk || !cancelConfirmContext) return;
 
-    const bookingId = cancelConfirmContext.bookingIds[0];
+    const bookingIds = cancelConfirmContext.bookingIds;
+    const bookingId = bookingIds[0];
     const requestId = createMutationRequestId();
     const isRoomCancel = isRoomResource(cancelConfirmDesk);
+    const cancelAllByDefault = cancelMode === 'SINGLE' && cancelConfirmDesk.kind === 'PARKPLATZ' && bookingIds.length > 1;
 
     if (isRoomCancel) {
       logMutation('ROOM_CANCEL_CLICK', {
@@ -2470,16 +2479,31 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
     logMutation('UI_SET_LOADING', { requestId, value: true });
 
     try {
-      await cancelBookingWithRefresh({
-        bookingId,
-        cancelMode,
-        requestId,
-        deskId: cancelConfirmDesk.id,
-        date: selectedDate,
-        keepPopoverOpen: cancelConfirmContext.keepPopoverOpen,
-        popupDeskId: cancelConfirmContext.deskId,
-        isRoomCancel
-      });
+      if (cancelAllByDefault) {
+        for (const currentBookingId of bookingIds) {
+          await cancelBookingWithRefresh({
+            bookingId: currentBookingId,
+            cancelMode,
+            requestId,
+            deskId: cancelConfirmDesk.id,
+            date: selectedDate,
+            keepPopoverOpen: cancelConfirmContext.keepPopoverOpen,
+            popupDeskId: cancelConfirmContext.deskId,
+            isRoomCancel
+          });
+        }
+      } else {
+        await cancelBookingWithRefresh({
+          bookingId,
+          cancelMode,
+          requestId,
+          deskId: cancelConfirmDesk.id,
+          date: selectedDate,
+          keepPopoverOpen: cancelConfirmContext.keepPopoverOpen,
+          popupDeskId: cancelConfirmContext.deskId,
+          isRoomCancel
+        });
+      }
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Stornieren fehlgeschlagen';
       if (isRoomCancel) {
@@ -3280,7 +3304,9 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
                 </>
               ) : (
                 <button type="button" className="btn btn-danger" onMouseDown={(event) => { event.stopPropagation(); }} onClick={(event) => void submitPopupCancel(event, 'SINGLE')} disabled={isCancellingBooking} data-state={isCancellingBooking ? 'loading' : 'idle'}>
-                  {isCancellingBooking && cancellingBookingId === cancelConfirmContext?.bookingIds[0] ? <><span className="btn-spinner" aria-hidden />Löschen…</> : 'Stornieren'}
+                  {isCancellingBooking && cancellingBookingId === cancelConfirmContext?.bookingIds[0]
+                    ? <><span className="btn-spinner" aria-hidden />Löschen…</>
+                    : (cancelConfirmDesk?.kind === 'PARKPLATZ' && (cancelConfirmContext?.bookingIds.length ?? 0) > 1 ? 'Alle eigenen Buchungen stornieren' : 'Stornieren')}
                 </button>
               )}
               <button type="button" className="btn btn-outline" onMouseDown={(event) => { event.stopPropagation(); }} onClick={cancelCancelConfirm} disabled={isCancellingBooking} data-state={isCancellingBooking ? 'loading' : 'idle'}>Abbrechen</button>

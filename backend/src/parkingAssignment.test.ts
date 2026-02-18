@@ -68,6 +68,32 @@ test('fallback uses charger for full window when no regular rest slot is free', 
   assert.equal(proposal.usedFallbackChargerFullWindow, true);
 });
 
+
+test('split assignment can place charging window at the end when start is blocked', () => {
+  const proposal = buildParkingAssignmentProposal({
+    startMinute: 8 * 60,
+    attendanceMinutes: 4 * 60,
+    chargingMinutes: 2 * 60,
+    spots: [
+      { id: 'charger-1', hasCharger: true },
+      { id: 'regular-1', hasCharger: false }
+    ],
+    bookings: [
+      { deskId: 'charger-1', startMinute: 8 * 60, endMinute: 10 * 60 }
+    ]
+  });
+
+  assert.equal(proposal.type, 'split');
+  if (proposal.type !== 'split') return;
+  assert.equal(proposal.bookings.length, 2);
+  assert.equal(proposal.bookings[0]?.deskId, 'regular-1');
+  assert.equal(proposal.bookings[0]?.startMinute, 8 * 60);
+  assert.equal(proposal.bookings[0]?.endMinute, 10 * 60);
+  assert.equal(proposal.bookings[1]?.deskId, 'charger-1');
+  assert.equal(proposal.bookings[1]?.startMinute, 10 * 60);
+  assert.equal(proposal.bookings[1]?.endMinute, 12 * 60);
+});
+
 test('no proposal when split and fallback are impossible', () => {
   const proposal = buildParkingAssignmentProposal({
     startMinute: 8 * 60,
