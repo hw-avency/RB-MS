@@ -1,5 +1,17 @@
 [
   {
+    "version": "1.5.23",
+    "date": "2026-02-18",
+    "type": "bugfix",
+    "title": "Manuelle Buchung respektiert Mandanten korrekt",
+    "summary": "Beim direkten Klick auf eine Ressource wurden Buchungen teils fälschlich als \"für deinen Mandanten nicht buchbar\" abgelehnt. Die Mandantenprüfung nutzt nun im Admin-Fall den tatsächlich gebuchten Mitarbeiter.",
+    "items": [
+      "Manuelle Einzelbuchungen prüfen die Buchbarkeit jetzt mit dem Mandanten der Zielperson statt pauschal mit dem aktuell angemeldeten Admin.",
+      "Damit verhalten sich manuelle Buchungen konsistent zur intelligenten Zuweisung.",
+      "Fehlermeldungen wegen Mandanten-Mismatch erscheinen nur noch bei echten Berechtigungskonflikten."
+    ]
+  },
+  {
     "version": "1.5.22",
     "date": "2026-02-18",
     "type": "bugfix",

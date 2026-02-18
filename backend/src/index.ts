@@ -1052,7 +1052,14 @@ const resolveTenantIdForEmail = async (tx: Prisma.TransactionClient, email: stri
 const hashPassword = async (value: string): Promise<string> => bcrypt.hash(value, PASSWORD_SALT_ROUNDS);
 
 type BookingTx = Prisma.TransactionClient;
-type BookingIdentity = { normalizedEmail: string; userKey: string; entraOid: string | null; employeeId: string | null; emailAliases: string[] };
+type BookingIdentity = {
+  normalizedEmail: string;
+  userKey: string;
+  entraOid: string | null;
+  employeeId: string | null;
+  tenantDomainId: string | null;
+  emailAliases: string[];
+};
 type BookingWithDeskContext = Prisma.BookingGetPayload<{ include: { desk: { select: { name: true; kind: true } } } }>;
 type BookingWithCreator = Prisma.BookingGetPayload<{ include: { createdByEmployee: { select: { id: true; displayName: true; email: true } } } }>;
 type CreatorSummary = { id: string; displayName: string; email: string };
@@ -1089,7 +1096,7 @@ const acquireBookingLock = async (tx: BookingTx, key: string) => {
 
 const findBookingIdentity = async (userEmail: string): Promise<BookingIdentity> => {
   const normalizedEmail = normalizeEmail(userEmail);
-  const employee = await prisma.employee.findUnique({ where: { email: normalizedEmail }, select: { id: true, entraOid: true } });
+  const employee = await prisma.employee.findUnique({ where: { email: normalizedEmail }, select: { id: true, entraOid: true, tenantDomainId: true } });
   const entraOid = employee?.entraOid ?? null;
   const aliasRows = entraOid
     ? await prisma.employee.findMany({ where: { entraOid }, select: { email: true } })
@@ -1100,6 +1107,7 @@ const findBookingIdentity = async (userEmail: string): Promise<BookingIdentity> 
     userKey: entraOid ?? normalizedEmail,
     entraOid,
     employeeId: employee?.id ?? null,
+    tenantDomainId: employee?.tenantDomainId ?? null,
     emailAliases
   };
 };
@@ -3210,7 +3218,12 @@ app.post('/bookings', async (req, res) => {
     return;
   }
 
-  if (!isDeskAccessibleForTenant(desk, actorEmployee.tenantDomainId)) {
+  const identity = bookingMode === 'SELF' ? await findBookingIdentity(userEmail ?? actorEmployee.email) : null;
+  const tenantDomainIdForAccess = req.authUser?.role === 'admin'
+    ? identity?.tenantDomainId ?? actorEmployee.tenantDomainId
+    : actorEmployee.tenantDomainId;
+
+  if (!isDeskAccessibleForTenant(desk, tenantDomainIdForAccess)) {
     res.status(403).json({ error: 'forbidden', message: 'Für deinen Mandanten nicht buchbar' });
     return;
   }
@@ -3223,8 +3236,6 @@ app.post('/bookings', async (req, res) => {
 
   const bookingWindow = bookingWindowResult.value;
   const shouldReplaceExisting = overwrite ?? replaceExisting ?? false;
-  const identity = bookingMode === 'SELF' ? await findBookingIdentity(userEmail ?? actorEmployee.email) : null;
-
   const result = await prisma.$transaction(async (tx) => {
     if (identity) {
       await acquireBookingLock(tx, bookingUserKeyForDate(identity.userKey, parsedDate));
