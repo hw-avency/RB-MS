@@ -1066,6 +1066,24 @@ type BookingWithDeskContext = Prisma.BookingGetPayload<{ include: { desk: { sele
 type BookingWithCreator = Prisma.BookingGetPayload<{ include: { createdByEmployee: { select: { id: true; displayName: true; email: true } } } }>;
 type CreatorSummary = { id: string; displayName: string; email: string };
 
+const bookingRequestId = () => (typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : `booking-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`);
+const logBookingEvent = (event: string, details: Record<string, unknown>, level: 'info' | 'warn' | 'error' | 'debug' = 'info') => {
+  const payload = { event, ...details };
+  if (level === 'warn') {
+    console.warn('BOOKING_FLOW', payload);
+    return;
+  }
+  if (level === 'error') {
+    console.error('BOOKING_FLOW', payload);
+    return;
+  }
+  if (level === 'debug') {
+    console.debug('BOOKING_FLOW', payload);
+    return;
+  }
+  console.info('BOOKING_FLOW', payload);
+};
+
 const resolveCreatedBySummary = (params: {
   createdBy: { id: string; displayName: string | null; email: string } | null;
   fallbackUser?: CreatorSummary | null;
@@ -3174,14 +3192,31 @@ app.post('/bookings', async (req, res) => {
     bookedFor?: string;
     guestName?: string;
   };
+  const requestId = bookingRequestId();
+  logBookingEvent('MANUAL_CREATE_REQUEST_RECEIVED', {
+    requestId,
+    actorEmail: req.authUser?.email ?? null,
+    actorRole: req.authUser?.role ?? null,
+    deskId: deskId ?? null,
+    date: date ?? null,
+    bookingModeRaw: bookedFor ?? null,
+    userEmailRaw: userEmail ?? null,
+    slotRaw: slot ?? null,
+    daySlotRaw: daySlot ?? null,
+    startTimeRaw: startTime ?? null,
+    endTimeRaw: endTime ?? null,
+    overwriteRequested: overwrite ?? replaceExisting ?? false
+  });
 
   if (!deskId || !date) {
+    logBookingEvent('MANUAL_CREATE_VALIDATION_FAILED', { requestId, reason: 'deskId/date missing', deskId: deskId ?? null, date: date ?? null }, 'warn');
     res.status(400).json({ error: 'validation', message: 'deskId and date are required' });
     return;
   }
 
   const currentUser = req.authUser;
   if (!currentUser) {
+    logBookingEvent('MANUAL_CREATE_UNAUTHORIZED', { requestId, reason: 'auth user missing' }, 'warn');
     res.status(401).json({ error: 'unauthorized', message: 'Authentication required' });
     return;
   }
@@ -3191,6 +3226,7 @@ app.post('/bookings', async (req, res) => {
     actorEmployee = await requireActorEmployee(req);
   } catch (error) {
     const status = (error as Error & { status?: number }).status ?? 403;
+    logBookingEvent('MANUAL_CREATE_ACTOR_RESOLUTION_FAILED', { requestId, status, error: (error as Error).message }, 'warn');
     res.status(status).json({ error: status === 401 ? 'unauthorized' : 'forbidden', message: (error as Error).message });
     return;
   }
@@ -3199,10 +3235,12 @@ app.post('/bookings', async (req, res) => {
   const normalizedGuestName = normalizeGuestName(guestName);
   if (bookingMode === 'GUEST') {
     if (!normalizedGuestName || normalizedGuestName.length < 2) {
+      logBookingEvent('MANUAL_CREATE_VALIDATION_FAILED', { requestId, reason: 'guestName too short', bookingMode, guestNameLength: normalizedGuestName?.length ?? 0 }, 'warn');
       res.status(400).json({ error: 'validation', message: 'guestName muss mindestens 2 Zeichen haben.' });
       return;
     }
   } else if (normalizedGuestName) {
+    logBookingEvent('MANUAL_CREATE_VALIDATION_FAILED', { requestId, reason: 'guestName for SELF booking', bookingMode }, 'warn');
     res.status(400).json({ error: 'validation', message: 'guestName is only allowed for guest bookings' });
     return;
   }
@@ -3210,28 +3248,56 @@ app.post('/bookings', async (req, res) => {
 
   const parsedDate = toDateOnly(date);
   if (!parsedDate) {
+    logBookingEvent('MANUAL_CREATE_VALIDATION_FAILED', { requestId, reason: 'invalid date format', date }, 'warn');
     res.status(400).json({ error: 'validation', message: 'date must be in YYYY-MM-DD format' });
     return;
   }
 
   const desk = await getDeskContext(deskId);
   if (!desk) {
+    logBookingEvent('MANUAL_CREATE_NOT_FOUND', { requestId, reason: 'desk not found', deskId }, 'warn');
     res.status(404).json({ error: 'not_found', message: 'Desk not found' });
     return;
   }
 
-  const identity = bookingMode === 'SELF' ? await findBookingIdentity(userEmail ?? actorEmployee.email) : null;
+  const targetEmailForTenantCheck = userEmail ?? actorEmployee.email;
+  const accessIdentity = await findBookingIdentity(targetEmailForTenantCheck);
+  const identity = bookingMode === 'SELF' ? accessIdentity : null;
   const tenantDomainIdForAccess = req.authUser?.role === 'admin'
-    ? identity?.tenantDomainId ?? actorEmployee.tenantDomainId
+    ? accessIdentity.tenantDomainId ?? actorEmployee.tenantDomainId
     : actorEmployee.tenantDomainId;
 
+  logBookingEvent('MANUAL_CREATE_ACCESS_CONTEXT', {
+    requestId,
+    bookingMode,
+    actorEmployeeId: actorEmployee.id,
+    actorTenantDomainId: actorEmployee.tenantDomainId ?? null,
+    targetEmailForTenantCheck,
+    accessIdentityTenantDomainId: accessIdentity.tenantDomainId,
+    accessIdentityEmployeeId: accessIdentity.employeeId,
+    effectiveTenantDomainIdForAccess: tenantDomainIdForAccess ?? null,
+    deskTenantScope: desk.tenantScope,
+    deskTenantIds: desk.deskTenants.map((entry) => entry.tenantId),
+    floorplanTenantScope: desk.floorplan?.tenantScope ?? null,
+    floorplanTenantIds: desk.floorplan?.floorplanTenants.map((entry) => entry.tenantId) ?? []
+  }, 'debug');
+
   if (!isDeskAccessibleForTenant(desk, tenantDomainIdForAccess)) {
+    logBookingEvent('MANUAL_CREATE_FORBIDDEN_TENANT_MISMATCH', {
+      requestId,
+      deskId,
+      tenantDomainIdForAccess: tenantDomainIdForAccess ?? null,
+      actorTenantDomainId: actorEmployee.tenantDomainId ?? null,
+      accessIdentityTenantDomainId: accessIdentity.tenantDomainId,
+      bookingMode
+    }, 'warn');
     res.status(403).json({ error: 'forbidden', message: 'Für deinen Mandanten nicht buchbar' });
     return;
   }
 
   const bookingWindowResult = resolveBookingWindow({ deskKind: desk.kind, daySlot, slot, startTime, endTime });
   if (!bookingWindowResult.ok) {
+    logBookingEvent('MANUAL_CREATE_VALIDATION_FAILED', { requestId, reason: 'invalid booking window', message: bookingWindowResult.message }, 'warn');
     res.status(400).json({ error: 'validation', message: bookingWindowResult.message });
     return;
   }
@@ -3262,6 +3328,14 @@ app.post('/bookings', async (req, res) => {
 
     const existingUserBooking = conflictingUserBookings[0] ?? null;
     if (identity && existingUserBooking && existingUserBooking.deskId !== deskId && !shouldReplaceExisting) {
+      logBookingEvent('MANUAL_CREATE_CONFLICT_USER_HAS_BOOKING', {
+        requestId,
+        deskId,
+        existingBookingId: existingUserBooking.id,
+        existingDeskId: existingUserBooking.deskId,
+        existingDeskName: existingUserBooking.desk?.name ?? existingUserBooking.deskId,
+        shouldReplaceExisting
+      }, 'warn');
       return {
         kind: 'conflict' as const,
         message: 'User already has a booking for this date and resource kind',
@@ -3287,6 +3361,12 @@ app.post('/bookings', async (req, res) => {
     });
 
     if (targetDeskBooking) {
+      logBookingEvent('MANUAL_CREATE_CONFLICT_DESK_ALREADY_BOOKED', {
+        requestId,
+        deskId,
+        conflictingBookingId: targetDeskBooking.id,
+        shouldReplaceExisting
+      }, 'warn');
       return { kind: 'conflict' as const, message: 'Desk is already booked for this Zeitraum', details: { deskId, date, bookingId: targetDeskBooking.id } };
     }
 
@@ -3325,10 +3405,25 @@ app.post('/bookings', async (req, res) => {
       });
     }
 
+    logBookingEvent('MANUAL_CREATE_SUCCESS', {
+      requestId,
+      bookingId: created.id,
+      deskId,
+      date: toISODateOnly(parsedDate),
+      bookingMode,
+      createdForEmployeeId: created.employeeId ?? null,
+      createdForEmail: created.userEmail ?? null,
+      createdByEmployeeId: created.createdByEmployeeId,
+      slot: created.slot,
+      startMinute: created.startMinute,
+      endMinute: created.endMinute
+    });
+
     return { kind: 'ok' as const, status: 201, booking: created };
   });
 
   if (result.kind === 'conflict') {
+    logBookingEvent('MANUAL_CREATE_RESPONSE_CONFLICT', { requestId, message: result.message, details: result.details }, 'warn');
     sendConflict(res, result.message, result.details);
     return;
   }
@@ -3340,7 +3435,17 @@ app.post('/bookings', async (req, res) => {
 app.put('/bookings/:id', async (req, res) => {
   const id = getRouteId(req.params.id);
   const { deskId, date, daySlot, slot, startTime, endTime, guestName } = req.body as { deskId?: string; date?: string; daySlot?: string; slot?: string; startTime?: string; endTime?: string; guestName?: string };
+  const requestId = bookingRequestId();
+  logBookingEvent('MANUAL_UPDATE_REQUEST_RECEIVED', {
+    requestId,
+    bookingId: id ?? null,
+    deskId: deskId ?? null,
+    date: date ?? null,
+    actorEmail: req.authUser?.email ?? null,
+    actorRole: req.authUser?.role ?? null
+  });
   if (!id || !deskId) {
+    logBookingEvent('MANUAL_UPDATE_VALIDATION_FAILED', { requestId, reason: 'id/deskId missing', bookingId: id ?? null, deskId: deskId ?? null }, 'warn');
     res.status(400).json({ error: 'validation', message: 'id and deskId are required' });
     return;
   }
@@ -3348,6 +3453,7 @@ app.put('/bookings/:id', async (req, res) => {
   if (date) {
     const parsedDate = toDateOnly(date);
     if (!parsedDate) {
+      logBookingEvent('MANUAL_UPDATE_VALIDATION_FAILED', { requestId, reason: 'invalid date format', date }, 'warn');
       res.status(400).json({ error: 'validation', message: 'date must be in YYYY-MM-DD format' });
       return;
     }
@@ -3355,6 +3461,7 @@ app.put('/bookings/:id', async (req, res) => {
 
   const existing = await prisma.booking.findUnique({ where: { id } });
   if (!existing) {
+    logBookingEvent('MANUAL_UPDATE_NOT_FOUND', { requestId, reason: 'booking not found', bookingId: id }, 'warn');
     res.status(404).json({ error: 'not_found', message: 'Booking not found' });
     return;
   }
@@ -3364,22 +3471,53 @@ app.put('/bookings/:id', async (req, res) => {
     actorEmployee = await requireActorEmployee(req);
   } catch (error) {
     const status = (error as Error & { status?: number }).status ?? 403;
+    logBookingEvent('MANUAL_UPDATE_ACTOR_RESOLUTION_FAILED', { requestId, status, error: (error as Error).message }, 'warn');
     res.status(status).json({ error: status === 401 ? 'unauthorized' : 'forbidden', message: (error as Error).message });
     return;
   }
 
   if (req.authUser?.role !== 'admin' && !canCancelBooking({ booking: { bookedFor: existing.bookedFor, employeeId: existing.employeeId, createdByEmployeeId: existing.createdByEmployeeId }, actor: { employeeId: actorEmployee.id, email: req.authUser?.email ?? '', isAdmin: false } })) {
+    logBookingEvent('MANUAL_UPDATE_FORBIDDEN_BY_POLICY', { requestId, reason: 'cannot update booking of another user', actorEmployeeId: actorEmployee.id, bookingId: existing.id }, 'warn');
     res.status(403).json({ error: 'forbidden', message: 'Cannot update booking of another user' });
     return;
   }
 
   const nextDesk = await getDeskContext(deskId);
   if (!nextDesk) {
+    logBookingEvent('MANUAL_UPDATE_NOT_FOUND', { requestId, reason: 'desk not found', deskId }, 'warn');
     res.status(404).json({ error: 'not_found', message: 'Desk not found' });
     return;
   }
 
-  if (!isDeskAccessibleForTenant(nextDesk, actorEmployee.tenantDomainId)) {
+  const targetTenantIdentity = existing.bookedFor === 'SELF' && existing.userEmail
+    ? await findBookingIdentity(existing.userEmail)
+    : null;
+  const tenantDomainIdForAccess = req.authUser?.role === 'admin'
+    ? targetTenantIdentity?.tenantDomainId ?? actorEmployee.tenantDomainId
+    : actorEmployee.tenantDomainId;
+  logBookingEvent('MANUAL_UPDATE_ACCESS_CONTEXT', {
+    requestId,
+    bookingId: existing.id,
+    existingBookedFor: existing.bookedFor,
+    existingUserEmail: existing.userEmail ?? null,
+    actorTenantDomainId: actorEmployee.tenantDomainId ?? null,
+    targetTenantDomainId: targetTenantIdentity?.tenantDomainId ?? null,
+    effectiveTenantDomainIdForAccess: tenantDomainIdForAccess ?? null,
+    deskTenantScope: nextDesk.tenantScope,
+    deskTenantIds: nextDesk.deskTenants.map((entry) => entry.tenantId),
+    floorplanTenantScope: nextDesk.floorplan?.tenantScope ?? null,
+    floorplanTenantIds: nextDesk.floorplan?.floorplanTenants.map((entry) => entry.tenantId) ?? []
+  }, 'debug');
+
+  if (!isDeskAccessibleForTenant(nextDesk, tenantDomainIdForAccess)) {
+    logBookingEvent('MANUAL_UPDATE_FORBIDDEN_TENANT_MISMATCH', {
+      requestId,
+      bookingId: existing.id,
+      deskId,
+      actorTenantDomainId: actorEmployee.tenantDomainId ?? null,
+      targetTenantDomainId: targetTenantIdentity?.tenantDomainId ?? null,
+      tenantDomainIdForAccess: tenantDomainIdForAccess ?? null
+    }, 'warn');
     res.status(403).json({ error: 'forbidden', message: 'Für deinen Mandanten nicht buchbar' });
     return;
   }
@@ -3387,23 +3525,27 @@ app.put('/bookings/:id', async (req, res) => {
   const bookingDate = date ? toDateOnly(date) ?? existing.date : existing.date;
 
   if (date && bookingDate.getTime() !== existing.date.getTime()) {
+    logBookingEvent('MANUAL_UPDATE_VALIDATION_FAILED', { requestId, reason: 'date mismatch existing booking', bookingDate: toISODateOnly(bookingDate), existingDate: toISODateOnly(existing.date) }, 'warn');
     res.status(400).json({ error: 'validation', message: 'date does not match existing booking date' });
     return;
   }
 
   const bookingWindowResult = resolveBookingWindow({ deskKind: nextDesk.kind, daySlot: typeof daySlot === 'undefined' ? (existing.daySlot ?? bookingSlotToDaySlot(existing.slot)) : daySlot, slot: typeof slot === 'undefined' ? existing.slot : slot, startTime: typeof startTime === 'undefined' ? minuteToHHMM(existing.startMinute) : startTime, endTime: typeof endTime === 'undefined' ? minuteToHHMM(existing.endMinute) : endTime });
   if (!bookingWindowResult.ok) {
+    logBookingEvent('MANUAL_UPDATE_VALIDATION_FAILED', { requestId, reason: 'invalid booking window', message: bookingWindowResult.message }, 'warn');
     res.status(400).json({ error: 'validation', message: bookingWindowResult.message });
     return;
   }
 
   const nextGuestName = existing.bookedFor === 'GUEST' ? normalizeGuestName(typeof guestName === 'undefined' ? existing.guestName : guestName) : null;
   if (existing.bookedFor === 'GUEST' && (!nextGuestName || nextGuestName.length < 2)) {
+    logBookingEvent('MANUAL_UPDATE_VALIDATION_FAILED', { requestId, reason: 'guestName too short', bookingId: existing.id, guestNameLength: nextGuestName?.length ?? 0 }, 'warn');
     res.status(400).json({ error: 'validation', message: 'guestName muss mindestens 2 Zeichen haben.' });
     return;
   }
 
   if (existing.bookedFor === 'SELF' && !actorEmployee.id) {
+    logBookingEvent('MANUAL_UPDATE_VALIDATION_FAILED', { requestId, reason: 'missing actor employee id for self booking', bookingId: existing.id }, 'warn');
     res.status(400).json({ error: 'validation', message: 'employeeId is required for SELF bookings' });
     return;
   }
@@ -3415,6 +3557,7 @@ app.put('/bookings/:id', async (req, res) => {
     return candidateWindow ? windowsOverlap(nextWindow, candidateWindow) : false;
   });
   if (conflict) {
+    logBookingEvent('MANUAL_UPDATE_CONFLICT_DESK_ALREADY_BOOKED', { requestId, bookingId: existing.id, conflictingBookingId: conflict.id, deskId, date: toISODateOnly(bookingDate) }, 'warn');
     sendConflict(res, 'Desk is already booked for this date', { deskId, date: toISODateOnly(bookingDate), bookingId: conflict.id });
     return;
   }
@@ -3434,6 +3577,16 @@ app.put('/bookings/:id', async (req, res) => {
       slot: nextWindow.mode === 'day' ? (nextWindow.daySlot === 'FULL' ? 'FULL_DAY' : nextWindow.daySlot === 'AM' ? 'MORNING' : 'AFTERNOON') : 'CUSTOM'
     },
     include: { createdByEmployee: { select: { id: true, displayName: true, email: true } } }
+  });
+  logBookingEvent('MANUAL_UPDATE_SUCCESS', {
+    requestId,
+    bookingId: updated.id,
+    deskId: updated.deskId,
+    date: toISODateOnly(updated.date),
+    slot: updated.slot,
+    startMinute: updated.startMinute,
+    endMinute: updated.endMinute,
+    actorEmployeeId: actorEmployee.id
   });
   res.status(200).json(mapBookingResponse(updated));
 });
@@ -3792,7 +3945,19 @@ type ParkingSmartRequest = { floorplanId?: string; date?: string; startTime?: st
 
 app.post('/bookings/parking-smart/propose', async (req, res) => {
   const { floorplanId, date, startTime, attendanceMinutes, chargingMinutes } = req.body as ParkingSmartRequest;
+  const requestId = bookingRequestId();
+  logBookingEvent('SMART_PROPOSE_REQUEST_RECEIVED', {
+    requestId,
+    actorEmail: req.authUser?.email ?? null,
+    actorRole: req.authUser?.role ?? null,
+    floorplanId: floorplanId ?? null,
+    date: date ?? null,
+    startTime: startTime ?? null,
+    attendanceMinutes: typeof attendanceMinutes === 'number' ? attendanceMinutes : null,
+    chargingMinutes: typeof chargingMinutes === 'number' ? chargingMinutes : null
+  });
   if (!floorplanId || !date || !startTime || typeof attendanceMinutes !== 'number' || typeof chargingMinutes !== 'number') {
+    logBookingEvent('SMART_PROPOSE_VALIDATION_FAILED', { requestId, reason: 'required input missing' }, 'warn');
     res.status(400).json({ error: 'validation', message: 'floorplanId, date, startTime, attendanceMinutes and chargingMinutes are required' });
     return;
   }
@@ -3800,6 +3965,7 @@ app.post('/bookings/parking-smart/propose', async (req, res) => {
   const parsedDate = toDateOnly(date);
   const parsedStartMinute = parseTimeToMinute(startTime);
   if (!parsedDate || parsedStartMinute === null) {
+    logBookingEvent('SMART_PROPOSE_VALIDATION_FAILED', { requestId, reason: 'invalid date/startTime', date, startTime }, 'warn');
     res.status(400).json({ error: 'validation', message: 'date/startTime invalid' });
     return;
   }
@@ -3814,6 +3980,7 @@ app.post('/bookings/parking-smart/propose', async (req, res) => {
     orderBy: { createdAt: 'asc' }
   });
   if (spots.length === 0) {
+    logBookingEvent('SMART_PROPOSE_NOT_FOUND', { requestId, reason: 'no parking spots', floorplanId }, 'warn');
     res.status(404).json({ error: 'not_found', message: 'Keine Parkplätze gefunden.' });
     return;
   }
@@ -3833,8 +4000,19 @@ app.post('/bookings/parking-smart/propose', async (req, res) => {
     spots: spots.map((spot) => ({ id: spot.id, hasCharger: spot.hasCharger })),
     bookings: normalizedBookings
   });
+  logBookingEvent('SMART_PROPOSE_DEPENDENCIES', {
+    requestId,
+    spotsCount: spots.length,
+    existingBookingsCount: bookings.length,
+    normalizedBookingsCount: normalizedBookings.length,
+    totalMinutes,
+    requestedCharging,
+    normalizedCharging,
+    parsedStartMinute
+  }, 'debug');
 
   if (proposal.type === 'none') {
+    logBookingEvent('SMART_PROPOSE_NO_MATCH', { requestId, reason: proposal.reason, floorplanId, date }, 'warn');
     res.status(200).json({ status: 'none', reason: proposal.reason, message: 'Keine passende Kombination verfügbar.' });
     return;
   }
@@ -3853,17 +4031,34 @@ app.post('/bookings/parking-smart/propose', async (req, res) => {
     switchAfterCharging: proposal.bookings.length === 2,
     bookings: namedBookings
   });
+  logBookingEvent('SMART_PROPOSE_SUCCESS', {
+    requestId,
+    proposalType: proposal.type,
+    usedFallbackChargerFullWindow: proposal.usedFallbackChargerFullWindow,
+    bookings: namedBookings.map((entry) => ({ deskId: entry.deskId, deskName: entry.deskName, startTime: entry.startTime, endTime: entry.endTime }))
+  });
 });
 
 app.post('/bookings/parking-smart/confirm', async (req, res) => {
   const { date, bookings, bookedFor, guestName } = req.body as { date?: string; bookings?: Array<{ deskId: string; startMinute: number; endMinute: number }>; bookedFor?: string; guestName?: string };
+  const requestId = bookingRequestId();
+  logBookingEvent('SMART_CONFIRM_REQUEST_RECEIVED', {
+    requestId,
+    actorEmail: req.authUser?.email ?? null,
+    actorRole: req.authUser?.role ?? null,
+    date: date ?? null,
+    bookedForRaw: bookedFor ?? null,
+    bookingCount: Array.isArray(bookings) ? bookings.length : null
+  });
   if (!date || !Array.isArray(bookings) || bookings.length === 0) {
+    logBookingEvent('SMART_CONFIRM_VALIDATION_FAILED', { requestId, reason: 'date/bookings missing' }, 'warn');
     res.status(400).json({ error: 'validation', message: 'date and bookings are required' });
     return;
   }
 
   const currentUser = req.authUser;
   if (!currentUser) {
+    logBookingEvent('SMART_CONFIRM_UNAUTHORIZED', { requestId, reason: 'auth user missing' }, 'warn');
     res.status(401).json({ error: 'unauthorized', message: 'Authentication required' });
     return;
   }
@@ -3873,12 +4068,14 @@ app.post('/bookings/parking-smart/confirm', async (req, res) => {
     actorEmployee = await requireActorEmployee(req);
   } catch (error) {
     const status = (error as Error & { status?: number }).status ?? 403;
+    logBookingEvent('SMART_CONFIRM_ACTOR_RESOLUTION_FAILED', { requestId, status, error: (error as Error).message }, 'warn');
     res.status(status).json({ error: status === 401 ? 'unauthorized' : 'forbidden', message: (error as Error).message });
     return;
   }
 
   const parsedDate = toDateOnly(date);
   if (!parsedDate) {
+    logBookingEvent('SMART_CONFIRM_VALIDATION_FAILED', { requestId, reason: 'invalid date', date }, 'warn');
     res.status(400).json({ error: 'validation', message: 'date invalid' });
     return;
   }
@@ -3886,6 +4083,7 @@ app.post('/bookings/parking-smart/confirm', async (req, res) => {
   const bookingMode = parseBookedFor(bookedFor);
   const normalizedGuestName = normalizeGuestName(guestName);
   if (bookingMode === 'GUEST' && (!normalizedGuestName || normalizedGuestName.length < 2)) {
+    logBookingEvent('SMART_CONFIRM_VALIDATION_FAILED', { requestId, reason: 'guestName too short', bookingMode, guestNameLength: normalizedGuestName?.length ?? 0 }, 'warn');
     res.status(400).json({ error: 'validation', message: 'guestName muss mindestens 2 Zeichen haben.' });
     return;
   }
@@ -3896,6 +4094,7 @@ app.post('/bookings/parking-smart/confirm', async (req, res) => {
     endMinute: Math.floor(booking.endMinute)
   }));
   if (validated.some((entry) => !entry.deskId || !Number.isFinite(entry.startMinute) || !Number.isFinite(entry.endMinute) || entry.endMinute <= entry.startMinute)) {
+    logBookingEvent('SMART_CONFIRM_VALIDATION_FAILED', { requestId, reason: 'bookings invalid', bookings: validated }, 'warn');
     res.status(400).json({ error: 'validation', message: 'bookings invalid' });
     return;
   }
@@ -3903,9 +4102,39 @@ app.post('/bookings/parking-smart/confirm', async (req, res) => {
   const deskIds = Array.from(new Set(validated.map((entry) => entry.deskId)));
   const desks = await prisma.desk.findMany({ where: { id: { in: deskIds } }, select: { id: true, kind: true } });
   if (desks.length !== deskIds.length || desks.some((desk) => desk.kind !== 'PARKPLATZ')) {
+    logBookingEvent('SMART_CONFIRM_VALIDATION_FAILED', { requestId, reason: 'non parking resource in payload', deskIds }, 'warn');
     res.status(400).json({ error: 'validation', message: 'Nur PARKPLATZ-Ressourcen sind erlaubt.' });
     return;
   }
+
+  const deskContexts = await prisma.desk.findMany({
+    where: { id: { in: deskIds } },
+    select: {
+      id: true,
+      tenantScope: true,
+      deskTenants: { select: { tenantId: true } },
+      floorplan: { select: { tenantScope: true, floorplanTenants: { select: { tenantId: true } } } }
+    }
+  });
+  const inaccessible = deskContexts.filter((desk) => !isDeskAccessibleForTenant(desk, actorEmployee.tenantDomainId));
+  if (inaccessible.length > 0) {
+    logBookingEvent('SMART_CONFIRM_FORBIDDEN_TENANT_MISMATCH', {
+      requestId,
+      actorTenantDomainId: actorEmployee.tenantDomainId ?? null,
+      inaccessibleDeskIds: inaccessible.map((desk) => desk.id)
+    }, 'warn');
+    res.status(403).json({ error: 'forbidden', message: 'Für deinen Mandanten nicht buchbar' });
+    return;
+  }
+
+  logBookingEvent('SMART_CONFIRM_DEPENDENCIES', {
+    requestId,
+    actorEmployeeId: actorEmployee.id,
+    actorTenantDomainId: actorEmployee.tenantDomainId ?? null,
+    bookingMode,
+    deskIds,
+    windows: validated
+  }, 'debug');
 
   try {
     const created = await prisma.$transaction(async (tx) => {
@@ -3923,6 +4152,7 @@ app.post('/bookings/parking-smart/confirm', async (req, res) => {
         });
 
         if (hasConflict) {
+          logBookingEvent('SMART_CONFIRM_CONFLICT_DESK_ALREADY_BOOKED', { requestId, deskId: entry.deskId, startMinute: entry.startMinute, endMinute: entry.endMinute }, 'warn');
           const error = new Error('not_available');
           (error as Error & { status?: number }).status = 409;
           throw error;
@@ -3954,13 +4184,20 @@ app.post('/bookings/parking-smart/confirm', async (req, res) => {
       return result;
     });
 
+    logBookingEvent('SMART_CONFIRM_SUCCESS', {
+      requestId,
+      createdCount: created.length,
+      bookings: created.map((entry) => ({ id: entry.id, deskId: entry.deskId, startMinute: entry.startMinute, endMinute: entry.endMinute, bookedFor: entry.bookedFor }))
+    });
     res.status(201).json({ createdCount: created.length, bookings: created.map((entry) => ({ id: entry.id, deskId: entry.deskId, date: entry.date, startMinute: entry.startMinute, endMinute: entry.endMinute, slot: entry.slot })) });
   } catch (error) {
     const status = (error as Error & { status?: number }).status ?? 500;
     if (status === 409) {
+      logBookingEvent('SMART_CONFIRM_RESPONSE_CONFLICT', { requestId, status, error: (error as Error).message }, 'warn');
       res.status(409).json({ error: 'conflict', message: 'Parkplatz nicht mehr verfügbar, bitte neu zuweisen.' });
       return;
     }
+    logBookingEvent('SMART_CONFIRM_UNEXPECTED_ERROR', { requestId, status, error: error instanceof Error ? error.message : String(error) }, 'error');
     throw error;
   }
 });
