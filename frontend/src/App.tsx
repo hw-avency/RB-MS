@@ -30,24 +30,72 @@ const navigate = (to: string) => {
   }
 };
 
+type LoginTenant = { id: string; domain: string; name: string | null; entraId: string };
+
 function MicrosoftLoginPage() {
-  const startMicrosoftLogin = () => {
-    window.location.href = `${API_BASE}/auth/entra/start`;
+  const [tenants, setTenants] = useState<LoginTenant[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const fetchTenants = async () => {
+      try {
+        const response = await fetch(`${API_BASE}/auth/tenants`);
+        if (response.ok) {
+          const data = await response.json() as { tenants: LoginTenant[] };
+          setTenants(data.tenants);
+        }
+      } catch (error) {
+        console.error('Failed to fetch tenants:', error);
+      } finally {
+        setLoading(false);
+      }
+    };
+    void fetchTenants();
+  }, []);
+
+  const startMicrosoftLogin = (tenantId?: string) => {
+    const url = tenantId
+      ? `${API_BASE}/auth/entra/start?tenant=${encodeURIComponent(tenantId)}`
+      : `${API_BASE}/auth/entra/start`;
+    window.location.href = url;
   };
+
+  const hasTenants = tenants.length > 0;
 
   return (
     <main className="ms-login-layout">
       <section className="ms-login-card" aria-label="Login panel">
         <h1 className="ms-login-title">{APP_TITLE}</h1>
-        <button
-          className="ms-login-button"
-          type="button"
-          onClick={startMicrosoftLogin}
-          aria-label="Sign in with Microsoft"
-        >
-          <img src={microsoftLogo} alt="" className="ms-login-button-logo" aria-hidden="true" />
-          <span className="ms-login-button-text">Sign in with Microsoft</span>
-        </button>
+        {loading ? (
+          <p style={{ textAlign: 'center', color: '#666' }}>Lade Mandanten...</p>
+        ) : hasTenants ? (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+            {tenants.map((tenant) => (
+              <button
+                key={tenant.id}
+                className="ms-login-button"
+                type="button"
+                onClick={() => startMicrosoftLogin(tenant.entraId)}
+                aria-label={`Sign in with Microsoft for ${tenant.name || tenant.domain}`}
+              >
+                <img src={microsoftLogo} alt="" className="ms-login-button-logo" aria-hidden="true" />
+                <span className="ms-login-button-text">
+                  {tenant.name || tenant.domain}
+                </span>
+              </button>
+            ))}
+          </div>
+        ) : (
+          <button
+            className="ms-login-button"
+            type="button"
+            onClick={() => startMicrosoftLogin()}
+            aria-label="Sign in with Microsoft"
+          >
+            <img src={microsoftLogo} alt="" className="ms-login-button-logo" aria-hidden="true" />
+            <span className="ms-login-button-text">Sign in with Microsoft</span>
+          </button>
+        )}
       </section>
     </main>
   );
