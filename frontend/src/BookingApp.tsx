@@ -2490,7 +2490,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
             onKeyDown={(event) => {
               if (event.key !== 'Enter' && event.key !== ' ') return;
               event.preventDefault();
-              selectDeskFromCanvas(occupant.deskId, event.currentTarget, { allowUnbookable: true });
+              selectDeskFromCanvas(occupant.deskId, event.currentTarget);
             }}
             onMouseEnter={() => {
               setHoveredDeskId(occupant.deskId);
