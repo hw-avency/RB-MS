@@ -1325,7 +1325,6 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
   const showForeignBookingInfoDialog = Boolean(
     popupDesk
     && !isRoomResource(popupDesk)
-    && popupDeskState !== 'UNBOOKABLE'
     && popupDeskBookings.length > 0
     && popupMyBookings.length === 0
     && popupForeignBookings.length > 0
