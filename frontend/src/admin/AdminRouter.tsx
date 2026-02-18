@@ -12,7 +12,7 @@ import { RESOURCE_KIND_OPTIONS, resourceKindLabel, type ResourceKind } from '../
 type SeriesPolicy = 'DEFAULT' | 'ALLOW' | 'DISALLOW';
 type Floorplan = { id: string; name: string; imageUrl: string; isDefault?: boolean; sortOrder?: number; tenantScope?: 'ALL' | 'SELECTED'; tenantIds?: string[]; defaultResourceKind?: ResourceKind; defaultAllowSeries?: boolean; createdAt?: string; updatedAt?: string };
 type Desk = { id: string; floorplanId: string; name: string; kind?: ResourceKind; allowSeriesOverride?: boolean | null; effectiveAllowSeries?: boolean; x: number | null; y: number | null; position?: { x: number; y: number } | null; tenantScope?: 'ALL' | 'SELECTED'; tenantIds?: string[]; createdAt?: string; updatedAt?: string };
-type Employee = { id: string; email: string; displayName: string; role: 'admin' | 'user'; isActive: boolean; photoUrl?: string | null; createdAt?: string; updatedAt?: string };
+type Employee = { id: string; email: string; displayName: string; role: 'admin' | 'user'; isActive: boolean; phone?: string | null; photoUrl?: string | null; createdAt?: string; updatedAt?: string };
 type Tenant = { id: string; domain: string; name?: string | null; entraTenantId?: string | null; employeeCount?: number; createdAt?: string; updatedAt?: string };
 type EntraConfig = { clientId: string | null; redirectUri: string | null };
 type Booking = { id: string; deskId: string; userEmail: string; userDisplayName?: string; employeeId?: string; date: string; slot?: 'FULL_DAY' | 'MORNING' | 'AFTERNOON' | 'CUSTOM'; startTime?: string; endTime?: string; createdAt?: string; updatedAt?: string; bookedFor?: 'SELF' | 'GUEST'; guestName?: string | null; createdByUserId?: string; createdBy?: { id: string; displayName?: string | null; email: string }; user?: { id: string; displayName?: string | null; email: string } | null };
@@ -1385,6 +1385,7 @@ function EmployeesPage({ path, navigate, onRoleStateChanged, onLogout, currentAd
   const [creating, setCreating] = useState(hasCreateFlag(path));
   const [pendingDeactivate, setPendingDeactivate] = useState<Employee | null>(null);
   const [updatingRoleId, setUpdatingRoleId] = useState<string | null>(null);
+  const [refreshingProfileId, setRefreshingProfileId] = useState<string | null>(null);
 
   const load = async () => {
     setState((current) => ({ ...current, loading: true, error: '' }));
@@ -1402,6 +1403,19 @@ function EmployeesPage({ path, navigate, onRoleStateChanged, onLogout, currentAd
 
   const filtered = useMemo(() => employees.filter((employee) => `${employee.displayName} ${employee.email}`.toLowerCase().includes(query.toLowerCase())), [employees, query]);
 
+
+  const refreshEmployeeProfile = async (employee: Employee) => {
+    setRefreshingProfileId(employee.id);
+    try {
+      const updated = await post<Employee>(`/admin/employees/${employee.id}/refresh-profile`, {});
+      setEmployees((current) => current.map((row) => (row.id === employee.id ? updated : row)));
+      toasts.success('Entra-Profil aktualisiert');
+    } catch (err) {
+      toasts.error(err instanceof Error ? err.message : 'Entra-Profil konnte nicht aktualisiert werden');
+    } finally {
+      setRefreshingProfileId(null);
+    }
+  };
   const updateRole = async (employee: Employee, role: 'admin' | 'user') => {
     setUpdatingRoleId(employee.id);
     try {
@@ -1434,7 +1448,54 @@ function EmployeesPage({ path, navigate, onRoleStateChanged, onLogout, currentAd
           actions={<button className="btn" onClick={() => setCreating(true)}>Neu</button>}
         />
         {state.error && <ErrorState text={state.error} onRetry={load} />}
-        <div className="table-wrap"><table className="admin-table"><thead><tr><th className="avatar-col">Avatar</th><th>Name</th><th>E-Mail</th><th>Rolle</th><th>Status</th><th className="align-right">Aktionen</th></tr></thead>{state.loading && !state.ready ? <SkeletonRows columns={6} /> : <tbody>{filtered.map((employee) => <tr key={employee.id}><td className="avatar-col"><Avatar displayName={employee.displayName} email={employee.email} photoUrl={employee.photoUrl ?? undefined} size={24} /></td><td>{employee.displayName}</td><td className="truncate-cell" title={employee.email}>{employee.email}</td><td><select value={employee.role} disabled={updatingRoleId === employee.id} onChange={(event) => { const nextRole = event.target.value as 'admin' | 'user'; if (nextRole !== employee.role) void updateRole(employee, nextRole); }}><option value="user">User</option><option value="admin">Admin</option></select>{updatingRoleId === employee.id && <span className="muted"> ⏳</span>}</td><td>{employee.isActive ? <Badge tone="ok">aktiv</Badge> : <Badge tone="warn">deaktiviert</Badge>}</td><td className="align-right"><RowMenu items={[{ label: 'Bearbeiten', onSelect: () => setEditing(employee) }, { label: 'Löschen', onSelect: () => setPendingDeactivate(employee), danger: true }]} /></td></tr>)}</tbody>}</table></div>
+        <div className="table-wrap">
+          <table className="admin-table">
+            <thead>
+              <tr>
+                <th className="avatar-col">Avatar</th>
+                <th>Name</th>
+                <th>E-Mail</th>
+                <th>Rolle</th>
+                <th>Status</th>
+                <th className="align-right">Aktionen</th>
+              </tr>
+            </thead>
+            {state.loading && !state.ready ? <SkeletonRows columns={6} /> : (
+              <tbody>
+                {filtered.map((employee) => (
+                  <tr key={employee.id}>
+                    <td className="avatar-col"><Avatar displayName={employee.displayName} email={employee.email} photoUrl={employee.photoUrl ?? undefined} size={24} /></td>
+                    <td>{employee.displayName}</td>
+                    <td className="truncate-cell" title={employee.email}>{employee.email}</td>
+                    <td>
+                      <select value={employee.role} disabled={updatingRoleId === employee.id} onChange={(event) => { const nextRole = event.target.value as 'admin' | 'user'; if (nextRole !== employee.role) void updateRole(employee, nextRole); }}>
+                        <option value="user">User</option>
+                        <option value="admin">Admin</option>
+                      </select>
+                      {updatingRoleId === employee.id && <span className="muted"> ⏳</span>}
+                    </td>
+                    <td>{employee.isActive ? <Badge tone="ok">aktiv</Badge> : <Badge tone="warn">deaktiviert</Badge>}</td>
+                    <td className="align-right">
+                      <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                        <button
+                          type="button"
+                          className="btn btn-ghost"
+                          title="Entra-Profil aktualisieren"
+                          aria-label={`Entra-Profil für ${employee.displayName} aktualisieren`}
+                          disabled={refreshingProfileId === employee.id}
+                          onClick={() => { void refreshEmployeeProfile(employee); }}
+                        >
+                          ⟳
+                        </button>
+                        <RowMenu items={[{ label: 'Bearbeiten', onSelect: () => setEditing(employee) }, { label: 'Löschen', onSelect: () => setPendingDeactivate(employee), danger: true }]} />
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            )}
+          </table>
+        </div>
         {!state.loading && filtered.length === 0 && <EmptyState text="Keine Mitarbeitenden vorhanden." action={<button className="btn" onClick={() => setCreating(true)}>Neu anlegen</button>} />}
       </section>
       {(creating || editing) && <EmployeeEditor employee={editing} onClose={() => { setCreating(false); setEditing(null); navigate('/admin/employees'); }} onSaved={async () => { setCreating(false); setEditing(null); toasts.success('Mitarbeiter gespeichert'); await load(); await onRoleStateChanged(); }} onError={toasts.error} />}
