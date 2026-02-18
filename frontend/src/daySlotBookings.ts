@@ -4,6 +4,9 @@ type DaySlotBookingShape = {
   id?: string;
   employeeId?: string;
   userEmail?: string | null;
+  bookedFor?: 'SELF' | 'GUEST';
+  createdByEmployeeId?: string | null;
+  guestName?: string | null;
   daySlot?: 'AM' | 'PM' | 'FULL';
   slot?: 'FULL_DAY' | 'MORNING' | 'AFTERNOON' | 'CUSTOM';
 };
@@ -29,8 +32,13 @@ const normalizeSingleBookingDaySlot = <T extends DaySlotBookingShape>(booking: T
 export const normalizeDaySlotBookingsPerEntry = <T extends DaySlotBookingShape>(bookings: T[]): NormalizedDaySlotBooking<T>[] => bookings.map((booking) => normalizeSingleBookingDaySlot(booking));
 
 const getBookingIdentity = (booking: DaySlotBookingShape, fallbackIndex: number): string => {
-  if (booking.employeeId?.trim()) return `employee:${booking.employeeId.trim()}`;
-  if (booking.userEmail?.trim()) return `email:${booking.userEmail.trim().toLowerCase()}`;
+  if (booking.bookedFor === 'GUEST') {
+    if (booking.createdByEmployeeId?.trim()) return `guest-creator:${booking.createdByEmployeeId.trim()}`;
+    if (booking.guestName?.trim()) return `guest-name:${booking.guestName.trim().toLowerCase()}`;
+  }
+
+  if (booking.employeeId?.trim()) return `self-employee:${booking.employeeId.trim()}`;
+  if (booking.userEmail?.trim()) return `self-email:${booking.userEmail.trim().toLowerCase()}`;
   return `fallback:${booking.id ?? fallbackIndex}`;
 };
 

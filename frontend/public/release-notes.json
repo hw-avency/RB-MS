@@ -1,5 +1,17 @@
 [
   {
+    "version": "1.5.1",
+    "date": "2026-02-18",
+    "type": "bugfix",
+    "title": "Sichere Stornierung & Entra-Profil-Refresh im Admin",
+    "summary": "Stornierungen berücksichtigen jetzt sauber die Buchungszuordnung pro Person, und Admins können Profilbild/Telefon eines Mitarbeiters direkt aus Entra neu laden.",
+    "items": [
+      "Bei geteilten AM/PM-Belegungen wird nur noch die eigene Buchung zur Stornierung angeboten.",
+      "In der Admin-Mitarbeiterliste gibt es ein Refresh-Symbol pro Person, das Profilbild und Telefon aus Entra aktualisiert.",
+      "Nach dem Refresh werden die aktualisierten Profildaten sofort in der Liste angezeigt."
+    ]
+  },
+  {
     "version": "1.5.0",
     "date": "2026-02-18",
     "type": "feature",
