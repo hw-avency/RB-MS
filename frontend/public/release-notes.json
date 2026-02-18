@@ -1,5 +1,17 @@
 [
   {
+    "version": "1.5.3",
+    "date": "2026-02-18",
+    "type": "bugfix",
+    "title": "Profil-Refresh übernimmt jetzt Telefon, Name und E-Mail robuster aus Entra",
+    "summary": "Beim Aktualisieren von Entra-Profilen werden Telefonnummern zuverlässiger übernommen; fehlt die primäre Mail, wird automatisch die UPN-Adresse genutzt.",
+    "items": [
+      "Der Profil-Refresh liest jetzt mobile Telefonnummer und geschäftliche Telefonnummer aus Microsoft Graph und speichert die beste verfügbare Nummer.",
+      "Falls in Entra kein Feld \"mail\" gesetzt ist, wird automatisch \"userPrincipalName\" als E-Mail verwendet.",
+      "Bei eigenem Profil-Refresh wird ein vorhandenes Session-Graph-Token bevorzugt genutzt; ansonsten bleibt der bestehende Service-Token-Fallback aktiv."
+    ]
+  },
+  {
     "version": "1.5.2",
     "date": "2026-02-18",
     "type": "bugfix",
