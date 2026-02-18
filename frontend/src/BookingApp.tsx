@@ -697,6 +697,10 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
   const [bookedCalendarDays, setBookedCalendarDays] = useState<string[]>([]);
 
   useEffect(() => {
+    setParkingChargeMinutes((current) => Math.min(current, parkingStayMinutes));
+  }, [parkingStayMinutes]);
+
+  useEffect(() => {
     if (typeof window === 'undefined') return;
     const params = new URLSearchParams(window.location.search);
     params.set(OVERVIEW_QUERY_KEY, overviewView);
@@ -3105,9 +3109,33 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
               <button type="button" className="btn btn-ghost desk-popup-close" aria-label="Dialog schließen" onClick={closeParkingSmartDialog} disabled={isParkingSmartLoading}>✕</button>
             </div>
             <div className="desk-popup-body stack-xs">
-              <label className="field"><span>Startzeit</span><input type="time" min="00:00" max="23:30" step={1800} value={parkingSmartStartTime} onChange={(event) => setParkingSmartStartTime(event.target.value)} disabled={isParkingSmartLoading} /></label>
-              <label className="field"><span>Wie lange sind Sie da? (Minuten)</span><input type="number" min={60} step={30} value={parkingStayMinutes} onChange={(event) => setParkingStayMinutes(Math.max(60, Number(event.target.value) || 60))} disabled={isParkingSmartLoading} /></label>
-              <label className="field"><span>Müssen Sie laden? (Minuten)</span><input type="number" min={0} step={30} value={parkingChargeMinutes} onChange={(event) => setParkingChargeMinutes(Math.max(0, Math.min(parkingStayMinutes, Number(event.target.value) || 0)))} disabled={isParkingSmartLoading} /></label>
+              <label className="field"><span>Wann kommen sie an?</span><input type="time" min="00:00" max="23:30" step={1800} value={parkingSmartStartTime} onChange={(event) => setParkingSmartStartTime(event.target.value)} disabled={isParkingSmartLoading} /></label>
+              <label className="field">
+                <span>Wie lange sind Sie da? (Stunden)</span>
+                <select
+                  value={String(parkingStayMinutes / 60)}
+                  onChange={(event) => setParkingStayMinutes(Math.max(60, Number(event.target.value) * 60 || 60))}
+                  disabled={isParkingSmartLoading}
+                >
+                  {Array.from({ length: 8 }, (_, index) => {
+                    const hours = index + 1;
+                    return <option key={hours} value={hours}>{hours} {hours === 1 ? 'Stunde' : 'Stunden'}</option>;
+                  })}
+                </select>
+              </label>
+              <label className="field">
+                <span>Müssen Sie laden? (Stunden)</span>
+                <select
+                  value={String(parkingChargeMinutes / 60)}
+                  onChange={(event) => setParkingChargeMinutes(Math.min(parkingStayMinutes, Math.max(60, Number(event.target.value) * 60 || 60)))}
+                  disabled={isParkingSmartLoading}
+                >
+                  {Array.from({ length: 8 }, (_, index) => {
+                    const hours = index + 1;
+                    return <option key={hours} value={hours} disabled={hours * 60 > parkingStayMinutes}>{hours} {hours === 1 ? 'Stunde' : 'Stunden'}</option>;
+                  })}
+                </select>
+              </label>
               <button type="button" className="btn btn-outline" onClick={requestSmartParkingProposal} disabled={isParkingSmartLoading}>Parkplatz anfordern</button>
               {parkingSmartError && <p className="field-error">{parkingSmartError}</p>}
               {parkingSmartProposal && (
