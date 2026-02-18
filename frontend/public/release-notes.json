@@ -3,12 +3,12 @@
     "version": "1.5.20",
     "date": "2026-02-18",
     "type": "bugfix",
-    "title": "Smart-Parking-Formular mit Stunden-Auswahl",
-    "summary": "Das Formular für die intelligente Parkplatzzuweisung ist klarer beschriftet und nutzt jetzt Stunden-Dropdowns statt Minutenfeldern.",
+    "title": "Login-Protokolle klar nach Erfolg und Fehler getrennt",
+    "summary": "Login-Ereignisse werden jetzt mit passender Log-Stufe geschrieben: erfolgreiche Anmeldungen als Info, fehlgeschlagene als Warnung.",
     "items": [
-      "Die Startzeit-Frage heißt jetzt \"Wann kommen sie an?\".",
-      "Aufenthaltsdauer und Ladezeit werden als Dropdown mit 1 bis 8 Stunden gewählt.",
-      "Die Ladezeit wird automatisch auf die Aufenthaltsdauer begrenzt und kann diese nicht mehr überschreiten."
+      "Fehlgeschlagene Login-Versuche wegen unbekanntem oder inaktivem Nutzer werden jetzt als Warnung protokolliert.",
+      "Fehlgeschlagene Login-Versuche mit falschem Passwort werden jetzt ebenfalls als Warnung protokolliert.",
+      "Erfolgreiche Logins werden explizit als Info protokolliert, damit Monitoring und Filter sauber trennen können."
     ]
   },
   {
