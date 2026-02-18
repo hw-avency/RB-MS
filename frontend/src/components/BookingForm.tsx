@@ -64,6 +64,44 @@ const recurrenceIntervalUnitLabel = (patternType: BookingFormValues['recurrenceP
   return 'Jahr(e)';
 };
 
+const MIN_ROOM_BOOKING_DURATION_MINUTES = 60;
+
+const parseHHMMToMinutes = (value: string): number | null => {
+  const match = value.match(/^(\d{2}):(\d{2})$/);
+  if (!match) return null;
+  const hour = Number(match[1]);
+  const minute = Number(match[2]);
+  if (!Number.isInteger(hour) || !Number.isInteger(minute) || hour < 0 || hour > 23 || minute < 0 || minute > 59) return null;
+  return hour * 60 + minute;
+};
+
+const toHHMM = (totalMinutes: number): string => {
+  const clamped = Math.max(0, Math.min((24 * 60) - 1, totalMinutes));
+  const hour = Math.floor(clamped / 60);
+  const minute = clamped % 60;
+  return `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
+};
+
+const hasValidRoomDuration = (startTime: string, endTime: string): boolean => {
+  const startMinutes = parseHHMMToMinutes(startTime);
+  const endMinutes = parseHHMMToMinutes(endTime);
+  if (startMinutes === null || endMinutes === null) return false;
+  return (endMinutes - startMinutes) >= MIN_ROOM_BOOKING_DURATION_MINUTES;
+};
+
+const getRoomTimeError = (startTime: string, endTime: string): string | undefined => {
+  if (!startTime) return 'Startzeit ist erforderlich.';
+  if (!endTime) return 'Endzeit ist erforderlich.';
+
+  const startMinutes = parseHHMMToMinutes(startTime);
+  const endMinutes = parseHHMMToMinutes(endTime);
+  if (startMinutes === null || endMinutes === null) return 'Bitte Uhrzeit im Format HH:MM verwenden.';
+  if (endMinutes <= startMinutes) return 'Endzeit muss nach Startzeit liegen.';
+  if ((endMinutes - startMinutes) < MIN_ROOM_BOOKING_DURATION_MINUTES) return 'Mindestdauer: 60 Minuten.';
+
+  return undefined;
+};
+
 const calculateCountBasedEndDate = (values: BookingFormValues): string => {
   const count = Math.max(1, values.occurrenceCount);
   const interval = Math.max(1, values.recurrenceInterval);
@@ -160,9 +198,11 @@ export function BookingForm({ values, onChange, onSubmit, onCancel, isSubmitting
 
     if (values.type === 'single' && !values.date) nextErrors.date = 'Datum ist erforderlich.';
     if (values.type === 'single' && isRoom) {
-      if (!values.startTime) nextErrors.startTime = 'Startzeit ist erforderlich.';
-      if (!values.endTime) nextErrors.endTime = 'Endzeit ist erforderlich.';
-      if (values.startTime && values.endTime && values.startTime >= values.endTime) nextErrors.endTime = 'Endzeit muss nach Startzeit liegen.';
+      const timeError = getRoomTimeError(values.startTime, values.endTime);
+      if (timeError) {
+        if (!values.startTime) nextErrors.startTime = timeError;
+        else nextErrors.endTime = timeError;
+      }
     }
     if (values.type === 'single' && values.bookedFor === 'GUEST' && values.guestName.trim().length < 2) {
       nextErrors.guestName = 'Gastname ist erforderlich (mind. 2 Zeichen).';
@@ -180,9 +220,11 @@ export function BookingForm({ values, onChange, onSubmit, onCancel, isSubmitting
       if ((values.recurrencePatternType === 'MONTHLY' || values.recurrencePatternType === 'YEARLY') && (values.recurrenceMonthday < 1 || values.recurrenceMonthday > 31)) nextErrors.monthday = 'Tag muss zwischen 1 und 31 liegen.';
       if (values.recurrencePatternType === 'YEARLY' && (values.recurrenceYearMonth < 1 || values.recurrenceYearMonth > 12)) nextErrors.yearmonth = 'Monat muss zwischen 1 und 12 liegen.';
       if (isRoom) {
-        if (!values.startTime) nextErrors.startTime = 'Startzeit ist erforderlich.';
-        if (!values.endTime) nextErrors.endTime = 'Endzeit ist erforderlich.';
-        if (values.startTime && values.endTime && values.startTime >= values.endTime) nextErrors.endTime = 'Endzeit muss nach Startzeit liegen.';
+        const timeError = getRoomTimeError(values.startTime, values.endTime);
+        if (timeError) {
+          if (!values.startTime) nextErrors.startTime = timeError;
+          else nextErrors.endTime = timeError;
+        }
       }
       if (values.bookedFor === 'GUEST' && values.guestName.trim().length < 2) nextErrors.guestName = 'Gastname ist erforderlich (mind. 2 Zeichen).';
     }
@@ -236,6 +278,31 @@ export function BookingForm({ values, onChange, onSubmit, onCancel, isSubmitting
       : `bis ${effectiveRecurrenceEndDate || values.dateTo}`;
     return `${patternLabel}${weekdayLabel}, ${rangeLabel}`;
   }, [effectiveRecurrenceEndDate, values]);
+
+  const handleRoomStartTimeChange = (nextStartTime: string) => {
+    if (!isRoom) {
+      onChange({ ...values, startTime: nextStartTime });
+      return;
+    }
+
+    const startMinutes = parseHHMMToMinutes(nextStartTime);
+    const endMinutes = parseHHMMToMinutes(values.endTime);
+    if (startMinutes === null || endMinutes === null) {
+      onChange({ ...values, startTime: nextStartTime });
+      return;
+    }
+
+    if (endMinutes > startMinutes && hasValidRoomDuration(nextStartTime, values.endTime)) {
+      onChange({ ...values, startTime: nextStartTime });
+      return;
+    }
+
+    onChange({
+      ...values,
+      startTime: nextStartTime,
+      endTime: toHHMM(startMinutes + MIN_ROOM_BOOKING_DURATION_MINUTES)
+    });
+  };
 
   const toggleWeekday = (weekday: number) => {
     if (values.weekdays.includes(weekday)) {
@@ -426,13 +493,13 @@ export function BookingForm({ values, onChange, onSubmit, onCancel, isSubmitting
               <div className="split">
                 <div className="stack-xs">
                   <label htmlFor="booking-start-time">Von</label>
-                  <input id="booking-start-time" type="time" min="06:00" max="18:00" value={values.startTime} disabled={disabled} onChange={(event) => onChange({ ...values, startTime: event.target.value })} />
-                  {fieldErrors.startTime && <p className="field-error" role="alert">{fieldErrors.startTime}</p>}
+                  <input id="booking-start-time" type="time" min="06:00" max="18:00" value={values.startTime} disabled={disabled} onChange={(event) => handleRoomStartTimeChange(event.target.value)} />
+                  <p className="field-error field-error-slot" role={fieldErrors.startTime ? 'alert' : undefined} aria-live="polite">{fieldErrors.startTime ?? '\u00a0'}</p>
                 </div>
                 <div className="stack-xs">
                   <label htmlFor="booking-end-time">Bis</label>
                   <input id="booking-end-time" type="time" min="06:00" max="18:00" value={values.endTime} disabled={disabled} onChange={(event) => onChange({ ...values, endTime: event.target.value })} />
-                  {fieldErrors.endTime && <p className="field-error" role="alert">{fieldErrors.endTime}</p>}
+                  <p className="field-error field-error-slot" role={fieldErrors.endTime ? 'alert' : undefined} aria-live="polite">{fieldErrors.endTime ?? '\u00a0'}</p>
                 </div>
               </div>
               <p className="muted room-bookable-hours">Buchbare Zeit 06:00 - 18:00 Uhr</p>
@@ -464,8 +531,8 @@ export function BookingForm({ values, onChange, onSubmit, onCancel, isSubmitting
                 {isRoom ? (
                   <>
                     <div className="split">
-                      <div className="stack-xs"><label htmlFor="booking-recurring-start-time">Von</label><input id="booking-recurring-start-time" type="time" min="06:00" max="18:00" value={values.startTime} disabled={disabled} onChange={(event) => onChange({ ...values, startTime: event.target.value })} />{fieldErrors.startTime && <p className="field-error" role="alert">{fieldErrors.startTime}</p>}</div>
-                      <div className="stack-xs"><label htmlFor="booking-recurring-end-time">Bis</label><input id="booking-recurring-end-time" type="time" min="06:00" max="18:00" value={values.endTime} disabled={disabled} onChange={(event) => onChange({ ...values, endTime: event.target.value })} />{fieldErrors.endTime && <p className="field-error" role="alert">{fieldErrors.endTime}</p>}</div>
+                      <div className="stack-xs"><label htmlFor="booking-recurring-start-time">Von</label><input id="booking-recurring-start-time" type="time" min="06:00" max="18:00" value={values.startTime} disabled={disabled} onChange={(event) => handleRoomStartTimeChange(event.target.value)} /><p className="field-error field-error-slot" role={fieldErrors.startTime ? 'alert' : undefined} aria-live="polite">{fieldErrors.startTime ?? '\u00a0'}</p></div>
+                      <div className="stack-xs"><label htmlFor="booking-recurring-end-time">Bis</label><input id="booking-recurring-end-time" type="time" min="06:00" max="18:00" value={values.endTime} disabled={disabled} onChange={(event) => onChange({ ...values, endTime: event.target.value })} /><p className="field-error field-error-slot" role={fieldErrors.endTime ? 'alert' : undefined} aria-live="polite">{fieldErrors.endTime ?? '\u00a0'}</p></div>
                     </div>
                     <p className="muted room-bookable-hours">Buchbare Zeit 06:00 - 18:00 Uhr</p>
                   </>

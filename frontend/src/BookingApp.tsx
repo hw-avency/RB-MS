@@ -24,6 +24,8 @@ type Floorplan = { id: string; name: string; imageUrl: string; isDefault?: boole
 type RawFloorplan = Floorplan & { image?: string; imageURL?: string };
 type FloorplanResource = { id: string; floorplanId: string; kind?: ResourceKind; isBookableForMe?: boolean; tenantScope?: 'ALL' | 'SELECTED'; tenantIds?: string[] };
 type BookingActor = { id: string; displayName?: string | null; name?: string | null; email?: string | null };
+type OccupancyBookingEmployee = { id?: string; email: string; displayName: string; phone?: string | null; photoUrl?: string | null };
+
 type OccupancyBookingData = {
   id?: string;
   employeeId?: string;
@@ -32,6 +34,8 @@ type OccupancyBookingData = {
   userDisplayName?: string;
   userFirstName?: string;
   userPhotoUrl?: string;
+  userPhone?: string;
+  employee?: OccupancyBookingEmployee | null;
   bookedFor?: 'SELF' | 'GUEST';
   guestName?: string | null;
   createdBy?: BookingActor;
@@ -65,7 +69,7 @@ type OccupancyDesk = {
 };
 type OccupancyPerson = { email: string; displayName?: string; deskName?: string; deskId?: string };
 type OccupancyResponse = { date: string; floorplanId: string; desks: OccupancyDesk[]; people: OccupancyPerson[] };
-type BookingEmployee = { id: string; email: string; firstName?: string; displayName: string; photoUrl?: string };
+type BookingEmployee = { id: string; email: string; firstName?: string; displayName: string; phone?: string | null; photoUrl?: string };
 type OccupantForDay = { deskId: string; deskLabel: string; deskKindLabel: string; userId: string; name: string; firstName: string; email: string; employeeId?: string; photoUrl?: string };
 type BookingSubmitPayload = BookingFormSubmitPayload;
 type BookingMode = 'create' | 'manage';
@@ -312,6 +316,28 @@ const bookingSlotLabel = (booking?: OccupancyBooking | null): string => {
   return 'Ganztägig';
 };
 
+const isE164Phone = (phone: string): boolean => /^\+[1-9]\d{6,14}$/.test(phone.trim());
+
+const getDialablePhone = (phone?: string | null): string | null => {
+  if (!phone) return null;
+  const trimmed = phone.trim();
+  if (!trimmed) return null;
+  if (isE164Phone(trimmed)) return trimmed;
+
+  const compact = trimmed.replace(/[\s().-]/g, '');
+  if (/^\+?\d{6,15}$/.test(compact)) return compact.startsWith('+') ? compact : `+${compact}`;
+
+  return null;
+};
+
+const toTeamsCallUrl = (dialablePhone: string): string => `https://teams.microsoft.com/l/call/0/0?users=${encodeURIComponent(dialablePhone)}`;
+
+const callLabelForBooking = (booking: OccupancyBooking): string => {
+  if (booking.daySlot === 'AM' || booking.slot === 'MORNING') return 'Vormittags';
+  if (booking.daySlot === 'PM' || booking.slot === 'AFTERNOON') return 'Nachmittags';
+  return 'Ganztags';
+};
+
 const normalizeDeskBookings = (desk: OccupancyDesk): NormalizedOccupancyBooking[] => {
   const bookings = desk.bookings && desk.bookings.length > 0 ? desk.bookings : desk.booking ? [desk.booking] : [];
   if (desk.kind === 'RAUM') return normalizeDaySlotBookingsPerEntry(bookings);
@@ -454,7 +480,15 @@ const enrichDeskBookings = ({
       employeeId: booking.employeeId ?? employee?.id,
       userFirstName: booking.userFirstName ?? employee?.firstName ?? getFirstName({ displayName: booking.userDisplayName ?? employee?.displayName, email: booking.userEmail ?? undefined }),
       userDisplayName: booking.userDisplayName ?? employee?.displayName,
+      userPhone: booking.userPhone ?? employee?.phone ?? undefined,
       userPhotoUrl: bookingPhotoUrl ?? employeePhotoUrl ?? fallbackPhotoUrl,
+      employee: booking.employee ?? (booking.userEmail ? {
+        id: booking.employeeId ?? employee?.id,
+        email: booking.userEmail,
+        displayName: booking.userDisplayName ?? employee?.displayName ?? booking.userEmail,
+        phone: booking.userPhone ?? employee?.phone ?? null,
+        photoUrl: booking.userPhotoUrl ?? employee?.photoUrl ?? null
+      } : null),
       isCurrentUser
     };
   });
@@ -1270,6 +1304,27 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
   }, [currentUser?.role, meEmployeeId, popupDesk, popupDeskBookings]);
   const canCancelHere = Boolean(popupCancelableBooking);
   const popupOwnBookingIsRecurring = useMemo(() => popupDeskBookings.some((booking) => booking.isCurrentUser && (Boolean(booking.recurringBookingId) || Boolean(booking.recurringGroupId))), [popupDeskBookings]);
+  const popupForeignBookings = useMemo(() => popupDeskBookings.filter((booking) => !isMineBooking(booking, currentUser?.id)), [popupDeskBookings, currentUser?.id]);
+  const showForeignBookingInfoDialog = Boolean(
+    popupDesk
+    && !isRoomResource(popupDesk)
+    && popupDeskState !== 'UNBOOKABLE'
+    && popupDeskBookings.length > 0
+    && popupMyBookings.length === 0
+    && popupForeignBookings.length > 0
+  );
+
+  const handleCallPerson = useCallback((phone?: string | null) => {
+    const dialablePhone = getDialablePhone(phone);
+    if (!dialablePhone) return;
+
+    const teamsUrl = toTeamsCallUrl(dialablePhone);
+    const telUrl = `tel:${dialablePhone}`;
+    window.open(teamsUrl, '_blank', 'noopener,noreferrer');
+    window.setTimeout(() => {
+      window.location.href = telUrl;
+    }, 600);
+  }, []);
   const manageSlotConflict = useMemo(() => {
     if (!popupDesk || !popupMySelectedBooking || isRoomResource(popupDesk)) return '';
     const conflict = popupDeskBookings.find((booking) => {
@@ -2699,6 +2754,57 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
                     </button>
                   </footer>
                 )}
+              </div>
+            </>
+          ) : showForeignBookingInfoDialog ? (
+            <>
+              <div className="desk-popup-header">
+                <h3 id="booking-panel-title">{resourceKindLabel(popupDesk.kind)}: {popupDesk.name}</h3>
+                <button type="button" className="btn btn-ghost desk-popup-close" aria-label="Popover schließen" onClick={closeBookingFlow} disabled={isCancellingBooking}>✕</button>
+              </div>
+              <div className="desk-popup-body booking-details-panel">
+                <section className="booking-detail-card stack-xs">
+                  <h4>Belegt am ausgewählten Tag</h4>
+                  <p><span className="muted">Datum</span><strong>{new Date(`${selectedDate}T00:00:00.000Z`).toLocaleDateString('de-DE')}</strong></p>
+                  <p><span className="muted">Ressource</span><strong>{resourceKindLabel(popupDesk.kind)}: {popupDesk.name}</strong></p>
+                </section>
+
+                <section className="booking-info-cards">
+                  {popupForeignBookings.map((booking) => {
+                    const personName = booking.bookedFor === 'GUEST'
+                      ? `Gast: ${booking.guestName?.trim() || 'Unbekannt'}`
+                      : (booking.employee?.displayName ?? booking.userDisplayName ?? booking.userEmail ?? 'Unbekannt');
+                    const personEmail = booking.bookedFor === 'GUEST' ? undefined : (booking.employee?.email ?? booking.userEmail ?? undefined);
+                    const personPhone = booking.bookedFor === 'GUEST' ? null : (booking.employee?.phone ?? booking.userPhone ?? null);
+                    const dialablePhone = getDialablePhone(personPhone);
+                    const personPhotoUrl = booking.bookedFor === 'GUEST' ? undefined : (booking.employee?.photoUrl ?? booking.userPhotoUrl ?? undefined);
+
+                    return (
+                      <article key={booking.id ?? `${personEmail ?? personName}-${callLabelForBooking(booking)}`} className="booking-info-card stack-xs">
+                        <span className="booking-info-period">{callLabelForBooking(booking)}</span>
+                        <div className="booking-info-person">
+                          <Avatar
+                            displayName={personName}
+                            email={personEmail}
+                            photoUrl={personPhotoUrl}
+                            size={60}
+                          />
+                          <div className="stack-xxs booking-info-person-text">
+                            <strong>{personName}</strong>
+                            {personEmail && <span className="muted">{personEmail}</span>}
+                            <span className="muted">{personPhone ?? 'Kein Telefon hinterlegt'}</span>
+                          </div>
+                        </div>
+                        <p><span className="muted">Zeitraum</span><strong>{bookingSlotLabel(booking)}</strong></p>
+                        <button type="button" className="btn btn-outline booking-info-call-btn" onClick={() => handleCallPerson(personPhone)} disabled={!dialablePhone}>📞 Anrufen</button>
+                      </article>
+                    );
+                  })}
+                </section>
+
+                <footer className="desk-popup-footer-actions">
+                  <button type="button" className="btn btn-outline" onClick={closeBookingFlow} disabled={isCancellingBooking}>Schließen</button>
+                </footer>
               </div>
             </>
           ) : (

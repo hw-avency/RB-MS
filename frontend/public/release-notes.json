@@ -1,5 +1,18 @@
 [
   {
+    "version": "1.5.0",
+    "date": "2026-02-18",
+    "type": "feature",
+    "title": "Info-Dialog für belegte Tische mit Telefon & Teams-Anruf",
+    "summary": "Belegte Tische öffnen jetzt ein reines Info-Fenster mit Profilkarten, inkl. Telefonnummer aus Entra und direkter Anruf-Option.",
+    "items": [
+      "Beim Klick auf einen von anderen gebuchten Tisch erscheint ein Info-Dialog ohne Buchungsaktionen.",
+      "Bei geteilten Tages-Slots werden Vormittag und Nachmittag als getrennte Profilkarten nebeneinander angezeigt.",
+      "Profilkarten zeigen Name, E-Mail, Telefon und ein großes Bild sowie einen „Anrufen“-Button (Teams Deep Link mit Telefon-Fallback).",
+      "Die Uhrzeitvalidierung im Raumbuchungsdialog bleibt stabil und hält die Felder beim Tippen auf gleicher Position."
+    ]
+  },
+  {
     "version": "1.4.3",
     "date": "2026-02-18",
     "type": "bugfix",

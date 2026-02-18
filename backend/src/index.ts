@@ -549,6 +549,7 @@ const toISODateOnly = (value: Date): string => value.toISOString().slice(0, 10);
 const BERLIN_TIME_ZONE = 'Europe/Berlin';
 const ROOM_WORK_START_MINUTE = 7 * 60;
 const ROOM_WORK_END_MINUTE = 18 * 60;
+const ROOM_MIN_BOOKING_DURATION_MINUTES = 60;
 
 const getTimeZoneOffsetMs = (date: Date, timeZone: string): number => {
   const formatter = new Intl.DateTimeFormat('en-US', {
@@ -744,6 +745,9 @@ const resolveBookingWindow = ({ deskKind, daySlot, slot, startTime, endTime }: {
     }
     if (startMinute >= endMinute) {
       return { ok: false, message: 'endTime muss nach startTime liegen.' };
+    }
+    if ((endMinute - startMinute) < ROOM_MIN_BOOKING_DURATION_MINUTES) {
+      return { ok: false, message: 'Die Mindestdauer für Raumbuchungen beträgt 60 Minuten.' };
     }
     return { ok: true, value: { mode: 'time', startMinute, endMinute } };
   }
@@ -1213,6 +1217,71 @@ const syncEmployeePhotoWithAppToken = async (employee: { id: string; entraOid: s
   }
 };
 
+type GraphContactPayload = { mobilePhone?: string | null; businessPhones?: string[] };
+
+const normalizePhoneValue = (value: string | null | undefined): string | null => {
+  if (typeof value !== 'string') return null;
+  const normalized = value.trim();
+  return normalized.length > 0 ? normalized : null;
+};
+
+const chooseGraphPhone = (payload: GraphContactPayload): string | null => {
+  const mobilePhone = normalizePhoneValue(payload.mobilePhone);
+  if (mobilePhone) return mobilePhone;
+
+  if (Array.isArray(payload.businessPhones)) {
+    for (const candidate of payload.businessPhones) {
+      const normalized = normalizePhoneValue(candidate);
+      if (normalized) return normalized;
+    }
+  }
+
+  return null;
+};
+
+const saveEmployeePhone = async (employeeId: string, phone: string | null) => {
+  const existing = await prisma.employee.findUnique({ where: { id: employeeId }, select: { phone: true } });
+  if (!existing || existing.phone === phone) return;
+  await prisma.employee.update({ where: { id: employeeId }, data: { phone } });
+};
+
+const syncEmployeePhoneFromGraph = async (employeeId: string, graphAccessToken: string) => {
+  try {
+    const response = await fetch('https://graph.microsoft.com/v1.0/me?$select=mobilePhone,businessPhones', {
+      headers: { authorization: `Bearer ${graphAccessToken}` }
+    });
+
+    if (!response.ok) return;
+    const payload = await response.json() as GraphContactPayload;
+    await saveEmployeePhone(employeeId, chooseGraphPhone(payload));
+  } catch {
+    return;
+  }
+};
+
+const syncEmployeePhoneWithAppToken = async (employee: { id: string; entraOid: string | null; email: string; entraTenantId?: string | null }) => {
+  const resolvedTenantId = normalizeEntraTenantId(employee.entraTenantId) ?? normalizeEntraTenantId(ENTRA_TENANT_ID);
+  if (!resolvedTenantId) return;
+
+  const appAccessToken = await getGraphAppAccessToken(resolvedTenantId);
+  if (!appAccessToken) return;
+
+  const graphUserIdentifier = employee.entraOid ?? employee.email;
+
+  try {
+    const encodedUserId = encodeURIComponent(graphUserIdentifier);
+    const response = await fetch(`https://graph.microsoft.com/v1.0/users/${encodedUserId}?$select=mobilePhone,businessPhones`, {
+      headers: { authorization: `Bearer ${appAccessToken}` }
+    });
+
+    if (!response.ok) return;
+    const payload = await response.json() as GraphContactPayload;
+    await saveEmployeePhone(employee.id, chooseGraphPhone(payload));
+  } catch {
+    return;
+  }
+};
+
 const isValidEmailInput = (value: string): boolean => value.includes('@');
 
 const isValidEmployeeRole = (value: string): value is EmployeeRole => value === 'admin' || value === 'user';
@@ -1223,6 +1292,7 @@ const employeeSelect = {
   displayName: true,
   role: true,
   isActive: true,
+  phone: true,
   photoUrl: true,
   photoUpdatedAt: true
 } satisfies Prisma.EmployeeSelect;
@@ -1239,7 +1309,7 @@ const toEmployeeResponse = <T extends { id: string; photoUrl: string | null; pho
 
 const getActiveEmployeesByEmail = async (emails: string[]) => {
   if (emails.length === 0) {
-    return new Map<string, { id: string; displayName: string; photoUrl: string | null }>();
+    return new Map<string, { id: string; email: string; displayName: string; phone: string | null; photoUrl: string | null }>();
   }
 
   const uniqueEmails = Array.from(new Set(emails.map((email) => normalizeEmail(email))));
@@ -1252,12 +1322,13 @@ const getActiveEmployeesByEmail = async (emails: string[]) => {
       id: true,
       email: true,
       displayName: true,
+      phone: true,
       photoUrl: true,
       photoUpdatedAt: true
     }
   });
 
-  return new Map(employees.map((employee) => [employee.email, { id: employee.id, displayName: employee.displayName, photoUrl: resolveEmployeePhotoUrl(employee) }]));
+  return new Map(employees.map((employee) => [employee.email, { id: employee.id, email: employee.email, displayName: employee.displayName, phone: employee.phone, photoUrl: resolveEmployeePhotoUrl(employee) }]));
 };
 
 const getDeskContext = async (deskId: string) => prisma.desk.findUnique({
@@ -1545,9 +1616,15 @@ app.get('/auth/entra/callback', async (req, res) => {
 
     const user = await upsertEmployeeFromEntraLogin({ oid, tid: normalizedTid, email, name });
     if (tokenPayload.access_token) {
-      await syncEmployeePhotoFromGraph(user.employeeId, tokenPayload.access_token);
+      await Promise.all([
+        syncEmployeePhotoFromGraph(user.employeeId, tokenPayload.access_token),
+        syncEmployeePhoneFromGraph(user.employeeId, tokenPayload.access_token)
+      ]);
     } else {
-      await syncEmployeePhotoWithAppToken({ id: user.employeeId, entraOid: oid, email, entraTenantId: normalizedTid });
+      await Promise.all([
+        syncEmployeePhotoWithAppToken({ id: user.employeeId, entraOid: oid, email, entraTenantId: normalizedTid }),
+        syncEmployeePhoneWithAppToken({ id: user.employeeId, entraOid: oid, email, entraTenantId: normalizedTid })
+      ]);
     }
     const session = await createSession({ employeeId: user.employeeId }, {
       graphAccessToken: tokenPayload.access_token,
@@ -1602,7 +1679,10 @@ app.post('/auth/login', async (req, res) => {
       select: { id: true, email: true, entraOid: true, entraTenantId: true }
     });
     if (employee) {
-      await syncEmployeePhotoWithAppToken(employee);
+      await Promise.all([
+        syncEmployeePhotoWithAppToken(employee),
+        syncEmployeePhoneWithAppToken(employee)
+      ]);
       await prisma.employee.update({
         where: { id: employee.id },
         data: { lastLoginAt: new Date() }
@@ -1874,6 +1954,7 @@ app.get('/employees', async (_req, res) => {
       id: true,
       email: true,
       displayName: true,
+      phone: true,
       photoUrl: true,
       photoUpdatedAt: true
     },
@@ -1962,7 +2043,10 @@ app.post('/admin/employees', requireAdmin, async (req, res) => {
       return { id: createdEmployee.id, email: normalizedEmail, entraOid: null, entraTenantId: tenant?.entraTenantId ?? null };
     });
 
-    await syncEmployeePhotoWithAppToken(employee);
+    await Promise.all([
+      syncEmployeePhotoWithAppToken(employee),
+      syncEmployeePhoneWithAppToken(employee)
+    ]);
 
     const createdEmployee = await prisma.employee.findUnique({ where: { id: employee.id }, select: employeeSelect });
     if (!createdEmployee) {
@@ -3348,28 +3432,43 @@ app.get('/occupancy', async (req, res) => {
 
   const occupancyDesks = visibleDesks.map((desk) => {
     const deskBookings = bookingsByDeskId.get(desk.id) ?? [];
-    const normalizedBookings = deskBookings.map((booking) => ({
-      id: booking.id,
-      userEmail: booking.userEmail,
-      bookedFor: booking.bookedFor,
-      guestName: booking.guestName,
-      recurringBookingId: booking.recurringBookingId,
-      recurringGroupId: booking.recurringGroupId,
-      createdBy: booking.createdByEmployee,
-      createdByUserId: booking.createdByEmployeeId,
-      createdByEmployeeId: booking.createdByEmployeeId,
-      creatorUnknown: booking.creatorUnknown,
-      employeeId: booking.employeeId ?? (booking.userEmail ? employeesByEmail.get(normalizeEmail(booking.userEmail))?.id : undefined),
-      userDisplayName: booking.userEmail ? employeesByEmail.get(normalizeEmail(booking.userEmail))?.displayName : undefined,
-      userPhotoUrl: booking.userEmail ? (employeesByEmail.get(normalizeEmail(booking.userEmail))?.photoUrl ?? undefined) : undefined,
-      deskName: desk.name,
-      deskId: desk.id,
-      type: recurringOccurrenceKeys.has(`${booking.deskId}|${toISODateOnly(booking.date)}|${booking.createdByEmployeeId}`) ? 'recurring' as const : 'single' as const,
-      daySlot: booking.daySlot ?? bookingSlotToDaySlot(booking.slot),
-      slot: booking.slot,
-      startTime: minuteToHHMM(booking.startMinute ?? (booking.startTime ? booking.startTime.getUTCHours() * 60 + booking.startTime.getUTCMinutes() : null)),
-      endTime: minuteToHHMM(booking.endMinute ?? (booking.endTime ? booking.endTime.getUTCHours() * 60 + booking.endTime.getUTCMinutes() : null))
-    }));
+    const normalizedBookings = deskBookings.map((booking) => {
+      const employee = booking.userEmail ? employeesByEmail.get(normalizeEmail(booking.userEmail)) : undefined;
+      const employeeData = booking.bookedFor === 'SELF' && booking.userEmail
+        ? {
+          id: booking.employeeId ?? employee?.id,
+          email: booking.userEmail,
+          displayName: employee?.displayName ?? booking.userEmail,
+          phone: employee?.phone ?? null,
+          photoUrl: employee?.photoUrl ?? null
+        }
+        : null;
+
+      return {
+        id: booking.id,
+        userEmail: booking.userEmail,
+        bookedFor: booking.bookedFor,
+        guestName: booking.guestName,
+        recurringBookingId: booking.recurringBookingId,
+        recurringGroupId: booking.recurringGroupId,
+        createdBy: booking.createdByEmployee,
+        createdByUserId: booking.createdByEmployeeId,
+        createdByEmployeeId: booking.createdByEmployeeId,
+        creatorUnknown: booking.creatorUnknown,
+        employeeId: booking.employeeId ?? employee?.id,
+        userDisplayName: booking.userEmail ? employee?.displayName : undefined,
+        userPhone: booking.userEmail ? (employee?.phone ?? undefined) : undefined,
+        userPhotoUrl: booking.userEmail ? (employee?.photoUrl ?? undefined) : undefined,
+        employee: employeeData,
+        deskName: desk.name,
+        deskId: desk.id,
+        type: recurringOccurrenceKeys.has(`${booking.deskId}|${toISODateOnly(booking.date)}|${booking.createdByEmployeeId}`) ? 'recurring' as const : 'single' as const,
+        daySlot: booking.daySlot ?? bookingSlotToDaySlot(booking.slot),
+        slot: booking.slot,
+        startTime: minuteToHHMM(booking.startMinute ?? (booking.startTime ? booking.startTime.getUTCHours() * 60 + booking.startTime.getUTCMinutes() : null)),
+        endTime: minuteToHHMM(booking.endMinute ?? (booking.endTime ? booking.endTime.getUTCHours() * 60 + booking.endTime.getUTCMinutes() : null))
+      };
+    });
 
     const primaryBooking = normalizedBookings[0] ?? null;
     return {
@@ -3548,6 +3647,7 @@ const recurringToWindow = (recurring: { period: DaySlot | null; startTime: strin
     const startMinute = parseTimeToMinute(recurring.startTime);
     const endMinute = parseTimeToMinute(recurring.endTime);
     if (startMinute === null || endMinute === null || endMinute <= startMinute) return null;
+    if ((endMinute - startMinute) < ROOM_MIN_BOOKING_DURATION_MINUTES) return null;
     return { mode: 'time', startMinute, endMinute };
   }
 
@@ -3814,8 +3914,14 @@ app.post('/recurring-bookings', async (req, res) => {
       res.status(400).json({ error: 'validation', message: 'period must be null for room recurrences' });
       return;
     }
-    if (!startTime || !endTime || parseTimeToMinute(startTime) === null || parseTimeToMinute(endTime) === null || parseTimeToMinute(endTime)! <= parseTimeToMinute(startTime)!) {
-      res.status(400).json({ error: 'validation', message: 'startTime and endTime are required for room recurrences' });
+    const recurrenceStartMinute = startTime ? parseTimeToMinute(startTime) : null;
+    const recurrenceEndMinute = endTime ? parseTimeToMinute(endTime) : null;
+    if (!startTime || !endTime || recurrenceStartMinute === null || recurrenceEndMinute === null || recurrenceEndMinute <= recurrenceStartMinute) {
+      res.status(400).json({ error: 'validation', message: 'startTime und endTime sind erforderlich und endTime muss nach startTime liegen.' });
+      return;
+    }
+    if ((recurrenceEndMinute - recurrenceStartMinute) < ROOM_MIN_BOOKING_DURATION_MINUTES) {
+      res.status(400).json({ error: 'validation', message: 'Die Mindestdauer für Raumbuchungen beträgt 60 Minuten.' });
       return;
     }
   } else {

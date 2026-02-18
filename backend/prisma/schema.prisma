@@ -50,6 +50,7 @@ model Employee {
   id          String    @id @default(cuid())
   email       String    @unique
   displayName String
+  phone       String?
   role        String    @default("user")
   isActive    Boolean   @default(true)
   entraOid    String?   @unique
