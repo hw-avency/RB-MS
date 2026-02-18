@@ -3,12 +3,12 @@
     "version": "1.5.21",
     "date": "2026-02-18",
     "type": "bugfix",
-    "title": "Entra-Logins erscheinen jetzt im Admin-Log",
-    "summary": "Das Admin-Log zeigt jetzt auch erfolgreiche und fehlgeschlagene Entra-Useranmeldungen mit klaren Fehlergründen.",
+    "title": "Parkplätze berücksichtigen Zeitfenster wieder korrekt",
+    "summary": "Parkplatz-Buchungen mit Uhrzeiten blockieren nicht mehr den ganzen Tag. In Detailkarten wird der gebuchte Zeitraum jetzt als Uhrzeit statt „Ganztags“ gezeigt.",
     "items": [
-      "Beim Entra-Login werden fehlende Callback-Parameter, Token-Austausch-Fehler und fehlende Claims jetzt als Warnung protokolliert.",
-      "Nicht erlaubte Tenants werden explizit als fehlgeschlagener Login mit Tenant-Hinweis geloggt.",
-      "Erfolgreiche Entra-Logins werden als Info mit Mitarbeiter- und Tenant-Bezug im Admin-Log erfasst."
+      "Zeitbasierte Parkplatz-Buchungen zeigen in den Karten nun den echten Zeitraum (z. B. 09:00–11:00).",
+      "Beim Öffnen belegter Parkplätze wird der Zeitraum konsistent als Uhrzeit dargestellt – wie bei Zeitfenstern in Räumen.",
+      "Parkplätze bleiben trotz bestehender Teilzeit-Buchung weiter buchbar, sodass zusätzliche freie Zeitfenster genutzt werden können."
     ]
   },
   {
