@@ -1954,6 +1954,37 @@ app.get('/admin/employees', requireAdmin, async (_req, res) => {
   res.status(200).json(employees.map((employee) => toEmployeeResponse(employee)));
 });
 
+app.post('/admin/employees/:id/refresh-profile', requireAdmin, async (req, res) => {
+  const id = getRouteId(req.params.id);
+  if (!id) {
+    res.status(400).json({ error: 'validation', message: 'id is required' });
+    return;
+  }
+
+  const employee = await prisma.employee.findUnique({
+    where: { id },
+    select: { id: true, email: true, entraOid: true, entraTenantId: true }
+  });
+
+  if (!employee) {
+    res.status(404).json({ error: 'not_found', message: 'Employee not found' });
+    return;
+  }
+
+  await Promise.all([
+    syncEmployeePhotoWithAppToken(employee),
+    syncEmployeePhoneWithAppToken(employee)
+  ]);
+
+  const updated = await prisma.employee.findUnique({ where: { id }, select: employeeSelect });
+  if (!updated) {
+    res.status(500).json({ error: 'server_error', message: 'Employee could not be loaded after profile refresh' });
+    return;
+  }
+
+  res.status(200).json(toEmployeeResponse(updated));
+});
+
 app.get('/employees', async (_req, res) => {
   const employees = await prisma.employee.findMany({
     where: { isActive: true },
