@@ -7,6 +7,25 @@ test('parking time conflicts treat touching end/start as non-overlap', () => {
   assert.equal(windowsOverlap({ startMinute: 8 * 60, endMinute: 10 * 60 }, { startMinute: 9 * 60 + 59, endMinute: 12 * 60 }), true);
 });
 
+
+
+test('when no charging is needed it prefers a regular spot over a charger', () => {
+  const proposal = buildParkingAssignmentProposal({
+    startMinute: 8 * 60,
+    attendanceMinutes: 8 * 60,
+    chargingMinutes: 0,
+    spots: [
+      { id: 'charger-1', hasCharger: true },
+      { id: 'regular-1', hasCharger: false }
+    ],
+    bookings: []
+  });
+
+  assert.equal(proposal.type, 'single');
+  if (proposal.type !== 'single') return;
+  assert.equal(proposal.bookings[0]?.deskId, 'regular-1');
+  assert.equal(proposal.bookings[0]?.hasCharger, false);
+});
 test('split assignment uses charger only for charging window', () => {
   const proposal = buildParkingAssignmentProposal({
     startMinute: 8 * 60,
