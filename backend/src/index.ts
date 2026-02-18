@@ -1361,6 +1361,31 @@ type GraphPhoneSyncResult = {
   graphReturnedPhone: boolean;
   reasonIfEmpty: PhoneSyncReasonIfEmpty | null;
   dbWriteSucceeded: boolean;
+  httpStatus: number | null;
+  graphErrorCode: string | null;
+  graphErrorMessage: string | null;
+  needsGraphAppPermissions: boolean;
+};
+
+const DEFAULT_GRAPH_SYNC_RESULT = (source: PhoneSyncSource): GraphPhoneSyncResult => ({
+  graphCallSucceeded: false,
+  source,
+  mobilePhonePresent: false,
+  businessPhonesCount: 0,
+  graphReturnedPhone: false,
+  reasonIfEmpty: 'unknown',
+  dbWriteSucceeded: false,
+  httpStatus: null,
+  graphErrorCode: null,
+  graphErrorMessage: null,
+  needsGraphAppPermissions: false
+});
+
+const trimGraphErrorMessage = (value: unknown): string | null => {
+  if (typeof value !== 'string') return null;
+  const normalized = value.trim();
+  if (!normalized) return null;
+  return normalized.slice(0, 220);
 };
 
 const getBusinessPhonesCount = (payload: GraphProfilePayload): number => {
@@ -1429,17 +1454,29 @@ const saveEmployeeGraphProfile = async (employeeId: string, payload: GraphProfil
   }
 };
 
-const readGraphProfile = async (url: string, accessToken: string): Promise<{ ok: boolean; status: number; payload: GraphProfilePayload | null }> => {
+const readGraphProfile = async (url: string, accessToken: string): Promise<{ ok: boolean; status: number; payload: GraphProfilePayload | null; graphErrorCode: string | null; graphErrorMessage: string | null }> => {
   const response = await fetch(url, {
     headers: { authorization: `Bearer ${accessToken}` }
   });
 
   if (!response.ok) {
-    return { ok: false, status: response.status, payload: null };
+    let graphErrorCode: string | null = null;
+    let graphErrorMessage: string | null = null;
+
+    const contentType = response.headers.get('content-type') ?? '';
+    if (contentType.includes('application/json')) {
+      const body = await response.json() as { error?: { code?: unknown; message?: unknown } };
+      graphErrorCode = typeof body?.error?.code === 'string' ? body.error.code : null;
+      graphErrorMessage = trimGraphErrorMessage(body?.error?.message);
+    } else {
+      graphErrorMessage = trimGraphErrorMessage(await response.text());
+    }
+
+    return { ok: false, status: response.status, payload: null, graphErrorCode, graphErrorMessage };
   }
 
   const payload = await response.json() as GraphProfilePayload;
-  return { ok: true, status: response.status, payload };
+  return { ok: true, status: response.status, payload, graphErrorCode: null, graphErrorMessage: null };
 };
 
 const GRAPH_ME_PROFILE_SELECT = 'displayName,mail,userPrincipalName,mobilePhone,businessPhones';
@@ -1462,7 +1499,12 @@ const syncEmployeePhoneFromGraph = async (employeeId: string, graphAccessToken: 
   try {
     const graphResult = await readGraphProfile(`https://graph.microsoft.com/v1.0/me?$select=${encodeURIComponent(GRAPH_ME_PROFILE_SELECT)}`, graphAccessToken);
     if (!graphResult.ok || !graphResult.payload) {
-      return { graphCallSucceeded: false, source: 'me', mobilePhonePresent: false, businessPhonesCount: 0, graphReturnedPhone: false, reasonIfEmpty: 'unknown', dbWriteSucceeded: false };
+      return {
+        ...DEFAULT_GRAPH_SYNC_RESULT('me'),
+        httpStatus: graphResult.status,
+        graphErrorCode: graphResult.graphErrorCode,
+        graphErrorMessage: graphResult.graphErrorMessage
+      };
     }
 
     const result = await saveEmployeeGraphProfile(employeeId, graphResult.payload);
@@ -1480,27 +1522,45 @@ const syncEmployeePhoneFromGraph = async (employeeId: string, graphAccessToken: 
         persistedPhone: result.persistedPhone,
         dbWriteSucceeded: result.dbWriteSucceeded
       }),
-      dbWriteSucceeded: result.dbWriteSucceeded
+      dbWriteSucceeded: result.dbWriteSucceeded,
+      httpStatus: graphResult.status,
+      graphErrorCode: null,
+      graphErrorMessage: null,
+      needsGraphAppPermissions: false
     };
   } catch {
-    return { graphCallSucceeded: false, source: 'me', mobilePhonePresent: false, businessPhonesCount: 0, graphReturnedPhone: false, reasonIfEmpty: 'unknown', dbWriteSucceeded: false };
+    return DEFAULT_GRAPH_SYNC_RESULT('me');
   }
 };
 
 const syncEmployeePhoneWithAppToken = async (employee: { id: string; entraOid: string | null; email: string; entraTenantId?: string | null }): Promise<GraphPhoneSyncResult> => {
   const resolvedTenantId = normalizeEntraTenantId(employee.entraTenantId) ?? normalizeEntraTenantId(ENTRA_TENANT_ID);
-  if (!resolvedTenantId) return { graphCallSucceeded: false, source: 'users', mobilePhonePresent: false, businessPhonesCount: 0, graphReturnedPhone: false, reasonIfEmpty: 'unknown', dbWriteSucceeded: false };
+  if (!resolvedTenantId) return DEFAULT_GRAPH_SYNC_RESULT('users');
+
+  const normalizedEmployeeEmail = employee.email.trim();
+  const graphUserIdentifier = employee.entraOid ?? (normalizedEmployeeEmail.length > 0 ? normalizedEmployeeEmail : null);
+  if (!graphUserIdentifier) {
+    return {
+      ...DEFAULT_GRAPH_SYNC_RESULT('users'),
+      graphErrorCode: 'EMPLOYEE_NOT_LINKED',
+      graphErrorMessage: 'Mitarbeiter nicht mit Entra verknüpft.'
+    };
+  }
 
   const appAccessToken = await getGraphAppAccessToken(resolvedTenantId);
-  if (!appAccessToken) return { graphCallSucceeded: false, source: 'users', mobilePhonePresent: false, businessPhonesCount: 0, graphReturnedPhone: false, reasonIfEmpty: 'unknown', dbWriteSucceeded: false };
-
-  const graphUserIdentifier = employee.entraOid ?? employee.email;
+  if (!appAccessToken) return DEFAULT_GRAPH_SYNC_RESULT('users');
 
   try {
     const encodedUserId = encodeURIComponent(graphUserIdentifier);
     const graphResult = await readGraphProfile(`https://graph.microsoft.com/v1.0/users/${encodedUserId}?$select=${encodeURIComponent(GRAPH_ME_PROFILE_SELECT)}`, appAccessToken);
     if (!graphResult.ok || !graphResult.payload) {
-      return { graphCallSucceeded: false, source: 'users', mobilePhonePresent: false, businessPhonesCount: 0, graphReturnedPhone: false, reasonIfEmpty: 'unknown', dbWriteSucceeded: false };
+      return {
+        ...DEFAULT_GRAPH_SYNC_RESULT('users'),
+        httpStatus: graphResult.status,
+        graphErrorCode: graphResult.graphErrorCode,
+        graphErrorMessage: graphResult.graphErrorMessage,
+        needsGraphAppPermissions: graphResult.status === 401 || graphResult.status === 403
+      };
     }
 
     const result = await saveEmployeeGraphProfile(employee.id, graphResult.payload);
@@ -1518,10 +1578,14 @@ const syncEmployeePhoneWithAppToken = async (employee: { id: string; entraOid: s
         persistedPhone: result.persistedPhone,
         dbWriteSucceeded: result.dbWriteSucceeded
       }),
-      dbWriteSucceeded: result.dbWriteSucceeded
+      dbWriteSucceeded: result.dbWriteSucceeded,
+      httpStatus: graphResult.status,
+      graphErrorCode: null,
+      graphErrorMessage: null,
+      needsGraphAppPermissions: false
     };
   } catch {
-    return { graphCallSucceeded: false, source: 'users', mobilePhonePresent: false, businessPhonesCount: 0, graphReturnedPhone: false, reasonIfEmpty: 'unknown', dbWriteSucceeded: false };
+    return DEFAULT_GRAPH_SYNC_RESULT('users');
   }
 };
 
@@ -2249,15 +2313,17 @@ app.post('/admin/employees/:id/refresh-profile', requireAdmin, async (req, res) 
   const hasValidSessionGraphToken = Boolean(sessionToken && sessionTokenExpiresAt && sessionTokenExpiresAt.getTime() > Date.now());
 
   const refreshMode = isSelfRefresh && hasValidSessionGraphToken && sessionToken ? 'delegated_me' : 'app_users';
-  let phoneSyncResult: GraphPhoneSyncResult = {
-    graphCallSucceeded: false,
-    source: refreshMode === 'delegated_me' ? 'me' : 'users',
-    mobilePhonePresent: false,
-    businessPhonesCount: 0,
-    graphReturnedPhone: false,
-    reasonIfEmpty: 'unknown',
-    dbWriteSucceeded: false
-  };
+  let phoneSyncResult: GraphPhoneSyncResult = DEFAULT_GRAPH_SYNC_RESULT(refreshMode === 'delegated_me' ? 'me' : 'users');
+
+  const canUseAppUsersIdentifier = Boolean(employee.entraOid || employee.email.trim());
+  if (refreshMode === 'app_users' && !canUseAppUsersIdentifier) {
+    res.status(400).json({
+      error: 'entra_not_linked',
+      message: 'Mitarbeiter nicht mit Entra verknüpft',
+      needsEntraLink: true
+    });
+    return;
+  }
 
   if (refreshMode === 'delegated_me' && sessionToken) {
     const [, phoneResult] = await Promise.all([
@@ -2271,6 +2337,14 @@ app.post('/admin/employees/:id/refresh-profile', requireAdmin, async (req, res) 
       syncEmployeePhoneWithAppToken(employee)
     ]);
     phoneSyncResult = phoneResult;
+
+    if (!phoneSyncResult.graphCallSucceeded && phoneSyncResult.needsGraphAppPermissions && isSelfRefresh && hasValidSessionGraphToken && sessionToken) {
+      const [, fallbackPhoneResult] = await Promise.all([
+        syncEmployeePhotoFromGraph(employee.id, sessionToken),
+        syncEmployeePhoneFromGraph(employee.id, sessionToken)
+      ]);
+      phoneSyncResult = fallbackPhoneResult;
+    }
   }
 
   console.info('EMPLOYEE_PROFILE_REFRESH_GRAPH', {
@@ -2283,8 +2357,31 @@ app.post('/admin/employees/:id/refresh-profile', requireAdmin, async (req, res) 
     businessPhonesCount: phoneSyncResult.businessPhonesCount,
     graphReturnedPhone: phoneSyncResult.graphReturnedPhone,
     reasonIfEmpty: phoneSyncResult.reasonIfEmpty,
-    dbWriteSucceeded: phoneSyncResult.dbWriteSucceeded
+    dbWriteSucceeded: phoneSyncResult.dbWriteSucceeded,
+    httpStatus: phoneSyncResult.httpStatus,
+    graphErrorCode: phoneSyncResult.graphErrorCode,
+    graphErrorMessage: phoneSyncResult.graphErrorMessage,
+    needsGraphAppPermissions: phoneSyncResult.needsGraphAppPermissions
   });
+
+  if (!phoneSyncResult.graphCallSucceeded && phoneSyncResult.source === 'users' && phoneSyncResult.needsGraphAppPermissions) {
+    res.status(403).json({
+      error: 'graph_permissions_required',
+      message: 'Refresh fehlgeschlagen: Microsoft Graph Berechtigung fehlt (Admin Consent erforderlich).',
+      needsGraphAppPermissions: true,
+      phoneSyncInfo: {
+        graphReturnedPhone: false,
+        source: phoneSyncResult.source,
+        reasonIfEmpty: phoneSyncResult.reasonIfEmpty,
+        dbWriteSucceeded: phoneSyncResult.dbWriteSucceeded,
+        graphCallSucceeded: phoneSyncResult.graphCallSucceeded,
+        httpStatus: phoneSyncResult.httpStatus,
+        graphErrorCode: phoneSyncResult.graphErrorCode,
+        graphErrorMessage: phoneSyncResult.graphErrorMessage
+      }
+    });
+    return;
+  }
 
   const updated = await prisma.employee.findUnique({ where: { id }, select: employeeSelect });
   if (!updated) {
@@ -2298,7 +2395,13 @@ app.post('/admin/employees/:id/refresh-profile', requireAdmin, async (req, res) 
     phoneSyncInfo: {
       graphReturnedPhone: phoneSyncResult.graphReturnedPhone,
       source: phoneSyncResult.source,
-      reasonIfEmpty: phoneSyncResult.reasonIfEmpty
+      reasonIfEmpty: phoneSyncResult.reasonIfEmpty,
+      dbWriteSucceeded: phoneSyncResult.dbWriteSucceeded,
+      graphCallSucceeded: phoneSyncResult.graphCallSucceeded,
+      httpStatus: phoneSyncResult.httpStatus,
+      graphErrorCode: phoneSyncResult.graphErrorCode,
+      graphErrorMessage: phoneSyncResult.graphErrorMessage,
+      needsGraphAppPermissions: phoneSyncResult.needsGraphAppPermissions
     }
   });
 });

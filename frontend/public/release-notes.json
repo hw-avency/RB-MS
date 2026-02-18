@@ -1,5 +1,18 @@
 [
   {
+    "version": "1.5.7",
+    "date": "2026-02-18",
+    "type": "bugfix",
+    "title": "Entra-Refresh meldet Graph-Berechtigungsfehler klar und verhindert falsche Erfolgsmeldungen",
+    "summary": "Der Mitarbeiter-Refresh zeigt jetzt echte Graph-Fehler inklusive Berechtigungshinweis an und meldet Erfolg nur noch bei tatsächlichem Datenbank-Write.",
+    "items": [
+      "Beim Profil-Refresh werden Graph-Fehler mit Status, Fehlercode und Klartext erfasst, damit Berechtigungsprobleme sofort erkennbar sind.",
+      "Fehlt für /users der Admin-Consent auf User.Read.All, zeigt die Oberfläche eine klare Fehlermeldung statt eines stillen Erfolgs.",
+      "Der Refresh nutzt in app_users zuerst die Entra-Object-ID und nur sonst die E-Mail, damit der richtige Nutzer in Graph gelesen wird.",
+      "Ein Erfolgshinweis erscheint nur noch, wenn die Profildaten wirklich in der Datenbank gespeichert wurden."
+    ]
+  },
+  {
     "version": "1.5.6",
     "date": "2026-02-18",
     "type": "bugfix",

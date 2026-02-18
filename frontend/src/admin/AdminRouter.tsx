@@ -1,6 +1,6 @@
 import { FormEvent, MouseEvent as ReactMouseEvent, ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { del, get, patch, post, resolveApiUrl } from '../api';
+import { ApiError, del, get, patch, post, resolveApiUrl } from '../api';
 import { cancelBooking } from '../api/bookings';
 import { Avatar } from '../components/Avatar';
 import { UserMenu } from '../components/UserMenu';
@@ -13,7 +13,17 @@ type SeriesPolicy = 'DEFAULT' | 'ALLOW' | 'DISALLOW';
 type Floorplan = { id: string; name: string; imageUrl: string; isDefault?: boolean; sortOrder?: number; tenantScope?: 'ALL' | 'SELECTED'; tenantIds?: string[]; defaultResourceKind?: ResourceKind; defaultAllowSeries?: boolean; createdAt?: string; updatedAt?: string };
 type Desk = { id: string; floorplanId: string; name: string; kind?: ResourceKind; allowSeriesOverride?: boolean | null; effectiveAllowSeries?: boolean; x: number | null; y: number | null; position?: { x: number; y: number } | null; tenantScope?: 'ALL' | 'SELECTED'; tenantIds?: string[]; createdAt?: string; updatedAt?: string };
 type Employee = { id: string; email: string; displayName: string; role: 'admin' | 'user'; isActive: boolean; phone?: string | null; photoUrl?: string | null; photoUpdatedAt?: string | null; createdAt?: string; updatedAt?: string };
-type PhoneSyncInfo = { graphReturnedPhone: boolean; source: 'me' | 'users'; reasonIfEmpty: 'graph_null' | 'mapping' | 'db_write' | 'unknown' | null };
+type PhoneSyncInfo = {
+  graphReturnedPhone: boolean;
+  source: 'me' | 'users';
+  reasonIfEmpty: 'graph_null' | 'mapping' | 'db_write' | 'unknown' | null;
+  dbWriteSucceeded: boolean;
+  graphCallSucceeded: boolean;
+  httpStatus: number | null;
+  graphErrorCode: string | null;
+  graphErrorMessage: string | null;
+  needsGraphAppPermissions: boolean;
+};
 type RefreshEmployeeProfileResponse = Employee & { phoneSyncInfo: PhoneSyncInfo };
 type Tenant = { id: string; domain: string; name?: string | null; entraTenantId?: string | null; employeeCount?: number; createdAt?: string; updatedAt?: string };
 type EntraConfig = { clientId: string | null; redirectUri: string | null };
@@ -1443,14 +1453,24 @@ function EmployeesPage({ path, navigate, onRoleStateChanged, onLogout, currentAd
       const updated = await post<RefreshEmployeeProfileResponse>(`/admin/employees/${employee.id}/refresh-profile`, {});
       setEmployees((current) => current.map((row) => (row.id === employee.id ? updated : row)));
 
-      if (updated.phoneSyncInfo.graphReturnedPhone) {
-        toasts.success('Entra-Profil inkl. Telefonnummer aktualisiert');
+      if (updated.phoneSyncInfo.dbWriteSucceeded) {
+        if (updated.phoneSyncInfo.graphReturnedPhone) {
+          toasts.success('Entra-Profil inkl. Telefonnummer aktualisiert');
+        } else {
+          toasts.success('Entra-Profil aktualisiert');
+          toasts.toast({ message: 'Hinweis: Entra liefert für diesen Nutzer keine Telefonnummer (mobilePhone/businessPhones leer).', durationMs: 5200 });
+        }
       } else {
-        toasts.success('Entra-Profil aktualisiert');
-        toasts.toast({ message: 'Hinweis: Entra liefert für diesen Nutzer keine Telefonnummer (mobilePhone/businessPhones leer).', durationMs: 5200 });
+        toasts.toast({ message: 'Entra-Refresh ausgeführt, aber Profil konnte nicht gespeichert werden.', durationMs: 5200 });
       }
     } catch (err) {
-      toasts.error(err instanceof Error ? err.message : 'Entra-Profil konnte nicht aktualisiert werden');
+      if (err instanceof ApiError && err.status === 400 && err.backendCode === 'entra_not_linked') {
+        toasts.error('Mitarbeiter nicht mit Entra verknüpft');
+      } else if (err instanceof ApiError && (err.status === 401 || err.status === 403) && err.backendCode === 'graph_permissions_required') {
+        toasts.error('Refresh fehlgeschlagen: Microsoft Graph Berechtigung fehlt (Admin Consent erforderlich).');
+      } else {
+        toasts.error(err instanceof Error ? err.message : 'Entra-Profil konnte nicht aktualisiert werden');
+      }
     } finally {
       setRefreshingProfileId(null);
     }
