@@ -1,8 +1,20 @@
 [
- {  
-   "version": "1.5.14",
-   "date": "2026-02-18",
-   "type": "feature",
+  {
+    "version": "1.5.15",
+    "date": "2026-02-18",
+    "type": "bugfix",
+    "title": "Feedback-Formular lässt sich wieder zuverlässig absenden",
+    "summary": "Der Button im Dialog für Feature Requests und Bugmeldungen ist nicht mehr vorzeitig gesperrt, sodass Meldungen wieder normal abgeschickt werden können.",
+    "items": [
+      "Der Button \"Meldung absenden\" bleibt nur noch während des tatsächlichen Sendens deaktiviert.",
+      "Ist die Beschreibung zu kurz, gibt die App wie bisher eine klare Hinweis-Meldung aus statt den Button dauerhaft ausgegraut zu lassen.",
+      "Damit können Nutzer das Formular wieder direkt bedienen und ihre Meldung ohne Umweg abschicken."
+    ]
+  },
+  {
+    "version": "1.5.14",
+    "date": "2026-02-18",
+    "type": "feature",
     "title": "Admin kann Neu-Anmeldung für alle Mitarbeitenden erzwingen",
     "summary": "Im Menüpunkt Mitarbeiter gibt es jetzt eine zentrale Aktion, um alle aktiven Sitzungen graceful zu beenden und eine klare Re-Login-Meldung anzuzeigen.",
     "items": [
