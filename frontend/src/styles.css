@@ -197,6 +197,7 @@ input, select { border: 1px solid hsl(var(--border)); border-radius: 12px; paddi
 .free-slot-chip{border:1px solid hsl(var(--primary)/.3);border-radius:999px;background:hsl(var(--primary)/.09);color:hsl(var(--primary));font-size:12px;padding:5px 11px;cursor:pointer}
 .free-slot-chip:hover{border-color:hsl(var(--primary)/.6);background:hsl(var(--primary)/.14)}
 .field-error{margin:0;color:#b91c1c;font-size:12px;line-height:1.3}
+.field-error-slot{min-height:16px}
 .btn-spinner{width:14px;height:14px;border:2px solid rgba(255,255,255,.55);border-top-color:rgba(255,255,255,1);border-radius:999px;display:inline-block;animation:spin .8s linear infinite}
 
 .desk-pin.debug-outline{outline:1px dashed rgba(234,88,12,.9);outline-offset:0}.pin-ring.debug-outline{outline:1px dashed rgba(2,132,199,.9)}.pin-avatar-clip.debug-outline{outline:1px dashed rgba(16,185,129,.9)}
@@ -590,6 +591,12 @@ tr{cursor:pointer}.row-selected{background:hsl(var(--muted))}
   .end-option-control,.end-option-control-with-suffix{grid-column:2 / -1}
 }
 .booking-details-panel{padding:20px;gap:16px}
+.booking-info-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px}
+.booking-info-card{border:1px solid hsl(var(--border));border-radius:12px;padding:12px;background:hsl(var(--muted)/.35)}
+.booking-info-period{display:inline-flex;align-self:flex-start;font-size:12px;font-weight:700;color:hsl(var(--muted-foreground));background:hsl(var(--muted));padding:2px 8px;border-radius:999px}
+.booking-info-person{display:flex;align-items:center;gap:12px}
+.booking-info-person-text strong{line-height:1.2}
+.booking-info-call-btn{justify-content:center}
 .booking-detail-card{border:1px solid hsl(var(--border));border-radius:12px;padding:12px;background:hsl(var(--card))}
 .booking-detail-card h4{margin:0 0 4px;font-size:14px}
 .booking-detail-card p{display:flex;flex-direction:column;gap:2px;font-size:14px}
