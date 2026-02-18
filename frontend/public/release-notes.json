@@ -1,5 +1,17 @@
 [
   {
+    "version": "1.5.17",
+    "date": "2026-02-18",
+    "type": "feature",
+    "title": "Parkplatzbuchung mit Uhrzeit und intelligenter Zuweisung",
+    "summary": "Parkplätze werden jetzt mit Start- und Endzeit gebucht. Zusätzlich gibt es einen geführten Assistenten, der Ladeplätze zuerst nur für die tatsächliche Ladezeit einplant.",
+    "items": [
+      "Parkplätze unterstützen jetzt Uhrzeiten statt Vormittag/Nachmittag/Ganztag.",
+      "Im Dialog helfen Presets beim Start (Vormittag, Nachmittag, Ganztag), die Zeiten bleiben frei anpassbar.",
+      "Bei Floorplans mit Parkplatz-Default kann ein intelligenter Flow Ladezeit und Aufenthaltsdauer abfragen und eine passende Kombination vorschlagen."
+    ]
+  },
+  {
     "version": "1.5.16",
     "date": "2026-02-18",
     "type": "feature",

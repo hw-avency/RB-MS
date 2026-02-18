@@ -22,7 +22,7 @@ import { getLastMutation, isDebugMode, setLastMutation } from './debug/runtimeDe
 
 type Floorplan = { id: string; name: string; imageUrl: string; isDefault?: boolean; defaultResourceKind?: ResourceKind };
 type RawFloorplan = Floorplan & { image?: string; imageURL?: string };
-type FloorplanResource = { id: string; floorplanId: string; kind?: ResourceKind; isBookableForMe?: boolean; tenantScope?: 'ALL' | 'SELECTED'; tenantIds?: string[] };
+type FloorplanResource = { id: string; floorplanId: string; kind?: ResourceKind; hasCharger?: boolean; isBookableForMe?: boolean; tenantScope?: 'ALL' | 'SELECTED'; tenantIds?: string[] };
 type BookingActor = { id: string; displayName?: string | null; name?: string | null; email?: string | null };
 type OccupancyBookingEmployee = { id?: string; email: string; displayName: string; phone?: string | null; photoUrl?: string | null };
 
@@ -55,6 +55,7 @@ type OccupancyDesk = {
   name: string;
   kind?: string;
   allowSeriesOverride?: boolean | null;
+  hasCharger?: boolean;
   effectiveAllowSeries?: boolean;
   x: number | null;
   y: number | null;
@@ -174,6 +175,13 @@ type CalendarBooking = { date: string; deskId: string; daySlot?: 'AM' | 'PM' | '
 type DayAvailabilityTone = 'many-free' | 'few-free' | 'none-free';
 type OverviewView = 'presence' | 'rooms' | 'myBookings';
 type FeedbackReportType = 'BUG' | 'FEATURE_REQUEST';
+
+type ParkingSmartProposal = {
+  proposalType: 'single' | 'split';
+  usedFallbackChargerFullWindow: boolean;
+  switchAfterCharging: boolean;
+  bookings: Array<{ deskId: string; deskName: string; startMinute: number; endMinute: number; startTime?: string; endTime?: string; hasCharger: boolean }>;
+};
 
 const FEEDBACK_SCREENSHOT_MAX_BYTES = 3 * 1024 * 1024;
 const FEEDBACK_SCREENSHOT_ACCEPT = 'image/png,image/jpeg,image/webp';
@@ -415,6 +423,7 @@ const getDefaultSlotForDesk = (desk: OccupancyDesk): BookingFormValues['slot'] |
 };
 
 const isRoomResource = (desk?: OccupancyDesk | null): boolean => desk?.kind === 'RAUM';
+const isTimeBasedResource = (desk?: OccupancyDesk | null): boolean => desk?.kind === 'RAUM' || desk?.kind === 'PARKPLATZ';
 
 const canBookDesk = (desk?: OccupancyDesk | null): boolean => {
   if (!desk) return false;
@@ -654,6 +663,11 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
   const [bookingFormValues, setBookingFormValues] = useState<BookingFormValues>(createDefaultBookingFormValues(today));
   const [manageTargetSlot, setManageTargetSlot] = useState<BookingFormValues['slot']>('MORNING');
   const [dialogErrorMessage, setDialogErrorMessage] = useState('');
+  const [parkingStayMinutes, setParkingStayMinutes] = useState(480);
+  const [parkingChargeMinutes, setParkingChargeMinutes] = useState(120);
+  const [parkingSmartProposal, setParkingSmartProposal] = useState<ParkingSmartProposal | null>(null);
+  const [parkingSmartError, setParkingSmartError] = useState('');
+  const [isParkingSmartLoading, setIsParkingSmartLoading] = useState(false);
   const [rebookConfirm, setRebookConfirm] = useState<RebookConfirmState | null>(null);
   const [isRebooking, setIsRebooking] = useState(false);
   const [recurringConflictState, setRecurringConflictState] = useState<RecurringConflictState | null>(null);
@@ -1704,6 +1718,8 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
     setIsCancellingBooking(false);
     setCancelDialogError('');
     setDialogErrorMessage('');
+    setParkingSmartProposal(null);
+    setParkingSmartError('');
     setIsManageEditOpen(false);
 
     const defaults = createDefaultBookingFormValues(selectedDate);
@@ -1889,9 +1905,9 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
         bookedFor: payload.bookedFor,
         guestName: payload.bookedFor === 'GUEST' ? payload.guestName : undefined,
         date: payload.date,
-        daySlot: payload.slot === 'FULL_DAY' ? 'FULL' : payload.slot === 'MORNING' ? 'AM' : payload.slot === 'AFTERNOON' ? 'PM' : undefined,
-        startTime: payload.startTime,
-        endTime: payload.endTime,
+        daySlot: isTimeBasedResource(popupDesk) ? undefined : payload.slot === 'FULL_DAY' ? 'FULL' : payload.slot === 'MORNING' ? 'AM' : payload.slot === 'AFTERNOON' ? 'PM' : undefined,
+        startTime: isTimeBasedResource(popupDesk) ? payload.startTime : undefined,
+        endTime: isTimeBasedResource(popupDesk) ? payload.endTime : undefined,
         overwrite: options?.overwrite ?? false
       }));
       toast.success((options?.overwrite ?? false) ? 'Umbuchung durchgeführt.' : 'Gebucht', { deskId });
@@ -1899,7 +1915,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
 
     }
     const recurringTarget = popupDesk?.id === deskId ? popupDesk : desks.find((desk) => desk.id === deskId);
-    const isRoomRecurring = Boolean(recurringTarget && isRoomResource(recurringTarget));
+    const isTimeRecurring = Boolean(recurringTarget && isTimeBasedResource(recurringTarget));
     const recurringPayload = {
       resourceId: deskId,
       startDate: payload.startDate,
@@ -1913,9 +1929,9 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
       count: payload.count,
       bookedFor: payload.bookedFor,
       guestName: payload.bookedFor === 'GUEST' ? payload.guestName : undefined,
-      period: isRoomRecurring ? null : payload.slot === 'MORNING' ? 'AM' : payload.slot === 'AFTERNOON' ? 'PM' : 'FULL',
-      startTime: isRoomRecurring ? payload.startTime : null,
-      endTime: isRoomRecurring ? payload.endTime : null,
+      period: isTimeRecurring ? null : payload.slot === 'MORNING' ? 'AM' : payload.slot === 'AFTERNOON' ? 'PM' : 'FULL',
+      startTime: isTimeRecurring ? payload.startTime : null,
+      endTime: isTimeRecurring ? payload.endTime : null,
       overwrite: options?.overwrite ?? false,
       conflictResolution: options?.conflictResolution,
       explicitDates: options?.explicitDates
@@ -1933,6 +1949,59 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
         : 'Gebucht', { deskId });
     }
     return response;
+  };
+
+
+  const requestSmartParkingProposal = async () => {
+    if (!selectedFloorplanId || !bookingFormValues.date || !bookingFormValues.startTime) return;
+    setParkingSmartError('');
+    setParkingSmartProposal(null);
+    setIsParkingSmartLoading(true);
+    try {
+      const response = await post<{ status: 'ok' | 'none'; message?: string; proposalType?: 'single' | 'split'; usedFallbackChargerFullWindow?: boolean; switchAfterCharging?: boolean; bookings?: ParkingSmartProposal['bookings'] }>('/bookings/parking-smart/propose', {
+        floorplanId: selectedFloorplanId,
+        date: bookingFormValues.date,
+        startTime: bookingFormValues.startTime,
+        attendanceMinutes: parkingStayMinutes,
+        chargingMinutes: parkingChargeMinutes
+      });
+      if (response.status !== 'ok' || !response.bookings) {
+        setParkingSmartError(response.message ?? 'Keine passende Kombination verfügbar.');
+        return;
+      }
+      setParkingSmartProposal({
+        proposalType: response.proposalType ?? (response.bookings.length === 2 ? 'split' : 'single'),
+        usedFallbackChargerFullWindow: Boolean(response.usedFallbackChargerFullWindow),
+        switchAfterCharging: Boolean(response.switchAfterCharging),
+        bookings: response.bookings
+      });
+    } catch (error) {
+      setParkingSmartError(getApiErrorMessage(error, 'Parkplatz konnte nicht zugewiesen werden.'));
+    } finally {
+      setIsParkingSmartLoading(false);
+    }
+  };
+
+  const confirmSmartParkingProposal = async () => {
+    if (!parkingSmartProposal) return;
+    setIsParkingSmartLoading(true);
+    setParkingSmartError('');
+    try {
+      await post('/bookings/parking-smart/confirm', {
+        date: bookingFormValues.date,
+        bookedFor: bookingFormValues.bookedFor,
+        guestName: bookingFormValues.bookedFor === 'GUEST' ? bookingFormValues.guestName : undefined,
+        bookings: parkingSmartProposal.bookings.map((entry) => ({ deskId: entry.deskId, startMinute: entry.startMinute, endMinute: entry.endMinute }))
+      });
+      toast.success('Parkplatz gebucht');
+      setParkingSmartProposal(null);
+      closeBookingFlow();
+      refreshOccupancy({ keepSelection: true, force: true }).catch(() => undefined);
+    } catch (error) {
+      setParkingSmartError(getApiErrorMessage(error, 'Nicht mehr verfügbar, bitte neu zuweisen.'));
+    } finally {
+      setIsParkingSmartLoading(false);
+    }
   };
 
   const updateExistingDeskBooking = async () => {
@@ -2873,6 +2942,23 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
                     }
                     : undefined}
                 />
+                {popupDesk.kind === 'PARKPLATZ' && selectedFloorplan?.defaultResourceKind === 'PARKPLATZ' && (
+                  <section className="card stack-xs" style={{ marginTop: 12, padding: 12 }}>
+                    <h4>Parkplatz intelligent zuweisen</h4>
+                    <label className="field"><span>Wie lange sind Sie da? (Minuten)</span><input type="number" min={60} step={30} value={parkingStayMinutes} onChange={(event) => setParkingStayMinutes(Math.max(60, Number(event.target.value) || 60))} disabled={isParkingSmartLoading} /></label>
+                    <label className="field"><span>Müssen Sie laden? (Minuten)</span><input type="number" min={0} step={30} value={parkingChargeMinutes} onChange={(event) => setParkingChargeMinutes(Math.max(0, Math.min(parkingStayMinutes, Number(event.target.value) || 0)))} disabled={isParkingSmartLoading} /></label>
+                    <button type="button" className="btn btn-outline" onClick={requestSmartParkingProposal} disabled={isParkingSmartLoading}>Parkplatz anfordern</button>
+                    {parkingSmartError && <p className="field-error">{parkingSmartError}</p>}
+                    {parkingSmartProposal && (
+                      <div className="stack-xs">
+                        <strong>Vorschlag</strong>
+                        {parkingSmartProposal.bookings.map((entry, index) => <p key={`${entry.deskId}-${index}`}>{entry.hasCharger ? '⚡ ' : ''}{entry.deskName} · {entry.startTime ?? formatMinutes(entry.startMinute)}–{entry.endTime ?? formatMinutes(entry.endMinute)}</p>)}
+                        {parkingSmartProposal.switchAfterCharging && <p className="muted">Wechsel nach Ladedauer.</p>}
+                        <button type="button" className="btn" onClick={confirmSmartParkingProposal} disabled={isParkingSmartLoading}>Vorschlag bestätigen</button>
+                      </div>
+                    )}
+                  </section>
+                )}
                 {!isRoomResource(popupDesk) && canCancelHere && (
                   <footer className="desk-popup-footer-actions">
                     <button

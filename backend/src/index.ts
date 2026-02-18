@@ -6,6 +6,7 @@ import bcrypt from 'bcryptjs';
 import { BookedFor, BookingSlot, DaySlot, DeskTenantScope, FeedbackReportStatus, FeedbackReportType, FloorplanTenantScope, Prisma, RecurrencePatternType, RecurringBooking, ResourceKind } from '@prisma/client';
 import { prisma } from './prisma';
 import { expandRecurrence, MAX_SERIES_OCCURRENCES, type RecurrenceDefinition, validateRecurrenceDefinition } from './recurrence';
+import { buildParkingAssignmentProposal, windowsOverlap as parkingWindowsOverlap } from './parkingAssignment';
 
 const app = express();
 const port = Number(process.env.PORT ?? 3000);
@@ -784,7 +785,7 @@ const datesInRange = (from: Date, to: Date): Date[] => {
   return dates;
 };
 
-const DAY_SLOT_KINDS = new Set<ResourceKind>(['TISCH', 'PARKPLATZ']);
+const DAY_SLOT_KINDS = new Set<ResourceKind>(['TISCH']);
 const DAY_SLOTS = new Set<DaySlot>(['AM', 'PM', 'FULL']);
 const BOOKING_SLOTS = new Set<BookingSlot>(['FULL_DAY', 'MORNING', 'AFTERNOON', 'CUSTOM']);
 type BookingWindowInput = { mode: 'day'; daySlot: DaySlot } | { mode: 'time'; startMinute: number; endMinute: number };
@@ -866,7 +867,7 @@ const resolveBookingWindow = ({ deskKind, daySlot, slot, startTime, endTime }: {
     const startMinute = parseTimeToMinute(startTime);
     const endMinute = parseTimeToMinute(endTime);
     if (startMinute === null || endMinute === null) {
-      return { ok: false, message: 'Für Räume sind startTime und endTime im Format HH:MM erforderlich.' };
+      return { ok: false, message: 'Für zeitbasierte Ressourcen sind startTime und endTime im Format HH:MM erforderlich.' };
     }
     if (startMinute >= endMinute) {
       return { ok: false, message: 'endTime muss nach startTime liegen.' };
@@ -3128,6 +3129,7 @@ app.get('/floorplans/:id/desks', async (req, res) => {
     floorplanId: desk.floorplanId,
     name: desk.name,
     kind: desk.kind,
+    hasCharger: desk.hasCharger,
     allowSeriesOverride: desk.allowSeriesOverride,
     effectiveAllowSeries: resolveEffectiveAllowSeries(desk),
     tenantScope: desk.tenantScope,
@@ -3763,6 +3765,185 @@ app.post('/bookings/check-conflicts', async (req, res) => {
   });
 });
 
+
+
+type ParkingSmartRequest = { floorplanId?: string; date?: string; startTime?: string; attendanceMinutes?: number; chargingMinutes?: number };
+
+app.post('/bookings/parking-smart/propose', async (req, res) => {
+  const { floorplanId, date, startTime, attendanceMinutes, chargingMinutes } = req.body as ParkingSmartRequest;
+  if (!floorplanId || !date || !startTime || typeof attendanceMinutes !== 'number' || typeof chargingMinutes !== 'number') {
+    res.status(400).json({ error: 'validation', message: 'floorplanId, date, startTime, attendanceMinutes and chargingMinutes are required' });
+    return;
+  }
+
+  const parsedDate = toDateOnly(date);
+  const parsedStartMinute = parseTimeToMinute(startTime);
+  if (!parsedDate || parsedStartMinute === null) {
+    res.status(400).json({ error: 'validation', message: 'date/startTime invalid' });
+    return;
+  }
+
+  const totalMinutes = Math.max(60, Math.floor(attendanceMinutes));
+  const requestedCharging = Math.max(0, Math.floor(chargingMinutes));
+  const normalizedCharging = Math.min(totalMinutes, requestedCharging);
+
+  const spots = await prisma.desk.findMany({
+    where: { floorplanId, kind: 'PARKPLATZ' },
+    select: { id: true, name: true, hasCharger: true },
+    orderBy: { createdAt: 'asc' }
+  });
+  if (spots.length === 0) {
+    res.status(404).json({ error: 'not_found', message: 'Keine Parkplätze gefunden.' });
+    return;
+  }
+
+  const bookings = await prisma.booking.findMany({ where: { date: parsedDate, deskId: { in: spots.map((spot) => spot.id) } } });
+  const normalizedBookings = bookings.flatMap((booking) => {
+    const candidateWindow = bookingToWindow(booking);
+    if (!candidateWindow) return [];
+    const timeWindow = candidateWindow.mode === 'day' ? daySlotToMinuteRange(candidateWindow.daySlot) : candidateWindow;
+    return [{ deskId: booking.deskId, startMinute: timeWindow.startMinute, endMinute: timeWindow.endMinute }];
+  });
+
+  const proposal = buildParkingAssignmentProposal({
+    startMinute: parsedStartMinute,
+    attendanceMinutes: totalMinutes,
+    chargingMinutes: normalizedCharging,
+    spots: spots.map((spot) => ({ id: spot.id, hasCharger: spot.hasCharger })),
+    bookings: normalizedBookings
+  });
+
+  if (proposal.type === 'none') {
+    res.status(200).json({ status: 'none', reason: proposal.reason, message: 'Keine passende Kombination verfügbar.' });
+    return;
+  }
+
+  const namedBookings = proposal.bookings.map((entry) => ({
+    ...entry,
+    deskName: spots.find((spot) => spot.id === entry.deskId)?.name ?? entry.deskId,
+    startTime: minuteToHHMM(entry.startMinute),
+    endTime: minuteToHHMM(entry.endMinute)
+  }));
+
+  res.status(200).json({
+    status: 'ok',
+    proposalType: proposal.type,
+    usedFallbackChargerFullWindow: proposal.usedFallbackChargerFullWindow,
+    switchAfterCharging: proposal.bookings.length === 2,
+    bookings: namedBookings
+  });
+});
+
+app.post('/bookings/parking-smart/confirm', async (req, res) => {
+  const { date, bookings, bookedFor, guestName } = req.body as { date?: string; bookings?: Array<{ deskId: string; startMinute: number; endMinute: number }>; bookedFor?: string; guestName?: string };
+  if (!date || !Array.isArray(bookings) || bookings.length === 0) {
+    res.status(400).json({ error: 'validation', message: 'date and bookings are required' });
+    return;
+  }
+
+  const currentUser = req.authUser;
+  if (!currentUser) {
+    res.status(401).json({ error: 'unauthorized', message: 'Authentication required' });
+    return;
+  }
+
+  let actorEmployee;
+  try {
+    actorEmployee = await requireActorEmployee(req);
+  } catch (error) {
+    const status = (error as Error & { status?: number }).status ?? 403;
+    res.status(status).json({ error: status === 401 ? 'unauthorized' : 'forbidden', message: (error as Error).message });
+    return;
+  }
+
+  const parsedDate = toDateOnly(date);
+  if (!parsedDate) {
+    res.status(400).json({ error: 'validation', message: 'date invalid' });
+    return;
+  }
+
+  const bookingMode = parseBookedFor(bookedFor);
+  const normalizedGuestName = normalizeGuestName(guestName);
+  if (bookingMode === 'GUEST' && (!normalizedGuestName || normalizedGuestName.length < 2)) {
+    res.status(400).json({ error: 'validation', message: 'guestName muss mindestens 2 Zeichen haben.' });
+    return;
+  }
+
+  const validated = bookings.map((booking) => ({
+    deskId: booking.deskId,
+    startMinute: Math.floor(booking.startMinute),
+    endMinute: Math.floor(booking.endMinute)
+  }));
+  if (validated.some((entry) => !entry.deskId || !Number.isFinite(entry.startMinute) || !Number.isFinite(entry.endMinute) || entry.endMinute <= entry.startMinute)) {
+    res.status(400).json({ error: 'validation', message: 'bookings invalid' });
+    return;
+  }
+
+  const deskIds = Array.from(new Set(validated.map((entry) => entry.deskId)));
+  const desks = await prisma.desk.findMany({ where: { id: { in: deskIds } }, select: { id: true, kind: true } });
+  if (desks.length !== deskIds.length || desks.some((desk) => desk.kind !== 'PARKPLATZ')) {
+    res.status(400).json({ error: 'validation', message: 'Nur PARKPLATZ-Ressourcen sind erlaubt.' });
+    return;
+  }
+
+  try {
+    const created = await prisma.$transaction(async (tx) => {
+      for (const entry of validated) {
+        await acquireBookingLock(tx, bookingDeskKeyForDate(entry.deskId, parsedDate));
+      }
+
+      for (const entry of validated) {
+        const existing = await tx.booking.findMany({ where: { deskId: entry.deskId, date: parsedDate } });
+        const hasConflict = existing.some((candidate) => {
+          const candidateWindow = bookingToWindow(candidate);
+          if (!candidateWindow) return false;
+          const candidateTime = candidateWindow.mode === 'day' ? daySlotToMinuteRange(candidateWindow.daySlot) : candidateWindow;
+          return parkingWindowsOverlap(entry, candidateTime);
+        });
+
+        if (hasConflict) {
+          const error = new Error('not_available');
+          (error as Error & { status?: number }).status = 409;
+          throw error;
+        }
+      }
+
+      const result = [];
+      for (const entry of validated) {
+        result.push(await tx.booking.create({
+          data: {
+            deskId: entry.deskId,
+            userEmail: bookingMode === 'SELF' ? actorEmployee.email : null,
+            employeeId: bookingMode === 'SELF' ? actorEmployee.id : null,
+            bookedFor: bookingMode,
+            guestName: bookingMode === 'GUEST' ? normalizedGuestName : null,
+            createdByEmployeeId: actorEmployee.id,
+            createdByUserId: req.authUser?.source === 'local' ? req.authUser.id : null,
+            createdByEmail: req.authUser?.email ?? null,
+            date: parsedDate,
+            daySlot: null,
+            slot: 'CUSTOM',
+            startMinute: entry.startMinute,
+            endMinute: entry.endMinute,
+            startTime: new Date(Date.UTC(parsedDate.getUTCFullYear(), parsedDate.getUTCMonth(), parsedDate.getUTCDate(), Math.floor(entry.startMinute / 60), entry.startMinute % 60, 0, 0)),
+            endTime: new Date(Date.UTC(parsedDate.getUTCFullYear(), parsedDate.getUTCMonth(), parsedDate.getUTCDate(), Math.floor(entry.endMinute / 60), entry.endMinute % 60, 0, 0))
+          }
+        }));
+      }
+      return result;
+    });
+
+    res.status(201).json({ createdCount: created.length, bookings: created.map((entry) => ({ id: entry.id, deskId: entry.deskId, date: entry.date, startMinute: entry.startMinute, endMinute: entry.endMinute, slot: entry.slot })) });
+  } catch (error) {
+    const status = (error as Error & { status?: number }).status ?? 500;
+    if (status === 409) {
+      res.status(409).json({ error: 'conflict', message: 'Parkplatz nicht mehr verfügbar, bitte neu zuweisen.' });
+      return;
+    }
+    throw error;
+  }
+});
+
 app.post('/bookings/range', async (req, res) => {
   const { deskId, userEmail, from, to, weekdaysOnly, replaceExisting, overrideExisting } = req.body as {
     deskId?: string;
@@ -4364,7 +4545,7 @@ app.get('/resources/:resourceId/availability', async (req, res) => {
 });
 
 const recurringToWindow = (recurring: { period: DaySlot | null; startTime: string | null; endTime: string | null }, resourceKind: ResourceKind): BookingWindowInput | null => {
-  if (resourceKind === 'RAUM') {
+  if (resourceKind === 'RAUM' || resourceKind === 'PARKPLATZ') {
     if (!recurring.startTime || !recurring.endTime) return null;
     const startMinute = parseTimeToMinute(recurring.startTime);
     const endMinute = parseTimeToMinute(recurring.endTime);
@@ -4631,9 +4812,9 @@ app.post('/recurring-bookings', async (req, res) => {
   }
 
   const normalizedPeriod = period ? parseDaySlot(period) : null;
-  if (resource.kind === 'RAUM') {
+  if (resource.kind === 'RAUM' || resource.kind === 'PARKPLATZ') {
     if (normalizedPeriod) {
-      res.status(400).json({ error: 'validation', message: 'period must be null for room recurrences' });
+      res.status(400).json({ error: 'validation', message: 'period must be null for room/parking recurrences' });
       return;
     }
     const recurrenceStartMinute = startTime ? parseTimeToMinute(startTime) : null;
@@ -4643,16 +4824,16 @@ app.post('/recurring-bookings', async (req, res) => {
       return;
     }
     if ((recurrenceEndMinute - recurrenceStartMinute) < ROOM_MIN_BOOKING_DURATION_MINUTES) {
-      res.status(400).json({ error: 'validation', message: 'Die Mindestdauer für Raumbuchungen beträgt 60 Minuten.' });
+      res.status(400).json({ error: 'validation', message: 'Die Mindestdauer für Raum-/Parkplatzbuchungen beträgt 60 Minuten.' });
       return;
     }
   } else {
     if (!normalizedPeriod) {
-      res.status(400).json({ error: 'validation', message: 'period is required for non-room recurrences' });
+      res.status(400).json({ error: 'validation', message: 'period is required for day-slot recurrences' });
       return;
     }
     if (startTime || endTime) {
-      res.status(400).json({ error: 'validation', message: 'startTime/endTime must be null for non-room recurrences' });
+      res.status(400).json({ error: 'validation', message: 'startTime/endTime must be null for day-slot recurrences' });
       return;
     }
   }
@@ -5374,7 +5555,7 @@ app.post('/admin/floorplans/:id/desks', requireAdmin, async (req, res) => {
     return;
   }
 
-  const { name, x, y, kind, allowSeriesOverride, tenantScope, tenantIds } = req.body as { name?: string; x?: number | null; y?: number | null; kind?: ResourceKind; allowSeriesOverride?: boolean | null; tenantScope?: DeskTenantScope; tenantIds?: string[] };
+  const { name, x, y, kind, hasCharger, allowSeriesOverride, tenantScope, tenantIds } = req.body as { name?: string; x?: number | null; y?: number | null; kind?: ResourceKind; hasCharger?: boolean; allowSeriesOverride?: boolean | null; tenantScope?: DeskTenantScope; tenantIds?: string[] };
   const parsedKind = typeof kind === 'undefined' ? null : parseResourceKind(kind);
   const parsedTenantScope = typeof tenantScope === 'undefined' ? 'ALL' : parseDeskTenantScope(tenantScope);
 
@@ -5400,6 +5581,11 @@ app.post('/admin/floorplans/:id/desks', requireAdmin, async (req, res) => {
 
   if (typeof kind !== 'undefined' && !parsedKind) {
     res.status(400).json({ error: 'validation', message: 'kind must be one of TISCH, PARKPLATZ, RAUM, SONSTIGES' });
+    return;
+  }
+
+  if (typeof hasCharger !== 'undefined' && typeof hasCharger !== 'boolean') {
+    res.status(400).json({ error: 'validation', message: 'hasCharger must be boolean' });
     return;
   }
 
@@ -5433,6 +5619,7 @@ app.post('/admin/floorplans/:id/desks', requireAdmin, async (req, res) => {
         x: typeof x === 'undefined' ? null : x,
         y: typeof y === 'undefined' ? null : y,
         kind: parsedKind ?? floorplan.defaultResourceKind,
+        hasCharger: typeof hasCharger === 'boolean' ? hasCharger : false,
         tenantScope: parsedTenantScope,
         ...(typeof allowSeriesOverride !== 'undefined' ? { allowSeriesOverride } : {})
       }
@@ -5484,20 +5671,21 @@ app.patch('/admin/desks/:id', requireAdmin, async (req, res) => {
     return;
   }
 
-  const { name, x, y, kind, allowSeriesOverride, tenantScope, tenantIds } = req.body as { name?: string; x?: number | null; y?: number | null; kind?: ResourceKind; allowSeriesOverride?: boolean | null; tenantScope?: DeskTenantScope; tenantIds?: string[] };
+  const { name, x, y, kind, hasCharger, allowSeriesOverride, tenantScope, tenantIds } = req.body as { name?: string; x?: number | null; y?: number | null; kind?: ResourceKind; hasCharger?: boolean; allowSeriesOverride?: boolean | null; tenantScope?: DeskTenantScope; tenantIds?: string[] };
   const hasName = typeof name !== 'undefined';
   const hasX = typeof x !== 'undefined';
   const hasY = typeof y !== 'undefined';
   const hasKind = typeof kind !== 'undefined';
   const parsedKind = hasKind ? parseResourceKind(kind) : null;
 
+  const hasHasCharger = Object.prototype.hasOwnProperty.call(req.body ?? {}, 'hasCharger');
   const hasAllowSeriesOverride = Object.prototype.hasOwnProperty.call(req.body ?? {}, 'allowSeriesOverride');
   const hasTenantScope = Object.prototype.hasOwnProperty.call(req.body ?? {}, 'tenantScope');
   const hasTenantIds = Object.prototype.hasOwnProperty.call(req.body ?? {}, 'tenantIds');
   const parsedTenantScope = hasTenantScope ? parseDeskTenantScope(tenantScope) : null;
 
-  if (!hasName && !hasX && !hasY && !hasKind && !hasAllowSeriesOverride && !hasTenantScope && !hasTenantIds) {
-    res.status(400).json({ error: 'validation', message: 'name, x, y, kind, allowSeriesOverride, tenantScope or tenantIds must be provided' });
+  if (!hasName && !hasX && !hasY && !hasKind && !hasHasCharger && !hasAllowSeriesOverride && !hasTenantScope && !hasTenantIds) {
+    res.status(400).json({ error: 'validation', message: 'name, x, y, kind, hasCharger, allowSeriesOverride, tenantScope or tenantIds must be provided' });
     return;
   }
 
@@ -5532,6 +5720,11 @@ app.patch('/admin/desks/:id', requireAdmin, async (req, res) => {
     return;
   }
 
+  if (hasHasCharger && typeof hasCharger !== 'boolean') {
+    res.status(400).json({ error: 'validation', message: 'hasCharger must be boolean' });
+    return;
+  }
+
   if (hasTenantScope && !parsedTenantScope) {
     res.status(400).json({ error: 'validation', message: 'tenantScope must be ALL or SELECTED' });
     return;
@@ -5546,11 +5739,12 @@ app.patch('/admin/desks/:id', requireAdmin, async (req, res) => {
     return;
   }
 
-  const data: { name?: string; x?: number | null; y?: number | null; kind?: ResourceKind; allowSeriesOverride?: boolean | null; tenantScope?: DeskTenantScope } = {};
+  const data: { name?: string; x?: number | null; y?: number | null; kind?: ResourceKind; hasCharger?: boolean; allowSeriesOverride?: boolean | null; tenantScope?: DeskTenantScope } = {};
   if (hasName) data.name = name.trim().slice(0, 60);
   if (hasX) data.x = x;
   if (hasY) data.y = y;
   if (hasKind && parsedKind) data.kind = parsedKind;
+  if (hasHasCharger && typeof hasCharger === 'boolean') data.hasCharger = hasCharger;
   if (hasAllowSeriesOverride) data.allowSeriesOverride = allowSeriesOverride ?? null;
   if (hasTenantScope && parsedTenantScope) data.tenantScope = parsedTenantScope;
 

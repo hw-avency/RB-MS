@@ -187,6 +187,8 @@ export function BookingForm({ values, onChange, onSubmit, onCancel, isSubmitting
   const [showRecurrenceDetails, setShowRecurrenceDetails] = useState(true);
   const [showRecurrencePreview, setShowRecurrencePreview] = useState(false);
   const isRoom = resourceKind === 'RAUM';
+  const isParking = resourceKind === 'PARKPLATZ';
+  const isTimeBased = isRoom || isParking;
 
   useEffect(() => {
     if (allowRecurring || values.type !== 'recurring') return;
@@ -197,7 +199,7 @@ export function BookingForm({ values, onChange, onSubmit, onCancel, isSubmitting
     const nextErrors: { date?: string; dateFrom?: string; dateTo?: string; weekdays?: string; interval?: string; monthday?: string; yearmonth?: string; occurrenceCount?: string; startTime?: string; endTime?: string; guestName?: string } = {};
 
     if (values.type === 'single' && !values.date) nextErrors.date = 'Datum ist erforderlich.';
-    if (values.type === 'single' && isRoom) {
+    if (values.type === 'single' && isTimeBased) {
       const timeError = getRoomTimeError(values.startTime, values.endTime);
       if (timeError) {
         if (!values.startTime) nextErrors.startTime = timeError;
@@ -219,7 +221,7 @@ export function BookingForm({ values, onChange, onSubmit, onCancel, isSubmitting
       if (values.recurrencePatternType === 'WEEKLY' && values.weekdays.length === 0) nextErrors.weekdays = 'Bitte mindestens einen Wochentag auswählen.';
       if ((values.recurrencePatternType === 'MONTHLY' || values.recurrencePatternType === 'YEARLY') && (values.recurrenceMonthday < 1 || values.recurrenceMonthday > 31)) nextErrors.monthday = 'Tag muss zwischen 1 und 31 liegen.';
       if (values.recurrencePatternType === 'YEARLY' && (values.recurrenceYearMonth < 1 || values.recurrenceYearMonth > 12)) nextErrors.yearmonth = 'Monat muss zwischen 1 und 12 liegen.';
-      if (isRoom) {
+      if (isTimeBased) {
         const timeError = getRoomTimeError(values.startTime, values.endTime);
         if (timeError) {
           if (!values.startTime) nextErrors.startTime = timeError;
@@ -230,7 +232,7 @@ export function BookingForm({ values, onChange, onSubmit, onCancel, isSubmitting
     }
 
     return nextErrors;
-  }, [values, isRoom]);
+  }, [values, isTimeBased]);
 
   const hasCancelableRoomBooking = Boolean(roomSchedule?.bookings.some((booking) => booking.canCancel));
 
@@ -280,7 +282,7 @@ export function BookingForm({ values, onChange, onSubmit, onCancel, isSubmitting
   }, [effectiveRecurrenceEndDate, values]);
 
   const handleRoomStartTimeChange = (nextStartTime: string) => {
-    if (!isRoom) {
+    if (!isTimeBased) {
       onChange({ ...values, startTime: nextStartTime });
       return;
     }
@@ -321,10 +323,10 @@ export function BookingForm({ values, onChange, onSubmit, onCancel, isSubmitting
     }
 
     const payload: BookingFormSubmitPayload = values.type === 'single'
-      ? (isRoom
+      ? (isTimeBased
         ? { type: 'single', date: values.date, startTime: values.startTime, endTime: values.endTime, bookedFor: values.bookedFor, guestName: values.bookedFor === 'GUEST' ? values.guestName.trim() : undefined }
         : { type: 'single', date: values.date, slot: values.slot, bookedFor: values.bookedFor, guestName: values.bookedFor === 'GUEST' ? values.guestName.trim() : undefined })
-      : (isRoom
+      : (isTimeBased
         ? {
           type: 'recurring',
           startDate: values.dateFrom,
@@ -420,7 +422,7 @@ export function BookingForm({ values, onChange, onSubmit, onCancel, isSubmitting
             {fieldErrors.date && <p className="field-error" role="alert">{fieldErrors.date}</p>}
           </div>
 
-          {isRoom ? (
+          {isTimeBased ? (
             <>
               <section className="room-schedule-block stack-xs">
                 <div className="room-schedule-header">
@@ -490,6 +492,13 @@ export function BookingForm({ values, onChange, onSubmit, onCancel, isSubmitting
                   </div>
                 )}
               </section>
+              {isParking && (
+                <div className="room-free-slots" role="group" aria-label="Zeit-Presets">
+                  <button type="button" className="free-slot-chip" disabled={disabled || isSubmitting} onClick={() => onChange({ ...values, startTime: '08:00', endTime: '12:00' })}>Vormittag</button>
+                  <button type="button" className="free-slot-chip" disabled={disabled || isSubmitting} onClick={() => onChange({ ...values, startTime: '12:00', endTime: '16:00' })}>Nachmittag</button>
+                  <button type="button" className="free-slot-chip" disabled={disabled || isSubmitting} onClick={() => onChange({ ...values, startTime: '08:00', endTime: '16:00' })}>Ganztag</button>
+                </div>
+              )}
               <div className="split">
                 <div className="stack-xs">
                   <label htmlFor="booking-start-time">Von</label>
@@ -527,8 +536,8 @@ export function BookingForm({ values, onChange, onSubmit, onCancel, isSubmitting
           {showRecurrenceDetails && (
             <>
               <div className="stack-xs">
-                {isRoom && <label className="recurrence-section-title">Terminzeit</label>}
-                {isRoom ? (
+                {isTimeBased && <label className="recurrence-section-title">Terminzeit</label>}
+                {isTimeBased ? (
                   <>
                     <div className="split">
                       <div className="stack-xs"><label htmlFor="booking-recurring-start-time">Von</label><input id="booking-recurring-start-time" type="time" min="06:00" max="18:00" value={values.startTime} disabled={disabled} onChange={(event) => handleRoomStartTimeChange(event.target.value)} /><p className="field-error field-error-slot" role={fieldErrors.startTime ? 'alert' : undefined} aria-live="polite">{fieldErrors.startTime ?? '\u00a0'}</p></div>

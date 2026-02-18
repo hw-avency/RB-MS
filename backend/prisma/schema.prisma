@@ -127,6 +127,7 @@ model Desk {
   floorplanId       String
   name              String
   kind              ResourceKind       @default(TISCH)
+  hasCharger        Boolean            @default(false)
   allowSeriesOverride Boolean?
   tenantScope       DeskTenantScope    @default(ALL)
   x                 Float?
