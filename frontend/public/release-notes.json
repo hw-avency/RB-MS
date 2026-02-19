@@ -1,5 +1,17 @@
 [
   {
+    "version": "1.5.44",
+    "date": "2026-02-19",
+    "type": "bugfix",
+    "title": "Floor lädt Ressourcen nach Seiten-Reload wieder zuverlässig",
+    "summary": "Ein doppelter Ladeablauf für Floor-Daten wurde entfernt. Dadurch bleiben Ressourcen nach einem Pagereload stabil sichtbar und verschwinden nicht mehr sporadisch.",
+    "items": [
+      "Der doppelt ausgeführte Ressourcen- und Kalender-Reload wurde bereinigt.",
+      "Floor-Ressourcen werden nach dem Neuladen der Seite jetzt konsistent angezeigt.",
+      "Interne Race-Conditions beim gleichzeitigen Laden derselben Daten wurden reduziert."
+    ]
+  },
+  {
     "version": "1.5.43",
     "date": "2026-02-19",
     "type": "bugfix",
