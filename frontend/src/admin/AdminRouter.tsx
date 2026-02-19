@@ -511,70 +511,268 @@ function PositionPickerDialog({ floorplan, x, y, onClose, onPick }: { floorplan:
   );
 }
 
-function DeskEditor({ desk, floorplans, tenants, employees, defaultFloorplanId, initialPosition, lockFloorplan, onRequestPositionMode, onClose, onSaved, onError }: { desk: Desk | null; floorplans: Floorplan[]; tenants: Tenant[]; employees: Employee[]; defaultFloorplanId: string; initialPosition?: { x: number; y: number } | null; lockFloorplan?: boolean; onRequestPositionMode?: () => void; onClose: () => void; onSaved: () => Promise<void>; onError: (message: string) => void }) {
-  const [form, setForm] = useState<DeskFormState>({ floorplanId: desk?.floorplanId ?? defaultFloorplanId, name: desk?.name ?? '', kind: desk?.kind ?? floorplans.find((item) => item.id === (desk?.floorplanId ?? defaultFloorplanId))?.defaultResourceKind ?? 'TISCH', hasCharger: desk?.hasCharger ?? false, seriesPolicy: toSeriesPolicy(desk?.allowSeriesOverride), x: initialPosition?.x ?? desk?.x ?? null, y: initialPosition?.y ?? desk?.y ?? null, tenantScope: desk?.tenantScope ?? 'ALL', tenantIds: desk?.tenantIds ?? [], employeeScope: desk?.employeeScope ?? 'ALL', employeeIds: desk?.employeeIds ?? [] });
-  const [showPicker, setShowPicker] = useState(false);
-  const [inlineError, setInlineError] = useState('');
+function CompactMultiSelect({
+  label,
+  helper,
+  options,
+  selectedIds,
+  onChange,
+  searchPlaceholder,
+  emptyText,
+  selectAllLabel = 'Alle auswählen',
+  resetLabel = 'Zurücksetzen',
+  disabled = false,
+}: {
+  label: string;
+  helper?: string;
+  options: Array<{ id: string; label: string; meta?: string }>;
+  selectedIds: string[];
+  onChange: (next: string[]) => void;
+  searchPlaceholder: string;
+  emptyText: string;
+  selectAllLabel?: string;
+  resetLabel?: string;
+  disabled?: boolean;
+}) {
+  const [query, setQuery] = useState('');
+  const queryNormalized = query.trim().toLowerCase();
+  const selectedSet = useMemo(() => new Set(selectedIds), [selectedIds]);
 
-  const canSave = form.floorplanId && form.name.trim().length > 0 && form.x !== null && form.y !== null && (form.tenantScope === 'ALL' || form.tenantIds.length > 0) && (form.employeeScope === 'ALL' || form.employeeIds.length > 0);
-  const floorplan = floorplans.find((item) => item.id === form.floorplanId) ?? null;
-  const availableEmployees = employees.filter((employee) => {
-    if (form.tenantScope === 'ALL') return true;
-    return Boolean(employee.tenantDomainId && form.tenantIds.includes(employee.tenantDomainId));
-  });
+  const filteredOptions = useMemo(
+    () => options.filter((option) => option.label.toLowerCase().includes(queryNormalized) || option.meta?.toLowerCase().includes(queryNormalized)),
+    [options, queryNormalized]
+  );
 
-  const onFloorplanChange = (nextFloorplanId: string) => {
-    setForm((current) => ({ ...current, floorplanId: nextFloorplanId, kind: desk ? current.kind : (floorplans.find((item) => item.id === nextFloorplanId)?.defaultResourceKind ?? current.kind), x: current.floorplanId === nextFloorplanId ? current.x : null, y: current.floorplanId === nextFloorplanId ? current.y : null }));
-    setInlineError('');
+  const visibleOptions = filteredOptions.slice(0, 120);
+
+  const toggleSelection = (id: string) => {
+    if (disabled) return;
+    onChange(selectedSet.has(id) ? selectedIds.filter((item) => item !== id) : [...selectedIds, id]);
   };
 
+  const selectedOptions = useMemo(() => options.filter((option) => selectedSet.has(option.id)), [options, selectedSet]);
+
+  return (
+    <div className="compact-multi-select stack-xs">
+      <div>
+        <strong>{label}</strong>
+        {helper && <p className="muted compact-multi-select-helper">{helper}</p>}
+      </div>
+      <div className="compact-multi-select-toolbar">
+        <div className="admin-search">
+          <span>🔎</span>
+          <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={searchPlaceholder} disabled={disabled} />
+        </div>
+        <button type="button" className="btn btn-ghost" onClick={() => onChange(options.map((option) => option.id))} disabled={disabled || options.length === 0}>{selectAllLabel}</button>
+        <button type="button" className="btn btn-ghost" onClick={() => onChange([])} disabled={disabled || selectedIds.length === 0}>{resetLabel}</button>
+      </div>
+      {selectedOptions.length > 0 && (
+        <div className="compact-chip-list">
+          {selectedOptions.map((option) => (
+            <button key={option.id} type="button" className="compact-chip" onClick={() => toggleSelection(option.id)} disabled={disabled}>
+              {option.label}
+              <span aria-hidden>×</span>
+            </button>
+          ))}
+        </div>
+      )}
+      <div className="compact-option-list" role="listbox" aria-label={label}>
+        {visibleOptions.map((option) => (
+          <button key={option.id} type="button" className={`compact-option ${selectedSet.has(option.id) ? 'is-selected' : ''}`} onClick={() => toggleSelection(option.id)} disabled={disabled}>
+            <span>{option.label}</span>
+            {option.meta && <small>{option.meta}</small>}
+          </button>
+        ))}
+        {filteredOptions.length > visibleOptions.length && <p className="muted">Zeige die ersten {visibleOptions.length} Treffer – Suche weiter eingrenzen.</p>}
+        {filteredOptions.length === 0 && <p className="muted">{emptyText}</p>}
+      </div>
+    </div>
+  );
+}
+
+function DeskEditor({ desk, floorplans, tenants, employees, defaultFloorplanId, initialPosition, lockFloorplan, onRequestPositionMode, onClose, onSaved, onError }: { desk: Desk | null; floorplans: Floorplan[]; tenants: Tenant[]; employees: Employee[]; defaultFloorplanId: string; initialPosition?: { x: number; y: number } | null; lockFloorplan?: boolean; onRequestPositionMode?: () => void; onClose: () => void; onSaved: () => Promise<void>; onError: (message: string) => void }) {
+  const [showPicker, setShowPicker] = useState(false);
+  const [inlineError, setInlineError] = useState('');
+  const [employeeFilterLimited, setEmployeeFilterLimited] = useState(true);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [form, setForm] = useState<DeskFormState>({
+    floorplanId: desk?.floorplanId ?? defaultFloorplanId ?? floorplans[0]?.id ?? '',
+    name: desk?.name ?? '',
+    kind: desk?.kind ?? (floorplans.find((item) => item.id === (desk?.floorplanId ?? defaultFloorplanId))?.defaultResourceKind ?? 'TISCH'),
+    hasCharger: Boolean(desk?.hasCharger),
+    seriesPolicy: toSeriesPolicy(desk?.allowSeriesOverride),
+    x: desk?.x ?? initialPosition?.x ?? null,
+    y: desk?.y ?? initialPosition?.y ?? null,
+    tenantScope: desk?.tenantScope ?? 'ALL',
+    tenantIds: desk?.tenantIds ?? [],
+    employeeScope: desk?.employeeScope ?? 'ALL',
+    employeeIds: desk?.employeeIds ?? [],
+  });
+
+  const floorplan = floorplans.find((item) => item.id === form.floorplanId) ?? null;
+
+  const tenantOptions = useMemo(
+    () => tenants.map((tenant) => ({ id: tenant.id, label: tenant.name ? `${tenant.name} (${tenant.domain})` : tenant.domain })),
+    [tenants]
+  );
+
+  const scopedEmployeePool = useMemo(() => employees.filter((employee) => {
+    if (!employee.isActive) return false;
+    if (form.tenantScope === 'ALL') return true;
+    return Boolean(employee.tenantDomainId && form.tenantIds.includes(employee.tenantDomainId));
+  }), [employees, form.tenantIds, form.tenantScope]);
+
+  const availableEmployees = useMemo(
+    () => (employeeFilterLimited ? scopedEmployeePool : employees.filter((employee) => employee.isActive)),
+    [employeeFilterLimited, scopedEmployeePool, employees]
+  );
+
+  const employeeOptions = useMemo(
+    () => availableEmployees.map((employee) => ({ id: employee.id, label: employee.displayName || employee.email, meta: employee.email })),
+    [availableEmployees]
+  );
+
+  const onFloorplanChange = (nextFloorplanId: string) => {
+    setForm((current) => ({
+      ...current,
+      floorplanId: nextFloorplanId,
+      kind: desk ? current.kind : (floorplans.find((item) => item.id === nextFloorplanId)?.defaultResourceKind ?? current.kind),
+      x: current.floorplanId === nextFloorplanId ? current.x : null,
+      y: current.floorplanId === nextFloorplanId ? current.y : null,
+    }));
+    setInlineError('');
+  };
 
   useEffect(() => {
     if (desk) return;
     const selectedFloorplan = floorplans.find((item) => item.id === form.floorplanId);
     if (!selectedFloorplan?.defaultResourceKind) return;
-    setForm((current) => current.kind === selectedFloorplan.defaultResourceKind
-      ? current
-      : { ...current, kind: selectedFloorplan.defaultResourceKind as ResourceKind });
+    setForm((current) => current.kind === selectedFloorplan.defaultResourceKind ? current : { ...current, kind: selectedFloorplan.defaultResourceKind as ResourceKind });
   }, [desk, floorplans, form.floorplanId]);
 
   useEffect(() => {
     setForm((current) => {
       if (current.employeeScope !== 'SELECTED') return current;
-      const allowedEmployeeIds = new Set(
-        employees
-          .filter((employee) => {
-            if (current.tenantScope === 'ALL') return true;
-            return Boolean(employee.tenantDomainId && current.tenantIds.includes(employee.tenantDomainId));
-          })
-          .map((employee) => employee.id)
-      );
+      const allowedEmployeeIds = new Set(availableEmployees.map((employee) => employee.id));
       const filteredEmployeeIds = current.employeeIds.filter((employeeId) => allowedEmployeeIds.has(employeeId));
       return filteredEmployeeIds.length === current.employeeIds.length ? current : { ...current, employeeIds: filteredEmployeeIds };
     });
-  }, [employees, form.tenantIds, form.tenantScope]);
+  }, [availableEmployees]);
+
+  const nameInvalid = !form.name.trim();
+  const tenantInvalid = form.tenantScope === 'SELECTED' && form.tenantIds.length === 0;
+  const employeeInvalid = form.employeeScope === 'SELECTED' && form.employeeIds.length === 0;
+  const positionInvalid = form.x === null || form.y === null;
+  const canSave = !nameInvalid && !tenantInvalid && !employeeInvalid && !positionInvalid && !isSubmitting;
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
-    if (form.x === null || form.y === null) {
-      setInlineError('Bitte Position im Plan setzen.');
+    if (!canSave) {
+      setInlineError(positionInvalid ? 'Bitte Position im Plan setzen.' : 'Bitte Pflichtfelder prüfen.');
       return;
     }
+    setIsSubmitting(true);
+    setInlineError('');
     try {
-      if (desk) {
-        await patch(`/admin/desks/${desk.id}`, { name: form.name, kind: form.kind, hasCharger: form.kind === 'PARKPLATZ' ? form.hasCharger : false, allowSeriesOverride: fromSeriesPolicy(form.seriesPolicy), x: form.x, y: form.y, tenantScope: form.tenantScope, tenantIds: form.tenantScope === 'SELECTED' ? form.tenantIds : [], employeeScope: form.employeeScope, employeeIds: form.employeeScope === 'SELECTED' ? form.employeeIds : [] });
-      } else {
-        await post(`/admin/floorplans/${form.floorplanId}/desks`, { name: form.name, kind: form.kind, hasCharger: form.kind === 'PARKPLATZ' ? form.hasCharger : false, allowSeriesOverride: fromSeriesPolicy(form.seriesPolicy), x: form.x, y: form.y, tenantScope: form.tenantScope, tenantIds: form.tenantScope === 'SELECTED' ? form.tenantIds : [], employeeScope: form.employeeScope, employeeIds: form.employeeScope === 'SELECTED' ? form.employeeIds : [] });
-      }
+      const payload = {
+        name: form.name.trim(),
+        kind: form.kind,
+        hasCharger: form.kind === 'PARKPLATZ' ? form.hasCharger : false,
+        allowSeriesOverride: fromSeriesPolicy(form.seriesPolicy),
+        x: form.x,
+        y: form.y,
+        tenantScope: form.tenantScope,
+        tenantIds: form.tenantScope === 'SELECTED' ? form.tenantIds : [],
+        employeeScope: form.employeeScope,
+        employeeIds: form.employeeScope === 'SELECTED' ? form.employeeIds : [],
+      };
+      if (desk) await patch(`/admin/desks/${desk.id}`, payload);
+      else await post(`/admin/floorplans/${form.floorplanId}/desks`, payload);
       await onSaved();
     } catch (err) {
       onError(err instanceof Error ? err.message : 'Speichern fehlgeschlagen');
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
   return (
     <>
-      <div className="overlay"><section className="card dialog stack-sm"><h3>{desk ? 'Ressource bearbeiten' : 'Ressource anlegen'}</h3><form className="stack-sm" onSubmit={submit}>{lockFloorplan ? <label className="field"><span>Floorplan</span><input value={floorplans.find((f) => f.id === form.floorplanId)?.name ?? '—'} disabled /></label> : <label className="field"><span>Floorplan</span><select required value={form.floorplanId} onChange={(e) => onFloorplanChange(e.target.value)}><option value="">Floorplan wählen</option>{floorplans.map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}</select></label>}<label className="field"><span>Art</span><select value={form.kind} onChange={(e) => setForm((current) => ({ ...current, kind: e.target.value as ResourceKind }))}>{RESOURCE_KIND_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>{form.kind === 'PARKPLATZ' && <label className="field"><span>E-Ladesäule vorhanden</span><input type="checkbox" checked={form.hasCharger} onChange={(e) => setForm((current) => ({ ...current, hasCharger: e.target.checked }))} /></label>}<label className="field"><span>Serientermine</span><select value={form.seriesPolicy} onChange={(e) => setForm((current) => ({ ...current, seriesPolicy: e.target.value as SeriesPolicy }))}><option value="DEFAULT">Floor-Default verwenden</option><option value="ALLOW">Erlauben</option><option value="DISALLOW">Nicht erlauben</option></select><p className="muted">Default = Einstellung aus Floorplan.</p></label><label className="field"><span>Name</span><input required placeholder="z. B. H4" value={form.name} onChange={(e) => setForm((current) => ({ ...current, name: e.target.value }))} /></label><div className="field"><span>Buchbar für</span><div className="stack-xs"><label className="inline"><input type="radio" checked={form.tenantScope === 'ALL'} onChange={() => setForm((current) => ({ ...current, tenantScope: 'ALL', tenantIds: [] }))} />Alle Mandanten</label><label className="inline"><input type="radio" checked={form.tenantScope === 'SELECTED'} onChange={() => setForm((current) => ({ ...current, tenantScope: 'SELECTED' }))} />Bestimmte Mandanten</label>{form.tenantScope === 'SELECTED' && <div className="stack-xs">{tenants.map((tenant) => <label key={tenant.id} className="inline"><input type="checkbox" checked={form.tenantIds.includes(tenant.id)} onChange={(event) => setForm((current) => ({ ...current, tenantIds: event.target.checked ? Array.from(new Set([...current.tenantIds, tenant.id])) : current.tenantIds.filter((id) => id !== tenant.id) }))} />{tenant.name ? `${tenant.name} (${tenant.domain})` : tenant.domain}</label>)}{tenants.length === 0 && <p className="muted">Keine Mandanten vorhanden.</p>}</div>}</div></div><div className="field"><span>Mitarbeiter-Freigabe</span><div className="stack-xs"><label className="inline"><input type="radio" checked={form.employeeScope === 'ALL'} onChange={() => setForm((current) => ({ ...current, employeeScope: 'ALL', employeeIds: [] }))} />Alle Mitarbeiter der erlaubten Mandanten</label><label className="inline"><input type="radio" checked={form.employeeScope === 'SELECTED'} onChange={() => setForm((current) => ({ ...current, employeeScope: 'SELECTED' }))} />Bestimmte Mitarbeiter</label>{form.employeeScope === 'SELECTED' && <div className="stack-xs">{availableEmployees.map((employee) => <label key={employee.id} className="inline"><input type="checkbox" checked={form.employeeIds.includes(employee.id)} onChange={(event) => setForm((current) => ({ ...current, employeeIds: event.target.checked ? Array.from(new Set([...current.employeeIds, employee.id])) : current.employeeIds.filter((id) => id !== employee.id) }))} />{employee.displayName} ({employee.email})</label>)}{availableEmployees.length === 0 && <p className="muted">Keine passenden Mitarbeiter verfügbar.</p>}</div>}</div></div><div className="field"><span>Position</span><div className="inline-between"><Badge tone={form.x !== null && form.y !== null ? 'ok' : 'warn'}>{form.x !== null && form.y !== null ? `Position gesetzt (${Math.round(form.x * 100)}% / ${Math.round(form.y * 100)}%)` : 'Keine Position gesetzt'}</Badge><div className="admin-toolbar">{onRequestPositionMode && <button type="button" className="btn btn-outline" onClick={() => { onClose(); onRequestPositionMode(); }}>Position im Plan ändern</button>}<button type="button" className="btn btn-outline" disabled={!form.floorplanId} onClick={() => setShowPicker(true)}>{form.x !== null && form.y !== null ? 'Neu positionieren' : 'Position im Plan setzen'}</button></div></div>{!form.floorplanId && <p className="muted">Bitte Floorplan wählen.</p>}</div>{inlineError && <p className="error-banner">{inlineError}</p>}<div className="inline-end"><button type="button" className="btn btn-outline" onClick={onClose}>Abbrechen</button><button className="btn" disabled={!canSave}>Speichern</button></div></form></section></div>
+      <div className="overlay">
+        <section className="card dialog resource-editor-dialog" role="dialog" aria-modal="true">
+          <header className="resource-editor-header">
+            <h3>{desk ? 'Ressource bearbeiten' : 'Ressource anlegen'}</h3>
+            <p className="muted">Verwalte Grunddaten, Buchbarkeit und Freigaben in klaren Bereichen.</p>
+          </header>
+          <form className="resource-editor-form" onSubmit={submit}>
+            <fieldset disabled={isSubmitting}>
+              <div className="resource-editor-grid">
+                <section className="resource-editor-section stack-sm">
+                  <h4>Grunddaten</h4>
+                  <p className="muted">Basiseinstellungen für diese Ressource.</p>
+                  {lockFloorplan ? <label className="field"><span>Floorplan</span><input value={floorplans.find((f) => f.id === form.floorplanId)?.name ?? '—'} disabled /></label> : <label className="field"><span>Floorplan</span><select required value={form.floorplanId} onChange={(e) => onFloorplanChange(e.target.value)}><option value="">Floorplan wählen</option>{floorplans.map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}</select></label>}
+                  <label className="field"><span>Art/Typ</span><select value={form.kind} onChange={(e) => setForm((current) => ({ ...current, kind: e.target.value as ResourceKind }))}>{RESOURCE_KIND_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
+                  <label className="field"><span>Name</span><input placeholder="z. B. H4" value={form.name} onChange={(e) => setForm((current) => ({ ...current, name: e.target.value }))} /></label>
+                  {nameInvalid && <p className="error-inline">Name ist erforderlich.</p>}
+                  <label className="field"><span>Serientermine</span><select value={form.seriesPolicy} onChange={(e) => setForm((current) => ({ ...current, seriesPolicy: e.target.value as SeriesPolicy }))}><option value="DEFAULT">Floor-Default verwenden</option><option value="ALLOW">Erlauben</option><option value="DISALLOW">Verbieten</option></select><p className="muted">Default = Einstellung aus Floorplan.</p></label>
+                  {form.kind === 'PARKPLATZ' && <label className="inline"><input type="checkbox" checked={form.hasCharger} onChange={(e) => setForm((current) => ({ ...current, hasCharger: e.target.checked }))} />E-Ladesäule vorhanden</label>}
+                </section>
+
+                <section className="resource-editor-section stack-sm">
+                  <h4>Buchbarkeit</h4>
+                  <p className="muted">Steuert, welche Mandanten buchen dürfen.</p>
+                  <div className="stack-xs">
+                    <label className="inline"><input type="radio" checked={form.tenantScope === 'ALL'} onChange={() => setForm((current) => ({ ...current, tenantScope: 'ALL', tenantIds: [] }))} />Alle Mandanten</label>
+                    <label className="inline"><input type="radio" checked={form.tenantScope === 'SELECTED'} onChange={() => setForm((current) => ({ ...current, tenantScope: 'SELECTED' }))} />Bestimmte Mandanten</label>
+                  </div>
+                  {form.tenantScope === 'SELECTED' && (
+                    <>
+                      <CompactMultiSelect label="Mandanten auswählen" options={tenantOptions} selectedIds={form.tenantIds} onChange={(tenantIds) => setForm((current) => ({ ...current, tenantIds }))} searchPlaceholder="Mandanten suchen" emptyText="Keine Mandanten gefunden." />
+                      {tenantInvalid && <p className="error-inline">Bitte mindestens einen Mandanten auswählen.</p>}
+                    </>
+                  )}
+                </section>
+
+                <section className="resource-editor-section stack-sm">
+                  <h4>Mitarbeiter-Freigabe</h4>
+                  <p className="muted">Optional auf einzelne Mitarbeitende eingrenzen.</p>
+                  <div className="stack-xs">
+                    <label className="inline"><input type="radio" checked={form.employeeScope === 'ALL'} onChange={() => setForm((current) => ({ ...current, employeeScope: 'ALL', employeeIds: [] }))} />Alle Mitarbeiter der erlaubten Mandanten</label>
+                    <label className="inline"><input type="radio" checked={form.employeeScope === 'SELECTED'} onChange={() => setForm((current) => ({ ...current, employeeScope: 'SELECTED' }))} />Bestimmte Mitarbeiter</label>
+                  </div>
+                  {form.employeeScope === 'SELECTED' && (
+                    <>
+                      <label className="inline"><input type="checkbox" checked={employeeFilterLimited} onChange={(event) => setEmployeeFilterLimited(event.target.checked)} />Nur Mitarbeiter der ausgewählten Mandanten anzeigen</label>
+                      <CompactMultiSelect label="Mitarbeiter auswählen" options={employeeOptions} selectedIds={form.employeeIds} onChange={(employeeIds) => setForm((current) => ({ ...current, employeeIds }))} searchPlaceholder="Mitarbeiter suchen" emptyText="Keine passenden Mitarbeiter verfügbar." selectAllLabel="Alle Treffer auswählen" />
+                      {employeeInvalid && <p className="error-inline">Bitte mindestens einen Mitarbeiter auswählen.</p>}
+                    </>
+                  )}
+                </section>
+
+                <section className="resource-editor-section stack-sm">
+                  <h4>Position</h4>
+                  <p className="muted">Koordinate im Floorplan setzen oder ändern.</p>
+                  <div className={`resource-position-box ${positionInvalid ? 'is-missing' : 'is-set'}`}>
+                    <Badge tone={positionInvalid ? 'warn' : 'ok'}>{positionInvalid ? 'Position fehlt' : 'Position gesetzt'}</Badge>
+                    <p className="muted">Koordinaten: {positionInvalid ? 'Nicht gesetzt' : `${Math.round(form.x ?? 0)}px / ${Math.round(form.y ?? 0)}px`}</p>
+                    <div className="admin-toolbar">
+                      {onRequestPositionMode && <button type="button" className="btn btn-outline" onClick={() => { onClose(); onRequestPositionMode(); }}>Position im Plan ändern</button>}
+                      <button type="button" className="btn btn-outline" disabled={!form.floorplanId} onClick={() => setShowPicker(true)}>{positionInvalid ? 'Position im Plan setzen' : 'Neu positionieren'}</button>
+                    </div>
+                    {!form.floorplanId && <p className="muted">Bitte zuerst Floorplan wählen.</p>}
+                    {positionInvalid && <p className="error-inline">Bitte Position setzen, bevor gespeichert wird.</p>}
+                  </div>
+                </section>
+              </div>
+            </fieldset>
+            {inlineError && <p className="error-banner">{inlineError}</p>}
+            <footer className="resource-editor-footer">
+              <button type="button" className="btn btn-outline" onClick={onClose} disabled={isSubmitting}>Abbrechen</button>
+              <button className="btn" disabled={!canSave}>{isSubmitting ? <><span className="btn-spinner" aria-hidden />Speichern…</> : 'Speichern'}</button>
+            </footer>
+          </form>
+        </section>
+      </div>
       {showPicker && <PositionPickerDialog floorplan={floorplan} x={form.x} y={form.y} onClose={() => setShowPicker(false)} onPick={(x, y) => { setForm((current) => ({ ...current, x, y })); setShowPicker(false); setInlineError(''); }} />}
     </>
   );
