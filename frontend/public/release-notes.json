@@ -1,5 +1,17 @@
 [
   {
+    "version": "1.5.34",
+    "date": "2026-02-19",
+    "type": "feature",
+    "title": "Ressourcen können auf bestimmte Mitarbeitende begrenzt werden",
+    "summary": "Bei jeder Ressource kann jetzt zusätzlich zum Mandanten festgelegt werden, ob alle oder nur ausgewählte Mitarbeitende buchen dürfen.",
+    "items": [
+      "Im Admin-Dialog für Ressourcen gibt es eine neue Mitarbeiter-Freigabe mit den Optionen \"alle\" oder \"bestimmte Mitarbeiter\".",
+      "Bei einer Auswahl zeigt die Oberfläche nur Mitarbeitende aus den erlaubten Mandanten an.",
+      "Bestehende Ressourcen bleiben nach dem Update standardmäßig auf \"alle Mitarbeiter\" eingestellt und funktionieren unverändert weiter."
+    ]
+  },
+  {
     "version": "1.5.33",
     "date": "2026-02-19",
     "type": "bugfix",

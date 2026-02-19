@@ -76,6 +76,7 @@ model Employee {
   recurringBookingsCreated RecurringBooking[] @relation("RecurringBookingCreatedByEmployee")
   feedbackReports FeedbackReport[] @relation("FeedbackReportEmployee")
   tenant      Tenant?   @relation(fields: [tenantDomainId], references: [id], onDelete: SetNull)
+  deskEmployees DeskEmployee[]
 
   @@index([tenantDomainId])
 }
@@ -130,6 +131,7 @@ model Desk {
   hasCharger        Boolean            @default(false)
   allowSeriesOverride Boolean?
   tenantScope       DeskTenantScope    @default(ALL)
+  employeeScope     DeskEmployeeScope  @default(ALL)
   x                 Float?
   y                 Float?
   createdAt         DateTime           @default(now())
@@ -137,6 +139,7 @@ model Desk {
   bookings          Booking[]
   recurringBookings RecurringBooking[] @relation("RecurringBookingResource")
   deskTenants       DeskTenant[]
+  deskEmployees     DeskEmployee[]
 
   @@index([floorplanId])
 }
@@ -155,6 +158,22 @@ model DeskTenant {
 enum DeskTenantScope {
   ALL
   SELECTED
+}
+
+enum DeskEmployeeScope {
+  ALL
+  SELECTED
+}
+
+model DeskEmployee {
+  deskId      String
+  employeeId  String
+  createdAt   DateTime @default(now())
+  desk        Desk     @relation(fields: [deskId], references: [id], onDelete: Cascade)
+  employee    Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  @@id([deskId, employeeId])
+  @@index([employeeId])
 }
 
 enum ResourceKind {
