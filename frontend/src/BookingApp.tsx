@@ -2330,8 +2330,8 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
       setDialogErrorMessage('Für diese Ressource sind Serientermine nicht erlaubt.');
       return;
     }
-    if (roomBookingConflict) {
-      setDialogErrorMessage(roomBookingConflict);
+    if (timeRangeBookingConflict) {
+      setDialogErrorMessage(timeRangeBookingConflict);
       return;
     }
     if (!deskPopup || !popupDesk || !canBookDesk(popupDesk)) return;
