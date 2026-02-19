@@ -198,6 +198,7 @@ const FEEDBACK_SCREENSHOT_MAX_BYTES = 3 * 1024 * 1024;
 const FEEDBACK_SCREENSHOT_ACCEPT = 'image/png,image/jpeg,image/webp';
 
 const OVERVIEW_QUERY_KEY = 'overview';
+const FLOORPLAN_QUERY_KEY = 'floorplan';
 
 const isOverviewView = (value: string | null): value is OverviewView => value === 'presence' || value === 'rooms' || value === 'myBookings';
 
@@ -205,6 +206,11 @@ const getInitialOverviewView = (): OverviewView => {
   if (typeof window === 'undefined') return 'presence';
   const queryValue = new URLSearchParams(window.location.search).get(OVERVIEW_QUERY_KEY);
   return isOverviewView(queryValue) ? queryValue : 'presence';
+};
+
+const getInitialFloorplanId = (): string => {
+  if (typeof window === 'undefined') return '';
+  return new URLSearchParams(window.location.search).get(FLOORPLAN_QUERY_KEY) ?? '';
 };
 
 const clamp = (value: number, min: number, max: number): number => Math.min(max, Math.max(min, value));
@@ -614,7 +620,7 @@ function TopLoadingBar({ loading }: { loading: boolean }) {
 
 export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogout, currentUser }: { onOpenAdmin: () => void; canOpenAdmin: boolean; currentUserEmail?: string; onLogout: () => Promise<void>; currentUser: AuthUser }) {
   const [floorplans, setFloorplans] = useState<Floorplan[]>([]);
-  const [selectedFloorplanId, setSelectedFloorplanId] = useState('');
+  const [selectedFloorplanId, setSelectedFloorplanId] = useState(() => getInitialFloorplanId());
   const [selectedDate, setSelectedDate] = useState(today);
   const [visibleMonth, setVisibleMonth] = useState(startOfMonth(today));
 
@@ -715,10 +721,34 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
     if (typeof window === 'undefined') return;
     const params = new URLSearchParams(window.location.search);
     params.set(OVERVIEW_QUERY_KEY, overviewView);
+    if (selectedFloorplanId) {
+      params.set(FLOORPLAN_QUERY_KEY, selectedFloorplanId);
+    } else {
+      params.delete(FLOORPLAN_QUERY_KEY);
+    }
+
     const query = params.toString();
-    const nextUrl = `${window.location.pathname}${query ? `?${query}` : ''}${window.location.hash}`;
-    window.history.replaceState({}, '', nextUrl);
-  }, [overviewView]);
+    const nextUrl = `${window.location.pathname}${query ? `?${query}` : ''}`;
+    const currentUrl = `${window.location.pathname}${window.location.search}`;
+    if (nextUrl !== currentUrl) {
+      window.history.replaceState({}, '', nextUrl);
+    }
+  }, [overviewView, selectedFloorplanId]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    const syncFromUrl = () => {
+      const params = new URLSearchParams(window.location.search);
+      const nextOverview = params.get(OVERVIEW_QUERY_KEY);
+      const nextFloorplanId = params.get(FLOORPLAN_QUERY_KEY) ?? '';
+      setOverviewView((current) => (isOverviewView(nextOverview) ? nextOverview : current));
+      setSelectedFloorplanId((current) => (current === nextFloorplanId ? current : nextFloorplanId));
+    };
+
+    window.addEventListener('popstate', syncFromUrl);
+    return () => window.removeEventListener('popstate', syncFromUrl);
+  }, []);
 
   const [highlightedDeskId, setHighlightedDeskId] = useState('');
   const occupantRowRefs = useRef<Record<string, HTMLDivElement | null>>({});
