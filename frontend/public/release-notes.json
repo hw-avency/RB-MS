@@ -1,5 +1,17 @@
 [
   {
+    "version": "1.5.52",
+    "date": "2026-02-19",
+    "type": "bugfix",
+    "title": "Parkplatzbuchungen erlauben jetzt nahtlosen Übergang zur vollen Stunde",
+    "summary": "Beim Prüfen von Zeitüberschneidungen werden Ende und Anfang jetzt konsistent als direkt anschließbar behandelt. Dadurch kann eine neue Parkplatzbuchung exakt dann starten, wenn die vorherige endet.",
+    "items": [
+      "Zeitfenster-Checks nutzen jetzt zentral dieselbe Regel: Berühren sich zwei Buchungen nur am Rand (z. B. 14:00–14:00), gilt das nicht als Konflikt.",
+      "Die Überlappungslogik wurde im Backend vereinheitlicht, damit dieselbe Bewertung in allen Buchungsprüfungen gilt.",
+      "Ein zusätzlicher automatischer Test stellt sicher, dass nahtlose Anschlussbuchungen weiterhin erlaubt bleiben."
+    ]
+  },
+  {
     "version": "1.5.51",
     "date": "2026-02-19",
     "type": "bugfix",

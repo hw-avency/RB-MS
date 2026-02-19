@@ -1,3 +1,5 @@
+import { overlapsHalfOpenIntervals } from './timeOverlap';
+
 export type ParkingWindow = { startMinute: number; endMinute: number };
 export type ParkingSpot = { id: string; hasCharger: boolean };
 export type ParkingBooking = { deskId: string; startMinute: number; endMinute: number };
@@ -11,7 +13,9 @@ export type ParkingAssignmentProposal = {
   usedFallbackChargerFullWindow: boolean;
 };
 
-export const windowsOverlap = (left: ParkingWindow, right: ParkingWindow): boolean => left.startMinute < right.endMinute && right.startMinute < left.endMinute;
+export const windowsOverlap = (left: ParkingWindow, right: ParkingWindow): boolean => (
+  overlapsHalfOpenIntervals(left.startMinute, left.endMinute, right.startMinute, right.endMinute)
+);
 
 const isSpotFree = (spotId: string, window: ParkingWindow, bookings: ParkingBooking[]): boolean => (
   bookings.filter((booking) => booking.deskId === spotId).every((booking) => !windowsOverlap(window, booking))

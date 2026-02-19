@@ -7,6 +7,7 @@ import { BookedFor, BookingSlot, DaySlot, DeskEmployeeScope, DeskTenantScope, Fe
 import { prisma } from './prisma';
 import { expandRecurrence, MAX_SERIES_OCCURRENCES, type RecurrenceDefinition, validateRecurrenceDefinition } from './recurrence';
 import { buildParkingAssignmentProposal, windowsOverlap as parkingWindowsOverlap } from './parkingAssignment';
+import { overlapsHalfOpenIntervals } from './timeOverlap';
 
 const app = express();
 const port = Number(process.env.PORT ?? 3000);
@@ -956,12 +957,12 @@ const windowsOverlap = (left: BookingWindowInput, right: BookingWindowInput): bo
     return overlapsDaySlot(left.daySlot, right.daySlot);
   }
   if (left.mode === 'time' && right.mode === 'time') {
-    return left.startMinute < right.endMinute && right.startMinute < left.endMinute;
+    return overlapsHalfOpenIntervals(left.startMinute, left.endMinute, right.startMinute, right.endMinute);
   }
 
   const normalizedLeft = left.mode === 'day' ? daySlotToMinuteRange(left.daySlot) : left;
   const normalizedRight = right.mode === 'day' ? daySlotToMinuteRange(right.daySlot) : right;
-  return normalizedLeft.startMinute < normalizedRight.endMinute && normalizedRight.startMinute < normalizedLeft.endMinute;
+  return overlapsHalfOpenIntervals(normalizedLeft.startMinute, normalizedLeft.endMinute, normalizedRight.startMinute, normalizedRight.endMinute);
 };
 
 const resolveBookingWindow = ({ deskKind, daySlot, slot, startTime, endTime }: { deskKind: ResourceKind; daySlot?: unknown; slot?: unknown; startTime?: unknown; endTime?: unknown }): { ok: true; value: BookingWindowInput } | { ok: false; message: string } => {
