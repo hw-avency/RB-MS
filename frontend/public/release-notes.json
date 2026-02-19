@@ -1,5 +1,18 @@
 [
   {
+    "version": "1.5.33",
+    "date": "2026-02-19",
+    "type": "feature",
+    "title": "Smart-Parking-Button als klare Hauptaktion im Header",
+    "summary": "Der Button „Parkplatz intelligent zuweisen“ ist jetzt deutlich als primäre Smart-Aktion gestaltet – mit Magie-Icon, stärkerer Hervorhebung und mobiler Vollbreite.",
+    "items": [
+      "Der Smart-Parking-Button im Floorplan-Header ist größer, farblich hervorgehoben und wirkt klar als Hauptaktion.",
+      "Links neben dem Text wird jetzt ein Magie-Icon angezeigt, damit die intelligente Funktion schneller erkannt wird.",
+      "Beim Hover reagiert der Button mit dezenter Vergrößerung und stärkerem Schatten, auf Fokus mit gut sichtbarem Focus-Ring.",
+      "Auf mobilen Geräten wird der Button unter dem Titel über die volle Breite dargestellt."
+    ]
+  },
+  {
     "version": "1.5.32",
     "date": "2026-02-19",
     "type": "bugfix",
