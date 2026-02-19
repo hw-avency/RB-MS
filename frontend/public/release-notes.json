@@ -1,5 +1,16 @@
 [
   {
+    "version": "1.5.51",
+    "date": "2026-02-19",
+    "type": "bugfix",
+    "title": "Floor-Ressourcen laden nach Login und Reload wieder zuverlässig",
+    "summary": "Beim ersten Laden nach neuer Anmeldung oder Seiten-Reload bleibt der Floor jetzt nicht mehr leer. Ressourcen und Belegung werden wieder stabil dargestellt.",
+    "items": [
+      "Ein Race-Condition im initialen Belegungsabruf wurde behoben, damit Antworten nicht fälschlich verworfen werden.",
+      "Nach Login und nach einem Browser-Reload werden Ressourcen auf dem gewählten Floor wieder konsistent angezeigt."
+    ]
+  },
+  {
     "version": "1.5.50",
     "date": "2026-02-19",
     "type": "bugfix",
