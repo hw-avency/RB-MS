@@ -1,13 +1,12 @@
 [
   {
-    "version": "1.5.56",
+    "version": "1.6.0",
     "date": "2026-02-19",
     "type": "bugfix",
-    "title": "Kalendererinnerung nur noch bei echtem Parkplatzwechsel sichtbar",
-    "summary": "Nach erfolgreicher Smart-Parking-Buchung wird der Button für die Kalendererinnerung jetzt nur noch angezeigt, wenn tatsächlich ein Wechsel zwischen zwei Parkplätzen vorliegt.",
+    "title": "Intelligentes Parken, User-Settings, Erweiterte Rechte an Ressourcen",
+    "summary": "Gaaanz viele tolle neue Feautures.",
     "items": [
-      "Wenn der Vorschlag nur einen einzelnen Parkplatz enthält, wird die Aktion „Kalendererinnerung erstellen“ komplett ausgeblendet statt deaktiviert.",
-      "Bei echten Wechseln mit mindestens zwei aufeinanderfolgenden Parkplatzbuchungen bleibt der Button wie gewohnt verfügbar."
+      "Source: Trust be bro."
     ]
   },
   {
