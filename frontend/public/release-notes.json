@@ -1,5 +1,16 @@
 [
   {
+    "version": "1.5.45",
+    "date": "2026-02-19",
+    "type": "bugfix",
+    "title": "Doppelbuchungen bei Parkplätzen werden verhindert",
+    "summary": "Überlappende Parkplatz-Buchungen werden jetzt sowohl im Buchungsdialog als auch serverseitig konsequent abgefangen.",
+    "items": [
+      "Bei zeitbasierten Parkplätzen zeigt der Buchungsdialog direkt einen Konflikthinweis, wenn das gewählte Zeitfenster bereits belegt ist.",
+      "Das Backend blockiert zusätzlich jede überlappende Parkplatz-Buchung derselben Person – auch auf demselben Parkplatz und zur selben Uhrzeit."
+    ]
+  },
+  {
     "version": "1.5.44",
     "date": "2026-02-19",
     "type": "bugfix",

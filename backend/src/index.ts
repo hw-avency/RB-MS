@@ -3472,7 +3472,7 @@ app.post('/bookings', async (req, res) => {
       });
 
     const existingUserBooking = conflictingUserBookings[0] ?? null;
-    if (identity && existingUserBooking && existingUserBooking.deskId !== deskId && !shouldReplaceExisting) {
+    if (identity && existingUserBooking && !shouldReplaceExisting) {
       logBookingEvent('MANUAL_CREATE_CONFLICT_USER_HAS_BOOKING', {
         requestId,
         deskId,
@@ -3483,7 +3483,9 @@ app.post('/bookings', async (req, res) => {
       }, 'warn');
       return {
         kind: 'conflict' as const,
-        message: 'User already has a booking for this date and resource kind',
+        message: desk.kind === 'PARKPLATZ'
+          ? 'User already has a parking booking for this time window'
+          : 'User already has a booking for this date and resource kind',
         details: {
           conflictKind: desk.kind,
           existingBooking: {
