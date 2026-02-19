@@ -3404,7 +3404,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
 
       {isParkingSmartConfirmDialogOpen && parkingSmartProposal && createPortal(
         <div className="overlay" role="presentation">
-          <section className="card dialog rebook-dialog" role="dialog" aria-modal="true" aria-labelledby="parking-smart-confirm-title">
+          <section className="card dialog rebook-dialog parking-smart-confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="parking-smart-confirm-title">
             <h3 id="parking-smart-confirm-title">Parkplatz-Buchung bestätigen?</h3>
             <p>Bitte bestätige den vorgeschlagenen Parkplatz-Zeitplan.</p>
             <ParkingScheduleGrid entries={parkingScheduleEntries.map((entry) => ({ ...entry, id: `confirm-${entry.id}` }))} />
