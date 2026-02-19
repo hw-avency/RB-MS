@@ -1,5 +1,17 @@
 [
   {
+    "version": "1.5.43",
+    "date": "2026-02-19",
+    "type": "bugfix",
+    "title": "Smart-Parking-Dialog richtet Zeitfelder und Aktionen klar aus",
+    "summary": "Im Dialog zur intelligenten Parkplatz-Zuweisung stehen An-/Abreise sowie Laden erforderlich/Ladedauer jetzt sauber nebeneinander. Außerdem wurden die Zeit-Icons entfernt und der Button „Vorschlag berechnen“ visuell als blaue Outline hervorgehoben.",
+    "items": [
+      "Anreise und Abreise werden als feste Zeile nebeneinander dargestellt.",
+      "Laden erforderlich und Ladedauer stehen ebenfalls immer gemeinsam in einer Zeile; die Ladedauer bleibt sichtbar und wird nur deaktiviert, wenn kein Laden nötig ist.",
+      "Die rechten Uhr-Icons an den Zeitfeldern wurden entfernt und „Vorschlag berechnen“ hat jetzt einen blauen Rahmen mit dezenter blauer Fläche."
+    ]
+  },
+  {
     "version": "1.5.42",
     "date": "2026-02-19",
     "type": "bugfix",
