@@ -44,6 +44,8 @@ Keine manuellen Shell-Schritte beim Nutzer voraussetzen.
 - 3-Spalten Layout: links Kalender (Mo-Start), Mitte Floorplan, rechts Anwesenheit/Details.
 - Overlays/Popups nie im scrollenden Container rendern → Portal (`document.body`) + `position: fixed` + edge-clamp.
 - Keine Koordinaten-Inputs im UI → visuelles „Neu anordnen“.
+- Buttons müssen imer mindestens 5px Abstand zu nebenliegenden Elementen haben.
+- Generell müssen Objekte immer mindestens 5px Abstand zu Texten oder anderen Objekten haben.
 
 
 ## Versionierung (verbindlich)
