@@ -147,6 +147,7 @@ const DeskOverlay = memo(function DeskOverlay({ markers, selectedDeskId, hovered
         {markers.map(({ resource: desk, xPct, yPct }) => {
           const bookings = normalizeBookings(desk);
           const isRoom = desk.kind === 'RAUM';
+          const showClockCenter = isClockSegmentResource(desk.kind);
           const useClockRing = isClockSegmentResource(desk.kind);
           const roomMarkerLabel = isRoom ? getRoomMarkerLabel(desk) : null;
           const fullBooking = bookings.find((booking) => slotFromBooking(booking) === 'FULL');
@@ -262,7 +263,7 @@ const DeskOverlay = memo(function DeskOverlay({ markers, selectedDeskId, hovered
               )}
 
               <span className="pin-center" style={{ width: CENTER_SIZE, height: CENTER_SIZE }}>
-                {isRoom ? (
+                {showClockCenter ? (
                   <span className="room-center-label">
                     <span className="room-center-icon" aria-hidden="true">
                       <svg viewBox="0 0 24 24" role="presentation" focusable="false">
@@ -270,7 +271,7 @@ const DeskOverlay = memo(function DeskOverlay({ markers, selectedDeskId, hovered
                         <path d="M12 8.5V12l2.5 1.75" fill="none" />
                       </svg>
                     </span>
-                    {roomMarkerLabel && <small>{roomMarkerLabel}</small>}
+                    {isRoom && roomMarkerLabel && <small>{roomMarkerLabel}</small>}
                   </span>
                 ) : bookings.length >= 2 && !fullBooking ? (
                   <span className="desk-pin-count">2</span>

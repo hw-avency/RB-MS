@@ -1,5 +1,16 @@
 [
   {
+    "version": "1.5.34",
+    "date": "2026-02-19",
+    "type": "bugfix",
+    "title": "Parkplatz-Marker zeigen jetzt eine Uhr im Floorplan",
+    "summary": "Bei Parkplätzen zeigt der Kreis im Floorplan jetzt wie bei Räumen eine Uhrdarstellung statt Nutzer-Initialen. So ist die Zeitlogik visuell konsistent.",
+    "items": [
+      "Parkplätze verwenden im Marker-Zentrum jetzt ebenfalls das Uhr-Icon statt Avatar/Initialen.",
+      "Raum-Marker behalten weiterhin optional ihr kurzes Raum-Label unter der Uhr."
+    ]
+  },
+  {
     "version": "1.5.33",
     "date": "2026-02-19",
     "type": "bugfix",
