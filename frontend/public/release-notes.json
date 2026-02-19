@@ -1,5 +1,17 @@
 [
   {
+    "version": "1.5.35",
+    "date": "2026-02-19",
+    "type": "bugfix",
+    "title": "Nicht freigegebene Floorplans werden im Userbereich ausgeblendet",
+    "summary": "Nutzer sehen jetzt nur noch Floorplans, auf denen sie mindestens eine buchbare Ressource haben. Nicht freigegebene Bereiche können damit weder ausgewählt noch angezeigt werden.",
+    "items": [
+      "Die Floor-Liste im Userbereich blendet jetzt Standorte aus, für die es aufgrund der Mandanten-/Mitarbeiterfreigaben keine berechtigten Ressourcen gibt.",
+      "Dadurch erscheinen keine Floorplans mehr, auf denen ein Nutzer zwar landen kann, aber nichts buchen dürfte.",
+      "Admins sehen weiterhin alle Floorplans unverändert."
+    ]
+  },
+  {
     "version": "1.5.34",
     "date": "2026-02-19",
     "type": "feature",
