@@ -3569,7 +3569,9 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
                     ))}
                   </div>
                   <div className="inline-end parking-smart-confirm-actions parking-smart-confirm-actions-row">
-                    <button type="button" className="btn" onClick={createParkingReminderCalendarEvent} disabled={isParkingSmartLoading || !parkingSmartProposal || parkingSmartProposal.bookings.length < 2}>Kalendererinnerung erstellen</button>
+                    {parkingSmartProposal && parkingSmartProposal.bookings.length >= 2 && (
+                      <button type="button" className="btn" onClick={createParkingReminderCalendarEvent} disabled={isParkingSmartLoading}>Kalendererinnerung erstellen</button>
+                    )}
                     <button type="button" className="btn btn-danger" onClick={closeParkingSmartDialog} disabled={isParkingSmartLoading}>Schließen</button>
                   </div>
                 </>

@@ -1,5 +1,15 @@
 [
   {
+    "version": "1.6.0",
+    "date": "2026-02-19",
+    "type": "bugfix",
+    "title": "Intelligentes Parken, User-Settings, Erweiterte Rechte an Ressourcen",
+    "summary": "Gaaanz viele tolle neue Feautures.",
+    "items": [
+      "Source: Trust be bro."
+    ]
+  },
+  {
     "version": "1.5.55",
     "date": "2026-02-19",
     "type": "bugfix",
