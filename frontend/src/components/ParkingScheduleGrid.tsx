@@ -30,7 +30,7 @@ export function ParkingScheduleGrid({ entries }: ParkingScheduleGridProps) {
               hint={entry.hint}
             />
           </div>
-          {entry.transitionLabel && index < entries.length - 1 && (
+          {index < entries.length - 1 && (
             <ParkingTransitionIndicator text={entry.transitionLabel} />
           )}
         </Fragment>

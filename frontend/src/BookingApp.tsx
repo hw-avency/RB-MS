@@ -728,7 +728,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
   const [dialogErrorMessage, setDialogErrorMessage] = useState('');
   const [parkingSmartArrivalTime, setParkingSmartArrivalTime] = useState('08:00');
   const [parkingSmartDepartureTime, setParkingSmartDepartureTime] = useState('16:00');
-  const [parkingChargeMinutes, setParkingChargeMinutes] = useState(60);
+  const [parkingChargeMinutes, setParkingChargeMinutes] = useState(240);
   const [parkingSmartBookedFor, setParkingSmartBookedFor] = useState<'SELF' | 'GUEST'>('SELF');
   const [parkingSmartGuestName, setParkingSmartGuestName] = useState('');
   const [parkingSmartProposal, setParkingSmartProposal] = useState<ParkingSmartProposal | null>(null);
@@ -737,6 +737,9 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
   const [isParkingSmartLoading, setIsParkingSmartLoading] = useState(false);
   const [isParkingSmartDialogOpen, setIsParkingSmartDialogOpen] = useState(false);
   const [isParkingSmartConfirmDialogOpen, setIsParkingSmartConfirmDialogOpen] = useState(false);
+  const [parkingBulkCancelPreview, setParkingBulkCancelPreview] = useState<Array<{ id: string; deskLabel: string; timeLabel: string }>>([]);
+  const [isParkingBulkCancelOpen, setIsParkingBulkCancelOpen] = useState(false);
+  const [isParkingBulkCancelling, setIsParkingBulkCancelling] = useState(false);
   const [rebookConfirm, setRebookConfirm] = useState<RebookConfirmState | null>(null);
   const [isRebooking, setIsRebooking] = useState(false);
   const [recurringConflictState, setRecurringConflictState] = useState<RecurringConflictState | null>(null);
@@ -1748,8 +1751,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
       try {
         const resources = await runWithAppLoading(() => get<FloorplanResource[]>(`/floorplans/${selectedFloorplanId}/desks`));
         if (currentRequestId !== floorplanResourcesRequestIdRef.current) return;
-        if (selectedFloorplanId !== activeFloorId) return;
-        if (cancelled) return;
+                if (cancelled) return;
         setFloorplanResources(resources);
       } catch {
         if (cancelled) return;
@@ -1763,7 +1765,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
     return () => {
       cancelled = true;
     };
-  }, [activeFloorId, backendDown, selectedFloorplanId]);
+  }, [backendDown, selectedFloorplanId]);
 
 
   useEffect(() => {
@@ -1833,7 +1835,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
     }, hold);
   };
 
-  const selectDeskFromCanvas = (deskId: string, anchorEl?: HTMLElement, options?: { allowUnbookable?: boolean }) => {
+  const selectDeskFromCanvas = (deskId: string, anchorEl?: HTMLElement, options?: { allowUnbookable?: boolean; openProfileOnly?: boolean }) => {
     const desk = desks.find((entry) => entry.id === deskId);
     if (!desk || !anchorEl) return;
     if (desk.isBookableForMe === false && !options?.allowUnbookable) return;
@@ -1884,7 +1886,9 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
       fullyOccupiedByOthers = !canBookDesk(desk);
     }
 
-    if (hasMineBookings) {
+    if (options?.openProfileOnly) {
+      setBookingDialogState('IDLE');
+    } else if (hasMineBookings) {
       setBookingDialogState('IDLE');
     } else if (fullyOccupiedByOthers && !isRoomResource(desk)) {
       setBookingDialogState('IDLE');
@@ -2178,12 +2182,87 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
     }
   };
 
+  const createParkingReminderCalendarEvent = () => {
+    if (!parkingSmartProposal || parkingSmartProposal.bookings.length < 2) return;
+    const first = parkingSmartProposal.bookings[0];
+    const second = parkingSmartProposal.bookings[1];
+    const reminderMinute = Math.max(0, second.startMinute - 15);
+    const pad = (value: number) => String(value).padStart(2, '0');
+    const minuteToDate = (minute: number) => {
+      const [year, month, day] = selectedDate.split('-').map((value) => Number(value));
+      return new Date(Date.UTC(year, (month ?? 1) - 1, day ?? 1, Math.floor(minute / 60), minute % 60, 0));
+    };
+    const formatIcsDate = (date: Date) => `${date.getUTCFullYear()}${pad(date.getUTCMonth() + 1)}${pad(date.getUTCDate())}T${pad(date.getUTCHours())}${pad(date.getUTCMinutes())}00Z`;
+    const startAt = minuteToDate(reminderMinute);
+    const endAt = minuteToDate(Math.min(24 * 60 - 1, reminderMinute + 15));
+    const details = `Parkplatzwechsel am ${new Date(`${selectedDate}T00:00:00Z`).toLocaleDateString('de-DE')} um ${formatMinutes(second.startMinute)}.\\nVon: ${first.deskName} (${first.startTime ?? formatMinutes(first.startMinute)}-${first.endTime ?? formatMinutes(first.endMinute)})\\nAuf: ${second.deskName} (${second.startTime ?? formatMinutes(second.startMinute)}-${second.endTime ?? formatMinutes(second.endMinute)})`;
+    const ics = [
+      'BEGIN:VCALENDAR',
+      'VERSION:2.0',
+      'PRODID:-//RB-MS//ParkingReminder//DE',
+      'BEGIN:VEVENT',
+      `UID:parking-switch-${selectedDate}-${first.deskId}-${second.deskId}@rb-ms`,
+      `DTSTAMP:${formatIcsDate(new Date())}`,
+      `DTSTART:${formatIcsDate(startAt)}`,
+      `DTEND:${formatIcsDate(endAt)}`,
+      'SUMMARY:Parkplatzwechsel',
+      `DESCRIPTION:${details}`,
+      'BEGIN:VALARM',
+      'TRIGGER:-PT15M',
+      'ACTION:DISPLAY',
+      'DESCRIPTION:Parkplatzwechsel in 15 Minuten',
+      'END:VALARM',
+      'END:VEVENT',
+      'END:VCALENDAR'
+    ].join('\r\n');
+    const blob = new Blob([ics], { type: 'text/calendar;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = `parkplatzwechsel-${selectedDate}.ics`;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    URL.revokeObjectURL(url);
+  };
+
+  const openBulkParkingCancelDialog = () => {
+    const parkingBookings = myBookingsForSelectedDate
+      .filter((entry) => entry.desk.kind === 'PARKPLATZ' && Boolean(entry.booking.id))
+      .map((entry) => ({
+        id: entry.booking.id ?? '',
+        deskLabel: entry.desk.name,
+        timeLabel: bookingSlotLabel(entry.booking)
+      }));
+    if (parkingBookings.length === 0) return;
+    setParkingBulkCancelPreview(parkingBookings);
+    setIsParkingBulkCancelOpen(true);
+  };
+
+  const confirmBulkParkingCancel = async () => {
+    if (parkingBulkCancelPreview.length === 0) return;
+    setIsParkingBulkCancelling(true);
+    try {
+      await Promise.all(parkingBulkCancelPreview.map((booking) => cancelBooking(booking.id, 'single')));
+      toast.success(`${parkingBulkCancelPreview.length} Parkplatz-Buchung(en) storniert`);
+      setIsParkingBulkCancelOpen(false);
+      setParkingBulkCancelPreview([]);
+      await reloadBookings();
+      setBookingVersion((value) => value + 1);
+    } catch (error) {
+      toast.error(getApiErrorMessage(error, 'Buchungen konnten nicht vollständig storniert werden.'));
+    } finally {
+      setIsParkingBulkCancelling(false);
+    }
+  };
+
   const openParkingSmartDialog = () => {
     setParkingSmartError('');
     setParkingSmartInfo('');
     setParkingSmartProposal(null);
     setParkingSmartBookedFor('SELF');
     setParkingSmartGuestName('');
+    setParkingChargeMinutes(240);
     setIsParkingSmartConfirmDialogOpen(false);
     setIsParkingSmartDialogOpen(true);
   };
@@ -2195,6 +2274,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
     setParkingSmartProposal(null);
     setParkingSmartBookedFor('SELF');
     setParkingSmartGuestName('');
+    setParkingChargeMinutes(240);
     setIsParkingSmartConfirmDialogOpen(false);
     setIsParkingSmartDialogOpen(false);
   };
@@ -2886,12 +2966,12 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
             tabIndex={0}
             className={`occupant-compact-card ${(hoveredDeskId === occupant.deskId || selectedDeskId === occupant.deskId) ? 'is-active' : ''} ${highlightedDeskId === occupant.deskId ? 'is-highlighted' : ''}`}
             onClick={(event) => {
-              selectDeskFromCanvas(occupant.deskId, event.currentTarget, { allowUnbookable: true });
+              selectDeskFromCanvas(occupant.deskId, event.currentTarget, { allowUnbookable: true, openProfileOnly: true });
             }}
             onKeyDown={(event) => {
               if (event.key !== 'Enter' && event.key !== ' ') return;
               event.preventDefault();
-              selectDeskFromCanvas(occupant.deskId, event.currentTarget);
+              selectDeskFromCanvas(occupant.deskId, event.currentTarget, { openProfileOnly: true });
             }}
             onMouseEnter={() => {
               setHoveredDeskId(occupant.deskId);
@@ -3008,14 +3088,19 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
             <div className="card-header-row">
               <div>
                 <h2>{selectedFloorplan?.name ?? 'Floorplan'} · {formatDate(selectedDate)}</h2>
-                <p className="muted">Klicke auf einen Platz zum Buchen</p>
+
               </div>
               <div className="toolbar">
                 {isParkingFloor && (
-                  <button type="button" className="btn btn-primary-smart" onClick={openParkingSmartDialog}>
-                    <SparklesIcon />
-                    Parkplatz intelligent zuweisen
-                  </button>
+                  <div className="parking-toolbar-actions">
+                    <button type="button" className="btn btn-primary-smart" onClick={openParkingSmartDialog}>
+                      <SparklesIcon />
+                      Parkplatz intelligent zuweisen
+                    </button>
+                    {myBookingsForSelectedDate.some((entry) => entry.desk.kind === 'PARKPLATZ' && Boolean(entry.booking.id)) && (
+                      <button type="button" className="btn btn-danger" onClick={openBulkParkingCancelDialog}>Buchungen stornieren</button>
+                    )}
+                  </div>
                 )}
               </div>
             </div>
@@ -3318,13 +3403,21 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
                 <div className="parking-smart-row">
                   <div className="field parking-smart-field">
                     <span>Laden erforderlich</span>
-                    <label className="toggle parking-smart-toggle">
-                      <input type="checkbox" checked={parkingChargeMinutes > 0} onChange={(event) => setParkingChargeMinutes(event.target.checked ? (parkingChargeMinutes > 0 ? parkingChargeMinutes : 60) : 0)} disabled={isParkingSmartLoading} />
-                    </label>
+                    <button
+                      type="button"
+                      className={`parking-switch ${parkingChargeMinutes > 0 ? 'is-on' : 'is-off'}`}
+                      role="switch"
+                      aria-checked={parkingChargeMinutes > 0}
+                      onClick={() => setParkingChargeMinutes((current) => (current > 0 ? 0 : 240))}
+                      disabled={isParkingSmartLoading}
+                    >
+                      <span className="parking-switch-track" aria-hidden="true"><span className="parking-switch-thumb" /></span>
+                      <span className="parking-switch-label">{parkingChargeMinutes > 0 ? 'Ja' : 'Nein'}</span>
+                    </button>
                   </div>
                   <label className="field parking-smart-field">
                     <span>Ladedauer</span>
-                    <select value={String(parkingChargeMinutes > 0 ? parkingChargeMinutes : 60)} onChange={(event) => setParkingChargeMinutes(Math.max(60, Number(event.target.value) || 60))} disabled={isParkingSmartLoading || parkingChargeMinutes <= 0}>
+                    <select value={String(parkingChargeMinutes > 0 ? parkingChargeMinutes : 240)} onChange={(event) => setParkingChargeMinutes(Math.max(60, Number(event.target.value) || 240))} disabled={isParkingSmartLoading || parkingChargeMinutes <= 0}>
                       {Array.from({ length: 8 }, (_, index) => {
                         const hours = index + 1;
                         const minutes = hours * 60;
@@ -3365,16 +3458,42 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
         <div className="overlay" role="presentation">
           <section className="card dialog rebook-dialog parking-smart-confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="parking-smart-confirm-title">
             <h3 id="parking-smart-confirm-title">Parkplatz-Buchung bestätigen?</h3>
-            <p>Bitte bestätige den vorgeschlagenen Parkplatz-Zeitplan.</p>
+            <p className="parking-smart-confirm-intro">Bitte bestätige den vorgeschlagenen Parkplatz-Zeitplan.</p>
             <ParkingScheduleGrid entries={parkingScheduleEntries.map((entry) => ({ ...entry, id: `confirm-${entry.id}` }))} />
-            <div className="inline-end">
-              <button type="button" className="btn btn-outline" onClick={() => setIsParkingSmartConfirmDialogOpen(false)} disabled={isParkingSmartLoading}>Zurück</button>
+            {parkingSmartProposal.switchAfterCharging && parkingSmartProposal.bookings.length >= 2 && (
+              <button type="button" className="btn" onClick={createParkingReminderCalendarEvent} disabled={isParkingSmartLoading}>Kalendererinnerung erstellen</button>
+            )}
+            <div className="inline-end parking-smart-confirm-actions">
+              <button type="button" className="btn btn-danger" onClick={() => setIsParkingSmartConfirmDialogOpen(false)} disabled={isParkingSmartLoading}>Zurück</button>
               <button type="button" className="btn" onClick={confirmSmartParkingProposal} disabled={isParkingSmartLoading || hasParkingProposalConflict}>Jetzt verbindlich buchen</button>
             </div>
           </section>
         </div>,
         document.body
       )}
+
+      {isParkingBulkCancelOpen && createPortal(
+        <div className="overlay" role="presentation">
+          <section className="card dialog stack-sm cancel-booking-dialog" role="dialog" aria-modal="true" aria-labelledby="parking-bulk-cancel-title">
+            <h3 id="parking-bulk-cancel-title">Alle Parkplatz-Buchungen stornieren?</h3>
+            <p>Folgende Buchungen werden storniert:</p>
+            <div className="parking-bulk-cancel-list">
+              {parkingBulkCancelPreview.map((entry) => (
+                <div key={entry.id} className="parking-bulk-cancel-item">
+                  <strong>{entry.deskLabel}</strong>
+                  <span className="muted">{entry.timeLabel}</span>
+                </div>
+              ))}
+            </div>
+            <div className="inline-end parking-smart-confirm-actions">
+              <button type="button" className="btn btn-danger" onClick={() => { setIsParkingBulkCancelOpen(false); setParkingBulkCancelPreview([]); }} disabled={isParkingBulkCancelling}>Abbrechen</button>
+              <button type="button" className="btn" onClick={confirmBulkParkingCancel} disabled={isParkingBulkCancelling}>{isParkingBulkCancelling ? 'Storniere…' : 'Alle Buchungen stornieren'}</button>
+            </div>
+          </section>
+        </div>,
+        document.body
+      )}
+
 
       {feedbackDialogOpen && createPortal(
         <div className="overlay" role="presentation">
