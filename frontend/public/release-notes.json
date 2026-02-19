@@ -1,5 +1,17 @@
 [
   {
+    "version": "1.5.43",
+    "date": "2026-02-19",
+    "type": "bugfix",
+    "title": "Smart-Parking-Kacheln wurden auf kompakte Größe reduziert",
+    "summary": "Die Kacheln in der intelligenten Parkplatz-Zuweisung sind jetzt deutlich kleiner und nutzen maximal 5px Innenabstand, bleiben dabei aber weiterhin einheitlich groß.",
+    "items": [
+      "Die Parkplatz-Kacheln im Vorschlag und in der Bestätigung wurden auf ein kompaktes, festes Maß verkleinert.",
+      "Der Innenabstand zwischen Rand und Inhalt liegt jetzt bei höchstens 5px.",
+      "Nummer, Uhrzeit und Hinweistext wurden proportional verkleinert, damit alle Kacheln gleich groß und gut lesbar bleiben."
+    ]
+  },
+  {
     "version": "1.5.42",
     "date": "2026-02-19",
     "type": "bugfix",
