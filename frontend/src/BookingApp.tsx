@@ -210,11 +210,25 @@ type ParkingSmartProposeResponse = {
   fallbackWithoutCharging?: ParkingSmartProposal;
 };
 
+type UserParkingSettings = {
+  defaultFloorplanId: string;
+  parkingReminderMinutesBefore: number;
+  parkingDefaultArrivalTime: string;
+  parkingDefaultDepartureTime: string;
+};
+
 const FEEDBACK_SCREENSHOT_MAX_BYTES = 3 * 1024 * 1024;
 const FEEDBACK_SCREENSHOT_ACCEPT = 'image/png,image/jpeg,image/webp';
 
 const OVERVIEW_QUERY_KEY = 'overview';
 const FLOORPLAN_QUERY_KEY = 'floorplan';
+const USER_SETTINGS_STORAGE_KEY_PREFIX = 'rbms-user-settings';
+const DEFAULT_USER_PARKING_SETTINGS: UserParkingSettings = {
+  defaultFloorplanId: '',
+  parkingReminderMinutesBefore: 0,
+  parkingDefaultArrivalTime: '08:00',
+  parkingDefaultDepartureTime: '16:00'
+};
 
 const isOverviewView = (value: string | null): value is OverviewView => value === 'presence' || value === 'rooms' || value === 'myBookings';
 
@@ -254,6 +268,26 @@ const resolveFloorplanSelection = (rawValue: string, floorplans: Floorplan[]): s
 
   return '';
 };
+
+const isValidTimeValue = (value: string): boolean => /^([01]\d|2[0-3]):[0-5]\d$/.test(value);
+
+const parseUserParkingSettings = (rawValue: string | null): UserParkingSettings => {
+  if (!rawValue) return DEFAULT_USER_PARKING_SETTINGS;
+  try {
+    const parsed = JSON.parse(rawValue) as Partial<UserParkingSettings>;
+    const reminderMinutes = Number(parsed.parkingReminderMinutesBefore);
+    return {
+      defaultFloorplanId: typeof parsed.defaultFloorplanId === 'string' ? parsed.defaultFloorplanId : '',
+      parkingReminderMinutesBefore: Number.isFinite(reminderMinutes) ? clamp(Math.round(reminderMinutes), 0, 180) : DEFAULT_USER_PARKING_SETTINGS.parkingReminderMinutesBefore,
+      parkingDefaultArrivalTime: typeof parsed.parkingDefaultArrivalTime === 'string' && isValidTimeValue(parsed.parkingDefaultArrivalTime) ? parsed.parkingDefaultArrivalTime : DEFAULT_USER_PARKING_SETTINGS.parkingDefaultArrivalTime,
+      parkingDefaultDepartureTime: typeof parsed.parkingDefaultDepartureTime === 'string' && isValidTimeValue(parsed.parkingDefaultDepartureTime) ? parsed.parkingDefaultDepartureTime : DEFAULT_USER_PARKING_SETTINGS.parkingDefaultDepartureTime
+    };
+  } catch {
+    return DEFAULT_USER_PARKING_SETTINGS;
+  }
+};
+
+const getUserSettingsStorageKey = (userId: string): string => `${USER_SETTINGS_STORAGE_KEY_PREFIX}:${userId}`;
 
 const clamp = (value: number, min: number, max: number): number => Math.min(max, Math.max(min, value));
 
@@ -724,11 +758,14 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
   const [deskPopup, setDeskPopup] = useState<DeskPopupState | null>(null);
   const [bookingDialogState, setBookingDialogState] = useState<BookingDialogState>('IDLE');
   const [bookingFormValues, setBookingFormValues] = useState<BookingFormValues>(createDefaultBookingFormValues(today));
+  const [userParkingSettings, setUserParkingSettings] = useState<UserParkingSettings>(DEFAULT_USER_PARKING_SETTINGS);
+  const [isSettingsDialogOpen, setIsSettingsDialogOpen] = useState(false);
+  const [settingsDraft, setSettingsDraft] = useState<UserParkingSettings>(DEFAULT_USER_PARKING_SETTINGS);
   const [manageTargetSlot, setManageTargetSlot] = useState<BookingFormValues['slot']>('MORNING');
   const [dialogErrorMessage, setDialogErrorMessage] = useState('');
-  const [parkingSmartArrivalTime, setParkingSmartArrivalTime] = useState('08:00');
-  const [parkingSmartDepartureTime, setParkingSmartDepartureTime] = useState('16:00');
-  const [parkingChargeMinutes, setParkingChargeMinutes] = useState(240);
+  const [parkingSmartArrivalTime, setParkingSmartArrivalTime] = useState(DEFAULT_USER_PARKING_SETTINGS.parkingDefaultArrivalTime);
+  const [parkingSmartDepartureTime, setParkingSmartDepartureTime] = useState(DEFAULT_USER_PARKING_SETTINGS.parkingDefaultDepartureTime);
+  const [parkingChargeMinutes, setParkingChargeMinutes] = useState(0);
   const [parkingSmartBookedFor, setParkingSmartBookedFor] = useState<'SELF' | 'GUEST'>('SELF');
   const [parkingSmartGuestName, setParkingSmartGuestName] = useState('');
   const [parkingSmartProposal, setParkingSmartProposal] = useState<ParkingSmartProposal | null>(null);
@@ -766,6 +803,22 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
   const [calendarBookings, setCalendarBookings] = useState<CalendarBooking[]>([]);
   const [floorplanResources, setFloorplanResources] = useState<FloorplanResource[]>([]);
   const [bookedCalendarDays, setBookedCalendarDays] = useState<string[]>([]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const userStorageId = currentUser.id || currentUser.email;
+    if (!userStorageId) {
+      setUserParkingSettings(DEFAULT_USER_PARKING_SETTINGS);
+      return;
+    }
+    const stored = window.localStorage.getItem(getUserSettingsStorageKey(userStorageId));
+    setUserParkingSettings(parseUserParkingSettings(stored));
+  }, [currentUser.email, currentUser.id]);
+
+  useEffect(() => {
+    if (!isSettingsDialogOpen) return;
+    setSettingsDraft(userParkingSettings);
+  }, [isSettingsDialogOpen, userParkingSettings]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -1659,9 +1712,10 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
           imageUrl: floorplan.imageUrl || floorplan.imageURL || floorplan.image || ''
         }));
         const resolvedInitialFloorplanId = resolveFloorplanSelection(selectedFloorplanId, normalizedFloorplans);
+        const resolvedUserDefaultFloorplanId = resolveFloorplanSelection(userParkingSettings.defaultFloorplanId, normalizedFloorplans);
         setFloorplans(normalizedFloorplans);
         setEmployees(nextEmployees);
-        setSelectedFloorplanId(resolvedInitialFloorplanId || normalizedFloorplans.find((plan) => plan.isDefault)?.id || normalizedFloorplans[0]?.id || '');
+        setSelectedFloorplanId(resolvedInitialFloorplanId || resolvedUserDefaultFloorplanId || normalizedFloorplans.find((plan) => plan.isDefault)?.id || normalizedFloorplans[0]?.id || '');
         setSelectedEmployeeEmail((prev) => prev || currentUserEmail || nextEmployees[0]?.email || '');
         setBackendDown(false);
       });
@@ -1677,7 +1731,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
 
   useEffect(() => {
     loadInitial();
-  }, [currentUserEmail]);
+  }, [currentUserEmail, userParkingSettings.defaultFloorplanId]);
 
   useEffect(() => {
     if (selectedFloorplanId === activeFloorId) return;
@@ -1692,11 +1746,12 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
     if (!selectedFloorplanId) return;
     if (floorplans.some((floorplan) => floorplan.id === selectedFloorplanId)) return;
     const resolvedFloorplanId = resolveFloorplanSelection(selectedFloorplanId, floorplans);
-    setSelectedFloorplanId(resolvedFloorplanId || floorplans.find((plan) => plan.isDefault)?.id || floorplans[0]?.id || '');
+    const resolvedUserDefaultFloorplanId = resolveFloorplanSelection(userParkingSettings.defaultFloorplanId, floorplans);
+    setSelectedFloorplanId(resolvedFloorplanId || resolvedUserDefaultFloorplanId || floorplans.find((plan) => plan.isDefault)?.id || floorplans[0]?.id || '');
     setSelectedDeskId('');
     setFloorplanResources([]);
     setOccupancy(null);
-  }, [floorplans, selectedFloorplanId]);
+  }, [floorplans, selectedFloorplanId, userParkingSettings.defaultFloorplanId]);
 
   useEffect(() => {
     if (backendDown || isBootstrapping || !selectedFloorplanId) return;
@@ -1897,6 +1952,10 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
       if (!isRoomResource(desk)) {
         const nextSlot = getDefaultSlotForDesk(desk);
         if (nextSlot) defaults.slot = nextSlot;
+        if (isParkingResource(desk)) {
+          defaults.startTime = userParkingSettings.parkingDefaultArrivalTime;
+          defaults.endTime = userParkingSettings.parkingDefaultDepartureTime;
+        }
       } else {
         const occupiedIntervals = mergeIntervals(deskBookings.flatMap((booking) => {
           const start = bookingTimeToMinutes(booking.startTime);
@@ -2190,7 +2249,8 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
     if (!parkingSmartProposal || parkingSmartProposal.bookings.length < 2) return;
     const first = parkingSmartProposal.bookings[0];
     const second = parkingSmartProposal.bookings[1];
-    const reminderMinute = Math.max(0, second.startMinute - 15);
+    const reminderOffsetMinutes = clamp(userParkingSettings.parkingReminderMinutesBefore, 0, 180);
+    const reminderMinute = Math.max(0, second.startMinute - reminderOffsetMinutes);
     const pad = (value: number) => String(value).padStart(2, '0');
     const minuteToLocalIcsDate = (minute: number) => {
       const [year, month, day] = selectedDate.split('-').map((value) => Number(value));
@@ -2199,6 +2259,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
     const formatIcsDateUtc = (date: Date) => `${date.getUTCFullYear()}${pad(date.getUTCMonth() + 1)}${pad(date.getUTCDate())}T${pad(date.getUTCHours())}${pad(date.getUTCMinutes())}00Z`;
     const startAt = minuteToLocalIcsDate(reminderMinute);
     const endAt = minuteToLocalIcsDate(Math.min(24 * 60 - 1, reminderMinute + 15));
+    const reminderTrigger = reminderOffsetMinutes > 0 ? `-PT${reminderOffsetMinutes}M` : 'PT0M';
     const details = `Parkplatzwechsel am ${new Date(`${selectedDate}T00:00:00Z`).toLocaleDateString('de-DE')} um ${formatMinutes(second.startMinute)}.\\nVon: ${first.deskName} (${first.startTime ?? formatMinutes(first.startMinute)}-${first.endTime ?? formatMinutes(first.endMinute)})\\nAuf: ${second.deskName} (${second.startTime ?? formatMinutes(second.startMinute)}-${second.endTime ?? formatMinutes(second.endMinute)})`;
     const ics = [
       'BEGIN:VCALENDAR',
@@ -2212,9 +2273,9 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
       'SUMMARY:Parkplatzwechsel',
       `DESCRIPTION:${details}`,
       'BEGIN:VALARM',
-      'TRIGGER:-PT15M',
+      `TRIGGER:${reminderTrigger}`,
       'ACTION:DISPLAY',
-      'DESCRIPTION:Parkplatzwechsel in 15 Minuten',
+      `DESCRIPTION:Parkplatzwechsel in ${reminderOffsetMinutes} Minuten`,
       'END:VALARM',
       'END:VEVENT',
       'END:VCALENDAR'
@@ -2269,7 +2330,9 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
     setParkingSmartProposal(null);
     setParkingSmartBookedFor('SELF');
     setParkingSmartGuestName('');
-    setParkingChargeMinutes(240);
+    setParkingSmartArrivalTime(userParkingSettings.parkingDefaultArrivalTime);
+    setParkingSmartDepartureTime(userParkingSettings.parkingDefaultDepartureTime);
+    setParkingChargeMinutes(0);
     setParkingSmartBookingSuccessEntries(null);
     setIsParkingSmartConfirmDialogOpen(false);
     setIsParkingSmartDialogOpen(true);
@@ -2282,10 +2345,31 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
     setParkingSmartProposal(null);
     setParkingSmartBookedFor('SELF');
     setParkingSmartGuestName('');
-    setParkingChargeMinutes(240);
+    setParkingChargeMinutes(0);
     setParkingSmartBookingSuccessEntries(null);
     setIsParkingSmartConfirmDialogOpen(false);
     setIsParkingSmartDialogOpen(false);
+  };
+
+  const saveUserParkingSettings = (nextSettings: UserParkingSettings) => {
+    const normalizedSettings: UserParkingSettings = {
+      defaultFloorplanId: nextSettings.defaultFloorplanId,
+      parkingReminderMinutesBefore: clamp(Math.round(nextSettings.parkingReminderMinutesBefore), 0, 180),
+      parkingDefaultArrivalTime: isValidTimeValue(nextSettings.parkingDefaultArrivalTime) ? nextSettings.parkingDefaultArrivalTime : DEFAULT_USER_PARKING_SETTINGS.parkingDefaultArrivalTime,
+      parkingDefaultDepartureTime: isValidTimeValue(nextSettings.parkingDefaultDepartureTime) ? nextSettings.parkingDefaultDepartureTime : DEFAULT_USER_PARKING_SETTINGS.parkingDefaultDepartureTime
+    };
+    setUserParkingSettings(normalizedSettings);
+    if (typeof window !== 'undefined') {
+      const userStorageId = currentUser.id || currentUser.email;
+      if (userStorageId) {
+        window.localStorage.setItem(getUserSettingsStorageKey(userStorageId), JSON.stringify(normalizedSettings));
+      }
+    }
+    if (normalizedSettings.defaultFloorplanId && normalizedSettings.defaultFloorplanId !== selectedFloorplanId) {
+      setSelectedFloorplanId(normalizedSettings.defaultFloorplanId);
+    }
+    setIsSettingsDialogOpen(false);
+    toast.success('Settings gespeichert.');
   };
 
   const parkingRelocationTime = useMemo(() => {
@@ -3083,7 +3167,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
           <h1>{APP_TITLE}</h1>
         </div>
         <div className="header-right">
-          <UserMenu user={currentUser} onLogout={onLogout} onOpenAdmin={onOpenAdmin} showAdminAction={canOpenAdmin} />
+          <UserMenu user={currentUser} onLogout={onLogout} onOpenAdmin={onOpenAdmin} showAdminAction={canOpenAdmin} onOpenSettings={() => setIsSettingsDialogOpen(true)} />
         </div>
       </header>
 
@@ -3513,15 +3597,78 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
             <div className="parking-bulk-cancel-list">
               {parkingBulkCancelPreview.map((entry) => (
                 <div key={entry.id} className="parking-bulk-cancel-item">
-                  <strong>{entry.deskLabel}</strong>
-                  <span className="muted">{entry.timeLabel}</span>
-                  <span className="muted">{entry.bookedForLabel}</span>
+                  <strong className="parking-bulk-cancel-desk">{entry.deskLabel}</strong>
+                  <span className="muted parking-bulk-cancel-time">{entry.timeLabel}</span>
+                  <span className="muted parking-bulk-cancel-booked-for">{entry.bookedForLabel}</span>
                 </div>
               ))}
             </div>
             <div className="inline-end parking-smart-confirm-actions">
               <button type="button" className="btn btn-danger" onClick={() => { setIsParkingBulkCancelOpen(false); setParkingBulkCancelPreview([]); }} disabled={isParkingBulkCancelling}>Abbrechen</button>
               <button type="button" className="btn" onClick={confirmBulkParkingCancel} disabled={isParkingBulkCancelling}>{isParkingBulkCancelling ? 'Storniere…' : 'Alle Buchungen stornieren'}</button>
+            </div>
+          </section>
+        </div>,
+        document.body
+      )}
+
+      {isSettingsDialogOpen && createPortal(
+        <div className="overlay" role="presentation">
+          <section className="card dialog stack-sm cancel-booking-dialog" role="dialog" aria-modal="true" aria-labelledby="user-settings-title">
+            <h3 id="user-settings-title">Settings</h3>
+            <label className="field stack-xxs">
+              <span>Default Floor</span>
+              <select value={settingsDraft.defaultFloorplanId} onChange={(event) => setSettingsDraft((current) => ({ ...current, defaultFloorplanId: event.target.value }))}>
+                <option value="">Admin-Default verwenden</option>
+                {floorplans.map((floorplan) => <option key={`settings-floor-${floorplan.id}`} value={floorplan.id}>{floorplan.name}</option>)}
+              </select>
+            </label>
+            <label className="field stack-xxs">
+              <span>Kalendererinnerung bei Parkplatzwechsel (Minuten vorher)</span>
+              <input
+                type="number"
+                min={0}
+                max={180}
+                step={5}
+                value={settingsDraft.parkingReminderMinutesBefore}
+                onChange={(event) => setSettingsDraft((current) => ({ ...current, parkingReminderMinutesBefore: clamp(Number(event.target.value) || 0, 0, 180) }))}
+              />
+            </label>
+            <div className="parking-smart-row">
+              <label className="field stack-xxs">
+                <span>Default Anreisezeit (Parkplatz)</span>
+                <input
+                  type="time"
+                  min="00:00"
+                  max="23:30"
+                  step={1800}
+                  value={settingsDraft.parkingDefaultArrivalTime}
+                  onChange={(event) => setSettingsDraft((current) => ({ ...current, parkingDefaultArrivalTime: event.target.value }))}
+                />
+              </label>
+              <label className="field stack-xxs">
+                <span>Default Abreisezeit (Parkplatz)</span>
+                <input
+                  type="time"
+                  min="00:30"
+                  max="23:59"
+                  step={1800}
+                  value={settingsDraft.parkingDefaultDepartureTime}
+                  onChange={(event) => setSettingsDraft((current) => ({ ...current, parkingDefaultDepartureTime: event.target.value }))}
+                />
+              </label>
+            </div>
+            {toMinutes(settingsDraft.parkingDefaultDepartureTime) <= toMinutes(settingsDraft.parkingDefaultArrivalTime) && <p className="field-error">Die Abreisezeit muss nach der Anreisezeit liegen.</p>}
+            <div className="inline-end parking-smart-confirm-actions">
+              <button type="button" className="btn btn-danger" onClick={() => setIsSettingsDialogOpen(false)}>Abbrechen</button>
+              <button
+                type="button"
+                className="btn"
+                onClick={() => saveUserParkingSettings(settingsDraft)}
+                disabled={toMinutes(settingsDraft.parkingDefaultDepartureTime) <= toMinutes(settingsDraft.parkingDefaultArrivalTime)}
+              >
+                Speichern
+              </button>
             </div>
           </section>
         </div>,
