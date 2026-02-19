@@ -1,5 +1,17 @@
 [
   {
+    "version": "1.5.38",
+    "date": "2026-02-19",
+    "type": "feature",
+    "title": "Admin-Dialog für Ressourcen wurde übersichtlich neu strukturiert",
+    "summary": "Der Dialog zum Anlegen und Bearbeiten von Ressourcen ist jetzt klar in Bereiche gegliedert und deutlich schneller bedienbar – auch bei vielen Mandanten oder Mitarbeitenden.",
+    "items": [
+      "Grunddaten, Buchbarkeit, Mitarbeiter-Freigabe und Position sind jetzt in klar getrennten Sections mit konsistentem Layout organisiert.",
+      "Mandanten- und Mitarbeiterauswahl wurden auf kompakte Such-/Mehrfachauswahl mit Chips, Alle-Auswählen und Zurücksetzen umgestellt.",
+      "Aktionen liegen in einer sticky Footer-Leiste, Speichern zeigt einen stabilen Ladezustand und Pflichtfehler werden direkt inline angezeigt."
+    ]
+  },
+  {
     "version": "1.5.37",
     "date": "2026-02-19",
     "type": "feature",
