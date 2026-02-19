@@ -119,6 +119,16 @@ type CancelSeriesPreviewState = {
   details: BookingCancelPreview | null;
   error: string;
 };
+
+function SparklesIcon() {
+  return (
+    <svg className="smart-action-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <path d="M6.2 3.7 7.6 7l3.3 1.4L7.6 9.8 6.2 13 4.9 9.8 1.6 8.4 4.9 7z" fill="currentColor" />
+      <path d="m16.4 2.2.9 2.2 2.2.9-2.2.9-.9 2.2-.9-2.2-2.2-.9 2.2-.9z" fill="currentColor" />
+      <path d="m15.1 10.4 1.8 4.5 4.5 1.8-4.5 1.8-1.8 4.5-1.8-4.5-4.5-1.8 4.5-1.8z" fill="currentColor" />
+    </svg>
+  );
+}
 type OccupancyBooking = NonNullable<OccupancyDesk['booking']>;
 type NormalizedOccupancyBooking = ReturnType<typeof normalizeDaySlotBookings<OccupancyBooking>>[number];
 type RoomAvailabilityBooking = { id: string; startTime: string | null; endTime: string | null; bookedFor?: 'SELF' | 'GUEST'; guestName?: string | null; employeeId?: string | null; userId?: string | null; user: { email?: string | null; name?: string | null; displayName?: string | null } | null; createdBy?: BookingActor; createdByUserId?: string; createdByEmployeeId?: string; recurringBookingId?: string | null; recurringGroupId?: string | null; type?: 'single' | 'recurring'; };
@@ -2991,7 +3001,8 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
               </div>
               <div className="toolbar">
                 {isParkingFloor && (
-                  <button type="button" className="btn btn-outline" onClick={openParkingSmartDialog}>
+                  <button type="button" className="btn btn-primary-smart" onClick={openParkingSmartDialog}>
+                    <SparklesIcon />
                     Parkplatz intelligent zuweisen
                   </button>
                 )}
