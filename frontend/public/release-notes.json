@@ -1,5 +1,17 @@
 [
   {
+    "version": "1.5.39",
+    "date": "2026-02-19",
+    "type": "feature",
+    "title": "Smart-Parking-Dialoge wurden kompakter und klarer aufgebaut",
+    "summary": "Die intelligente Parkplatz-Zuweisung und die Buchungsbestätigung sind jetzt deutlich übersichtlicher: Zeiten stehen kompakt nebeneinander, Aktionen bleiben sichtbar und der Zeitplan wird als klare Kachelansicht angezeigt.",
+    "items": [
+      "Im Bestätigungsdialog werden Parkplatz-Abschnitte jetzt als quadratische Kacheln im responsiven Grid dargestellt, inklusive Badge für Ladeplatz und Umpark-Hinweis.",
+      "Der Dialog \"Parkplatz intelligent zuweisen\" zeigt Anreise/Abreise auf Desktop nebeneinander, nutzt einen klaren Lade-Toggle mit Ladedauer in Stunden und blendet Inline-Validierung direkt unter dem Formular ein.",
+      "Die Aktion \"Vorschlag berechnen\" sitzt in einer sticky CTA-Leiste und der berechnete Vorschlag erscheint direkt im selben Dialog in derselben Kachelansicht wie bei der Bestätigung."
+    ]
+  },
+  {
     "version": "1.5.38",
     "date": "2026-02-19",
     "type": "feature",
