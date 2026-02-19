@@ -1,5 +1,16 @@
 [
   {
+    "version": "1.5.46",
+    "date": "2026-02-19",
+    "type": "bugfix",
+    "title": "Frontend-Buildfehler bei Raum-Buchungen behoben",
+    "summary": "Der Deploy bricht nicht mehr wegen eines fehlenden Variablennamens ab. Zeitkonflikte bei Raum-/Zeitbuchungen werden weiterhin direkt im Dialog abgefangen.",
+    "items": [
+      "Ein fehlerhafter Variablenname in der Buchungslogik wurde korrigiert, sodass der TypeScript-Build wieder durchläuft.",
+      "Wenn ein gewähltes Zeitfenster bereits belegt ist, zeigt der Dialog den Konflikt weiterhin sofort als Fehlermeldung an."
+    ]
+  },
+  {
     "version": "1.5.45",
     "date": "2026-02-19",
     "type": "bugfix",
