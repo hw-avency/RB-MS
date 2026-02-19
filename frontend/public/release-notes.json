@@ -3,12 +3,12 @@
     "version": "1.5.42",
     "date": "2026-02-19",
     "type": "bugfix",
-    "title": "Floor-Wechsel zeigt keine alten Ressourcen mehr",
-    "summary": "Beim Umschalten des Standorts werden alte Pins sofort entfernt. Neue Ressourcen erscheinen erst, wenn die passenden Daten geladen sind.",
+    "title": "Smart-Parking zeigt gleich große Kacheln mit Umpark-Hinweis dazwischen",
+    "summary": "Im Vorschlag und in der Bestätigung sind die Parkplatz-Kacheln jetzt immer gleich groß. Der Hinweis „Umparken um …“ sitzt sichtbar zwischen den Kacheln und der Bestätigungsdialog ist breiter.",
     "items": [
-      "Beim Wechsel des Floorplans wird die aktuelle Ressourcen- und Belegungsansicht sofort geleert, bevor neue Daten geladen werden.",
-      "Verspätete Antworten von älteren Requests werden verworfen, damit keine falschen Pins mehr kurz eingeblendet werden.",
-      "Während des Ladens zeigt der Floorplan einen klaren Ladehinweis statt veralteter Ressourcen."
+      "Die Zeitplan-Kacheln im Smart-Parking verwenden jetzt eine einheitliche, feste Kartenlogik, damit beide Abschnitte exakt gleich groß dargestellt werden.",
+      "Der Umpark-Hinweis mit Pfeil wird zwischen den beiden Kacheln angezeigt statt unter einer Kachel.",
+      "Der Bestätigungsdialog für Smart-Parking wurde breiter gemacht, damit Kacheln und Umpark-Hinweis auf Desktop sauber nebeneinander stehen."
     ]
   },
   {
