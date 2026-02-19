@@ -58,10 +58,10 @@ html, body, #root { margin: 0; min-height: 100%; background: hsl(var(--backgroun
 .stack-xs { display: grid; gap: 6px; }
 .stack-xxs { display: grid; gap: 2px; }
 
-.btn { border: 0; border-radius: 12px; padding: 8px 12px; background: hsl(var(--primary)); color: hsl(var(--primary-foreground)); font-size: 14px; font-weight: 500; cursor: pointer; }
+.btn { border: 1px solid hsl(var(--primary)); border-radius: 12px; padding: 8px 12px; background: hsl(var(--primary)); color: hsl(var(--primary-foreground)); font-size: 14px; font-weight: 500; cursor: pointer; }
 .btn:hover{filter:brightness(.96)}
-.btn-outline { background: hsl(var(--card)); color: hsl(var(--foreground)); box-shadow: inset 0 0 0 1px hsl(var(--border)); }
-.btn-ghost { background: transparent; color: hsl(var(--foreground)); }
+.btn-outline { border-color: hsl(var(--border)); background: hsl(var(--card)); color: hsl(var(--foreground)); box-shadow: inset 0 0 0 1px hsl(var(--border)); }
+.btn-ghost { border-color: hsl(var(--border)); background: transparent; color: hsl(var(--foreground)); }
 .btn-primary-smart{
   min-height:44px;
   padding:10px 18px;
@@ -319,7 +319,7 @@ tr{cursor:pointer}.row-selected{background:hsl(var(--muted))}
   .compact-multi-select-toolbar{grid-template-columns:1fr}
 }
 .rebook-dialog{width:min(420px,100%);padding:22px;gap:10px}
-.parking-smart-confirm-dialog{width:fit-content;max-width:min(760px,96vw)}
+.parking-smart-confirm-dialog{width:fit-content;max-width:min(860px,96vw);gap:14px}
 .rebook-dialog h3{margin:0;font-size:17px;line-height:1.25}
 .rebook-dialog p{margin:0;font-size:14px;line-height:1.45}
 
@@ -330,18 +330,13 @@ tr{cursor:pointer}.row-selected{background:hsl(var(--muted))}
 .parking-smart-row{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px 12px}
 .parking-smart-field{min-width:0}
 .parking-smart-field-full{grid-column:1/-1}
-.parking-smart-toggle{min-height:38px;border:1px solid hsl(var(--border));border-radius:12px;padding:0 10px;background:hsl(var(--card));justify-content:flex-end}
-.parking-smart-toggle input{width:auto}
+.parking-smart-toggle{min-height:38px;border:1px solid hsl(var(--border));border-radius:12px;padding:6px 10px;background:hsl(var(--card));display:flex;align-items:center;justify-content:space-between;gap:10px}
 .parking-smart-proposal-block{padding-top:4px}
 .parking-smart-actions{position:sticky;bottom:0;z-index:2;background:hsl(var(--card));border-top:1px solid hsl(var(--border));margin:4px -16px 0;padding:10px 16px;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
 .parking-smart-calculate-btn{border:1px solid hsl(var(--primary));background:hsl(var(--primary)/.12);color:hsl(var(--primary));font-weight:600}
 .parking-smart-calculate-btn:hover{background:hsl(var(--primary)/.2)}
-.parking-schedule-grid{display:flex;align-items:stretch;justify-content:center;gap:10px;flex-wrap:wrap}
-.parking-schedule-item{flex:1 1 220px;max-width:260px;min-width:180px;display:flex}
-.parking-schedule-tile{position:relative;width:100%;aspect-ratio:1/1;border:1px solid hsl(var(--border));border-radius:12px;padding:8px;background:hsl(var(--card));display:grid;justify-items:center;align-content:center;gap:6px;text-align:center}
-.parking-schedule-number{min-width:58px;height:42px;border-radius:999px;background:hsl(var(--primary));color:hsl(var(--primary-foreground));font-weight:800;font-size:20px;display:grid;place-items:center;padding:0 12px}
-.parking-schedule-grid{display:flex;align-items:stretch;justify-content:center;column-gap:8px;row-gap:10px;flex-wrap:wrap}
-.parking-schedule-item{flex:0 1 132px;max-width:132px;min-width:132px;display:flex}
+.parking-schedule-grid{display:flex;align-items:stretch;justify-content:center;gap:10px;flex-wrap:nowrap}
+.parking-schedule-item{flex:0 0 140px;max-width:140px;min-width:140px;display:flex}
 .parking-schedule-tile{position:relative;width:100%;aspect-ratio:1/1;border:1px solid hsl(var(--border));border-radius:12px;padding:10px 8px;background:hsl(var(--card));display:grid;justify-items:center;align-content:center;gap:4px;text-align:center}
 .parking-schedule-number{min-width:42px;height:30px;border-radius:999px;background:hsl(var(--primary));color:hsl(var(--primary-foreground));font-weight:800;font-size:15px;display:grid;place-items:center;padding:0 8px}
 .parking-schedule-tag{margin:0;font-size:11px;font-weight:700;border-radius:999px;padding:1px 7px;display:inline-flex;align-items:center;gap:4px}
@@ -349,10 +344,10 @@ tr{cursor:pointer}.row-selected{background:hsl(var(--muted))}
 .parking-schedule-tag-charging{color:#0f766e;background:rgba(20,184,166,.12)}
 .parking-schedule-time{margin:0;font-size:15px;font-weight:700;letter-spacing:.01em}
 .parking-schedule-hint{margin:0;font-size:11px;color:hsl(var(--muted-foreground));min-height:14px}
-.parking-transition{flex:0 0 120px;display:grid;grid-template-columns:1fr auto;grid-template-areas:'line arrow' 'text text';align-content:center;align-items:center;gap:2px 8px}
-.parking-transition-line{grid-area:line;height:1px;background:hsl(var(--border));width:100%}
-.parking-transition-arrow{grid-area:arrow;color:hsl(var(--muted-foreground));font-size:13px;font-weight:700}
-.parking-transition-text{grid-area:text;font-size:11px;color:hsl(var(--muted-foreground));text-align:center;white-space:nowrap}
+.parking-transition{flex:0 0 28px;display:grid;place-items:center;align-content:center}
+.parking-transition-line{display:none}
+.parking-transition-arrow{color:hsl(var(--muted-foreground));font-size:14px;font-weight:700}
+.parking-transition-text{font-size:11px;color:hsl(var(--muted-foreground));text-align:center;white-space:nowrap}
 .parking-relocation-inline{margin:2px 0 0;font-size:13px;color:#92400e}
 .rebook-date{font-weight:700}
 .rebook-subline{font-size:13px}
@@ -477,7 +472,7 @@ tr{cursor:pointer}.row-selected{background:hsl(var(--muted))}
 
 
 @media (max-width: 1100px){.parking-schedule-item{flex-basis:200px}}
-@media (max-width: 768px){.parking-smart-form-grid{grid-template-columns:1fr}.parking-smart-row{grid-template-columns:1fr}.parking-schedule-grid{flex-direction:column;align-items:stretch}.parking-schedule-item{max-width:none}.parking-transition{flex:0 0 auto}.parking-smart-actions{grid-template-columns:1fr}.parking-smart-dialog-body{padding:12px 12px 0}}
+@media (max-width: 768px){.parking-smart-form-grid{grid-template-columns:1fr}.parking-smart-row{grid-template-columns:1fr}.parking-schedule-grid{flex-direction:column;align-items:center;flex-wrap:nowrap}.parking-schedule-item{max-width:160px;min-width:140px}.parking-transition{flex:0 0 auto;transform:rotate(90deg)}.parking-smart-actions{grid-template-columns:1fr}.parking-smart-dialog-body{padding:12px 12px 0}}
 @media (prefers-reduced-motion: reduce){
   .pulseHalo{animation:none}
 }
@@ -520,7 +515,7 @@ tr{cursor:pointer}.row-selected{background:hsl(var(--muted))}
 .btn{display:inline-flex;align-items:center;gap:6px}
 .btn:disabled{opacity:.55;cursor:not-allowed}
 .btn-icon{padding:6px 8px}
-.btn-danger{background:#dc2626;color:white}
+.btn-danger{border-color:#dc2626;background:#dc2626;color:white}
 .btn-danger-text{color:#b91c1c}
 .admin-table th{font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:hsl(var(--muted-foreground));font-weight:700}
 .admin-table th,.admin-table td{padding:12px 10px;vertical-align:middle}
@@ -752,3 +747,15 @@ tr{cursor:pointer}.row-selected{background:hsl(var(--muted))}
 .logs-table .logs-context{margin:6px 0 0;font-size:12px;white-space:pre-wrap;word-break:break-word}
 .logs-pagination{justify-content:space-between}
 @media (max-width: 900px){.logs-toolbar{width:100%}.logs-toolbar .admin-search{min-width:100%}}
+
+.parking-toolbar-actions{display:grid;gap:8px}
+.parking-switch{display:inline-flex;align-items:center;gap:10px;border:1px solid hsl(var(--border));border-radius:999px;padding:4px 10px;background:hsl(var(--card));cursor:pointer}
+.parking-switch-track{width:42px;height:22px;border-radius:999px;background:hsl(var(--muted));padding:2px;display:flex;align-items:center;transition:background .2s ease}
+.parking-switch-thumb{width:18px;height:18px;border-radius:999px;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.2);transform:translateX(0);transition:transform .2s ease}
+.parking-switch.is-on .parking-switch-track{background:hsl(var(--primary))}
+.parking-switch.is-on .parking-switch-thumb{transform:translateX(20px)}
+.parking-switch-label{font-weight:600;font-size:13px;color:hsl(var(--foreground))}
+.parking-smart-confirm-intro{margin:4px 0 10px}
+.parking-smart-confirm-actions{gap:10px;margin-top:8px}
+.parking-bulk-cancel-list{display:grid;gap:8px;max-height:220px;overflow:auto}
+.parking-bulk-cancel-item{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:8px 10px;border:1px solid hsl(var(--border));border-radius:10px;background:hsl(var(--muted)/.35)}

@@ -1,5 +1,19 @@
 [
   {
+    "version": "1.5.48",
+    "date": "2026-02-19",
+    "type": "feature",
+    "title": "Smart-Parking verbessert Bestätigung, Storno und Berechtigungen",
+    "summary": "Die intelligente Parkplatzzuweisung wurde im Dialog modernisiert und ergänzt. Gleichzeitig greifen Konflikt- und Berechtigungsregeln jetzt konsistenter in UI und Backend.",
+    "items": [
+      "\"Laden erforderlich\" nutzt jetzt einen Ja/Nein-Schieberegler mit 4 Stunden Standard-Ladedauer.",
+      "Im Bestätigungsdialog gibt es mehr Abstand, klare Pfeile zwischen den Parkplatz-Kacheln und einen Button für eine Kalendererinnerung zum Parkplatzwechsel 15 Minuten vorher.",
+      "Auf Parkplatz-Floors kann man eigene Tagesbuchungen gesammelt über \"Buchungen stornieren\" prüfen und gemeinsam bestätigen/löschen.",
+      "Beim Klick auf Personen in der Anwesenheit wird die Profilkarte gezeigt; ein Buchungsdialog öffnet nur noch beim Klick auf einen Parkplatz.",
+      "Die Smart-Parking-Logik berücksichtigt buchbare Parkplätze nach Mandant/Mitarbeiter bereits im Vorschlag und verhindert überlappende Mehrfachbuchungen pro Nutzer im selben Zeitraum."
+    ]
+  },
+  {
     "version": "1.5.47",
     "date": "2026-02-19",
     "type": "bugfix",

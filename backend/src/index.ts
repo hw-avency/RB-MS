@@ -4211,18 +4211,37 @@ app.post('/bookings/parking-smart/propose', async (req, res) => {
   const requestedCharging = Math.max(0, Math.floor(chargingMinutes));
   const normalizedCharging = Math.min(totalMinutes, requestedCharging);
 
-  const spots = await prisma.desk.findMany({
-    where: { floorplanId, kind: 'PARKPLATZ' },
-    select: { id: true, name: true, hasCharger: true },
-    orderBy: { createdAt: 'asc' }
-  });
-  if (spots.length === 0) {
-    logBookingEvent('SMART_PROPOSE_NOT_FOUND', { requestId, reason: 'no parking spots', floorplanId }, 'warn');
-    res.status(404).json({ error: 'not_found', message: 'Keine Parkplätze gefunden.' });
+  let actorEmployee;
+  try {
+    actorEmployee = await requireActorEmployee(req);
+  } catch (error) {
+    const status = (error as Error & { status?: number }).status ?? 403;
+    res.status(status).json({ error: status === 401 ? 'unauthorized' : 'forbidden', message: (error as Error).message });
     return;
   }
 
-  const bookings = await prisma.booking.findMany({ where: { date: parsedDate, deskId: { in: spots.map((spot) => spot.id) } } });
+  const spots = await prisma.desk.findMany({
+    where: { floorplanId, kind: 'PARKPLATZ' },
+    select: {
+      id: true,
+      name: true,
+      hasCharger: true,
+      tenantScope: true,
+      employeeScope: true,
+      deskTenants: { select: { tenantId: true } },
+      deskEmployees: { select: { employeeId: true } },
+      floorplan: { select: { tenantScope: true, floorplanTenants: { select: { tenantId: true } } } }
+    },
+    orderBy: { createdAt: 'asc' }
+  });
+  const accessibleSpots = spots.filter((spot) => isDeskAccessibleForTenant(spot, actorEmployee.tenantDomainId, actorEmployee.id));
+  if (accessibleSpots.length === 0) {
+    logBookingEvent('SMART_PROPOSE_NOT_FOUND', { requestId, reason: 'no accessible parking spots', floorplanId }, 'warn');
+    res.status(404).json({ error: 'not_found', message: 'Keine buchbaren Parkplätze gefunden.' });
+    return;
+  }
+
+  const bookings = await prisma.booking.findMany({ where: { date: parsedDate, deskId: { in: accessibleSpots.map((spot) => spot.id) } } });
   const normalizedBookings = bookings.flatMap((booking) => {
     const candidateWindow = bookingToWindow(booking);
     if (!candidateWindow) return [];
@@ -4234,7 +4253,7 @@ app.post('/bookings/parking-smart/propose', async (req, res) => {
     startMinute: parsedArrivalMinute,
     attendanceMinutes: totalMinutes,
     chargingMinutes: normalizedCharging,
-    spots: spots.map((spot) => ({ id: spot.id, hasCharger: spot.hasCharger })),
+    spots: accessibleSpots.map((spot) => ({ id: spot.id, hasCharger: spot.hasCharger })),
     bookings: normalizedBookings
   });
   logBookingEvent('SMART_PROPOSE_DEPENDENCIES', {
@@ -4250,7 +4269,7 @@ app.post('/bookings/parking-smart/propose', async (req, res) => {
 
   const toNamedBookings = (entries: Array<{ deskId: string; startMinute: number; endMinute: number; hasCharger: boolean }>) => entries.map((entry) => ({
     ...entry,
-    deskName: spots.find((spot) => spot.id === entry.deskId)?.name ?? entry.deskId,
+    deskName: accessibleSpots.find((spot) => spot.id === entry.deskId)?.name ?? entry.deskId,
     startTime: minuteToHHMM(entry.startMinute),
     endTime: minuteToHHMM(entry.endMinute)
   }));
@@ -4263,7 +4282,7 @@ app.post('/bookings/parking-smart/propose', async (req, res) => {
         startMinute: parsedArrivalMinute,
         attendanceMinutes: totalMinutes,
         chargingMinutes: candidate,
-        spots: spots.map((spot) => ({ id: spot.id, hasCharger: spot.hasCharger })),
+        spots: accessibleSpots.map((spot) => ({ id: spot.id, hasCharger: spot.hasCharger })),
         bookings: normalizedBookings
       });
       if (candidateProposal.type !== 'none') {
@@ -4291,7 +4310,7 @@ app.post('/bookings/parking-smart/propose', async (req, res) => {
       startMinute: parsedArrivalMinute,
       attendanceMinutes: totalMinutes,
       chargingMinutes: 0,
-      spots: spots.map((spot) => ({ id: spot.id, hasCharger: spot.hasCharger })),
+      spots: accessibleSpots.map((spot) => ({ id: spot.id, hasCharger: spot.hasCharger })),
       bookings: normalizedBookings
     });
 
@@ -4399,6 +4418,11 @@ app.post('/bookings/parking-smart/confirm', async (req, res) => {
     if (index === candidateIndex || entry.deskId !== candidate.deskId) return false;
     return parkingWindowsOverlap(entry, candidate);
   }));
+
+  const overlappingUserPayload = validated.find((entry, index) => validated.some((candidate, candidateIndex) => {
+    if (index === candidateIndex) return false;
+    return parkingWindowsOverlap(entry, candidate);
+  }));
   if (overlappingPayloadEntry) {
     logBookingEvent('SMART_CONFIRM_VALIDATION_FAILED', {
       requestId,
@@ -4408,6 +4432,12 @@ app.post('/bookings/parking-smart/confirm', async (req, res) => {
       endMinute: overlappingPayloadEntry.endMinute
     }, 'warn');
     res.status(409).json({ error: 'conflict', message: 'Überlappende Buchungszeiten für denselben Parkplatz sind nicht erlaubt.' });
+    return;
+  }
+
+  if (bookingMode === 'SELF' && overlappingUserPayload) {
+    logBookingEvent('SMART_CONFIRM_VALIDATION_FAILED', { requestId, reason: 'overlapping user bookings in payload' }, 'warn');
+    res.status(409).json({ error: 'conflict', message: 'Du kannst im selben Zeitraum nur einen Parkplatz buchen.' });
     return;
   }
 
@@ -4456,7 +4486,23 @@ app.post('/bookings/parking-smart/confirm', async (req, res) => {
         await acquireBookingLock(tx, bookingDeskKeyForDate(entry.deskId, parsedDate));
       }
 
+      const existingUserBookings = bookingMode === 'SELF'
+        ? await tx.booking.findMany({ where: { date: parsedDate, desk: { kind: 'PARKPLATZ' }, bookedFor: 'SELF', employeeId: actorEmployee.id } })
+        : [];
+
       for (const entry of validated) {
+        const userConflict = bookingMode === 'SELF' && existingUserBookings.some((candidate) => {
+          const candidateWindow = bookingToWindow(candidate);
+          if (!candidateWindow) return false;
+          const candidateTime = candidateWindow.mode === 'day' ? daySlotToMinuteRange(candidateWindow.daySlot) : candidateWindow;
+          return parkingWindowsOverlap(entry, candidateTime);
+        });
+        if (userConflict) {
+          const error = new Error('user_conflict');
+          (error as Error & { status?: number }).status = 409;
+          throw error;
+        }
+
         const existing = await tx.booking.findMany({ where: { deskId: entry.deskId, date: parsedDate } });
         const hasConflict = existing.some((candidate) => {
           const candidateWindow = bookingToWindow(candidate);
@@ -4508,6 +4554,10 @@ app.post('/bookings/parking-smart/confirm', async (req, res) => {
     const status = (error as Error & { status?: number }).status ?? 500;
     if (status === 409) {
       logBookingEvent('SMART_CONFIRM_RESPONSE_CONFLICT', { requestId, status, error: (error as Error).message }, 'warn');
+      if ((error as Error).message === 'user_conflict') {
+        res.status(409).json({ error: 'conflict', message: 'Du hast in diesem Zeitraum bereits eine Parkplatz-Buchung.' });
+        return;
+      }
       res.status(409).json({ error: 'conflict', message: 'Parkplatz nicht mehr verfügbar, bitte neu zuweisen.' });
       return;
     }
