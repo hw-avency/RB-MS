@@ -3182,9 +3182,38 @@ app.get('/floorplans', async (req, res) => {
     orderBy: [{ sortOrder: 'asc' }, { isDefault: 'desc' }, { createdAt: 'desc' }]
   });
 
-  const visible = actor?.role === 'admin'
+  let visible = actor?.role === 'admin'
     ? floorplans
     : floorplans.filter((floorplan) => isFloorplanVisibleForTenant(floorplan, actor?.tenantDomainId ?? null));
+
+  if (actor?.role !== 'admin' && visible.length > 0) {
+    const visibleFloorplanIds = visible.map((floorplan) => floorplan.id);
+    const accessibleDesks = await prisma.desk.findMany({
+      where: {
+        floorplanId: { in: visibleFloorplanIds },
+        AND: [
+          actor.tenantDomainId
+            ? {
+              OR: [
+                { tenantScope: 'ALL' },
+                { deskTenants: { some: { tenantId: actor.tenantDomainId } } }
+              ]
+            }
+            : { tenantScope: 'ALL' },
+          {
+            OR: [
+              { employeeScope: 'ALL' },
+              { deskEmployees: { some: { employeeId: actor.id } } }
+            ]
+          }
+        ]
+      },
+      select: { floorplanId: true }
+    });
+
+    const accessibleFloorplanIds = new Set(accessibleDesks.map((desk) => desk.floorplanId));
+    visible = visible.filter((floorplan) => accessibleFloorplanIds.has(floorplan.id));
+  }
 
   res.status(200).json(visible.map((floorplan) => ({
     id: floorplan.id,
