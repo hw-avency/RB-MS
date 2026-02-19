@@ -1415,8 +1415,8 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
     };
   }, [floorplanCanvasDesks, floorplanDisplayedRect.height, floorplanDisplayedRect.left, floorplanDisplayedRect.top, floorplanDisplayedRect.width, floorplanImageSize]);
 
-  const roomBookingConflict = useMemo(() => {
-    if (!popupDesk || !isRoomResource(popupDesk)) return '';
+  const timeRangeBookingConflict = useMemo(() => {
+    if (!popupDesk || !isTimeBasedResource(popupDesk)) return '';
     const start = bookingTimeToMinutes(bookingFormValues.startTime);
     const end = bookingTimeToMinutes(bookingFormValues.endTime);
     if (start === null || end === null || end <= start) return '';
@@ -3136,7 +3136,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
                       occupiedSegments: popupRoomOccupiedSegments,
                       freeSegments: popupRoomFreeSegments,
                       isFullyBooked: popupRoomFreeSlotChips.length === 0,
-                      conflictMessage: popupRoomFreeSlotChips.length === 0 ? 'Heute vollständig belegt' : roomBookingConflict,
+                      conflictMessage: popupRoomFreeSlotChips.length === 0 ? 'Heute vollständig belegt' : timeRangeBookingConflict,
                       debugInfo: roomDebugInfo,
                       ringDebugTitle: popupRoomRingDebugTitle,
                       onSelectFreeSlot: (startTime, endTime) => {
