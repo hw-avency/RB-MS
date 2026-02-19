@@ -2,12 +2,13 @@
   {
     "version": "1.5.34",
     "date": "2026-02-19",
-    "type": "bugfix",
-    "title": "Parkplatz-Marker zeigen jetzt eine Uhr im Floorplan",
-    "summary": "Bei Parkplätzen zeigt der Kreis im Floorplan jetzt wie bei Räumen eine Uhrdarstellung statt Nutzer-Initialen. So ist die Zeitlogik visuell konsistent.",
+    "type": "feature",
+    "title": "Ressourcen können auf bestimmte Mitarbeitende begrenzt werden",
+    "summary": "Bei jeder Ressource kann jetzt zusätzlich zum Mandanten festgelegt werden, ob alle oder nur ausgewählte Mitarbeitende buchen dürfen.",
     "items": [
-      "Parkplätze verwenden im Marker-Zentrum jetzt ebenfalls das Uhr-Icon statt Avatar/Initialen.",
-      "Raum-Marker behalten weiterhin optional ihr kurzes Raum-Label unter der Uhr."
+      "Im Admin-Dialog für Ressourcen gibt es eine neue Mitarbeiter-Freigabe mit den Optionen \"alle\" oder \"bestimmte Mitarbeiter\".",
+      "Bei einer Auswahl zeigt die Oberfläche nur Mitarbeitende aus den erlaubten Mandanten an.",
+      "Bestehende Ressourcen bleiben nach dem Update standardmäßig auf \"alle Mitarbeiter\" eingestellt und funktionieren unverändert weiter."
     ]
   },
   {

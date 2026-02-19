@@ -11,8 +11,8 @@ import { RESOURCE_KIND_OPTIONS, resourceKindLabel, type ResourceKind } from '../
 
 type SeriesPolicy = 'DEFAULT' | 'ALLOW' | 'DISALLOW';
 type Floorplan = { id: string; name: string; imageUrl: string; isDefault?: boolean; sortOrder?: number; tenantScope?: 'ALL' | 'SELECTED'; tenantIds?: string[]; defaultResourceKind?: ResourceKind; defaultAllowSeries?: boolean; createdAt?: string; updatedAt?: string };
-type Desk = { id: string; floorplanId: string; name: string; kind?: ResourceKind; hasCharger?: boolean; allowSeriesOverride?: boolean | null; effectiveAllowSeries?: boolean; x: number | null; y: number | null; position?: { x: number; y: number } | null; tenantScope?: 'ALL' | 'SELECTED'; tenantIds?: string[]; createdAt?: string; updatedAt?: string };
-type Employee = { id: string; email: string; displayName: string; role: 'admin' | 'user'; isActive: boolean; phone?: string | null; photoUrl?: string | null; photoUpdatedAt?: string | null; createdAt?: string; updatedAt?: string };
+type Desk = { id: string; floorplanId: string; name: string; kind?: ResourceKind; hasCharger?: boolean; allowSeriesOverride?: boolean | null; effectiveAllowSeries?: boolean; x: number | null; y: number | null; position?: { x: number; y: number } | null; tenantScope?: 'ALL' | 'SELECTED'; tenantIds?: string[]; employeeScope?: 'ALL' | 'SELECTED'; employeeIds?: string[]; createdAt?: string; updatedAt?: string };
+type Employee = { id: string; email: string; displayName: string; role: 'admin' | 'user'; isActive: boolean; tenantDomainId?: string | null; phone?: string | null; photoUrl?: string | null; photoUpdatedAt?: string | null; createdAt?: string; updatedAt?: string };
 type PhoneSyncInfo = {
   graphReturnedPhone: boolean;
   source: 'me' | 'users';
@@ -65,6 +65,8 @@ type DeskFormState = {
   y: number | null;
   tenantScope: 'ALL' | 'SELECTED';
   tenantIds: string[];
+  employeeScope: 'ALL' | 'SELECTED';
+  employeeIds: string[];
 };
 
 type BadgeTone = 'default' | 'ok' | 'warn';
@@ -509,13 +511,14 @@ function PositionPickerDialog({ floorplan, x, y, onClose, onPick }: { floorplan:
   );
 }
 
-function DeskEditor({ desk, floorplans, tenants, defaultFloorplanId, initialPosition, lockFloorplan, onRequestPositionMode, onClose, onSaved, onError }: { desk: Desk | null; floorplans: Floorplan[]; tenants: Tenant[]; defaultFloorplanId: string; initialPosition?: { x: number; y: number } | null; lockFloorplan?: boolean; onRequestPositionMode?: () => void; onClose: () => void; onSaved: () => Promise<void>; onError: (message: string) => void }) {
-  const [form, setForm] = useState<DeskFormState>({ floorplanId: desk?.floorplanId ?? defaultFloorplanId, name: desk?.name ?? '', kind: desk?.kind ?? floorplans.find((item) => item.id === (desk?.floorplanId ?? defaultFloorplanId))?.defaultResourceKind ?? 'TISCH', hasCharger: desk?.hasCharger ?? false, seriesPolicy: toSeriesPolicy(desk?.allowSeriesOverride), x: initialPosition?.x ?? desk?.x ?? null, y: initialPosition?.y ?? desk?.y ?? null, tenantScope: desk?.tenantScope ?? 'ALL', tenantIds: desk?.tenantIds ?? [] });
+function DeskEditor({ desk, floorplans, tenants, employees, defaultFloorplanId, initialPosition, lockFloorplan, onRequestPositionMode, onClose, onSaved, onError }: { desk: Desk | null; floorplans: Floorplan[]; tenants: Tenant[]; employees: Employee[]; defaultFloorplanId: string; initialPosition?: { x: number; y: number } | null; lockFloorplan?: boolean; onRequestPositionMode?: () => void; onClose: () => void; onSaved: () => Promise<void>; onError: (message: string) => void }) {
+  const [form, setForm] = useState<DeskFormState>({ floorplanId: desk?.floorplanId ?? defaultFloorplanId, name: desk?.name ?? '', kind: desk?.kind ?? floorplans.find((item) => item.id === (desk?.floorplanId ?? defaultFloorplanId))?.defaultResourceKind ?? 'TISCH', hasCharger: desk?.hasCharger ?? false, seriesPolicy: toSeriesPolicy(desk?.allowSeriesOverride), x: initialPosition?.x ?? desk?.x ?? null, y: initialPosition?.y ?? desk?.y ?? null, tenantScope: desk?.tenantScope ?? 'ALL', tenantIds: desk?.tenantIds ?? [], employeeScope: desk?.employeeScope ?? 'ALL', employeeIds: desk?.employeeIds ?? [] });
   const [showPicker, setShowPicker] = useState(false);
   const [inlineError, setInlineError] = useState('');
 
-  const canSave = form.floorplanId && form.name.trim().length > 0 && form.x !== null && form.y !== null && (form.tenantScope === 'ALL' || form.tenantIds.length > 0);
+  const canSave = form.floorplanId && form.name.trim().length > 0 && form.x !== null && form.y !== null && (form.tenantScope === 'ALL' || form.tenantIds.length > 0) && (form.employeeScope === 'ALL' || form.employeeIds.length > 0);
   const floorplan = floorplans.find((item) => item.id === form.floorplanId) ?? null;
+  const availableEmployees = employees.filter((employee) => employee.tenantDomainId && (form.tenantScope === 'ALL' || form.tenantIds.includes(employee.tenantDomainId)));
 
   const onFloorplanChange = (nextFloorplanId: string) => {
     setForm((current) => ({ ...current, floorplanId: nextFloorplanId, kind: desk ? current.kind : (floorplans.find((item) => item.id === nextFloorplanId)?.defaultResourceKind ?? current.kind), x: current.floorplanId === nextFloorplanId ? current.x : null, y: current.floorplanId === nextFloorplanId ? current.y : null }));
@@ -532,6 +535,19 @@ function DeskEditor({ desk, floorplans, tenants, defaultFloorplanId, initialPosi
       : { ...current, kind: selectedFloorplan.defaultResourceKind as ResourceKind });
   }, [desk, floorplans, form.floorplanId]);
 
+  useEffect(() => {
+    setForm((current) => {
+      if (current.employeeScope !== 'SELECTED') return current;
+      const allowedEmployeeIds = new Set(
+        employees
+          .filter((employee) => employee.tenantDomainId && (current.tenantScope === 'ALL' || current.tenantIds.includes(employee.tenantDomainId)))
+          .map((employee) => employee.id)
+      );
+      const filteredEmployeeIds = current.employeeIds.filter((employeeId) => allowedEmployeeIds.has(employeeId));
+      return filteredEmployeeIds.length === current.employeeIds.length ? current : { ...current, employeeIds: filteredEmployeeIds };
+    });
+  }, [employees, form.tenantIds, form.tenantScope]);
+
   const submit = async (event: FormEvent) => {
     event.preventDefault();
     if (form.x === null || form.y === null) {
@@ -540,9 +556,9 @@ function DeskEditor({ desk, floorplans, tenants, defaultFloorplanId, initialPosi
     }
     try {
       if (desk) {
-        await patch(`/admin/desks/${desk.id}`, { name: form.name, kind: form.kind, hasCharger: form.kind === 'PARKPLATZ' ? form.hasCharger : false, allowSeriesOverride: fromSeriesPolicy(form.seriesPolicy), x: form.x, y: form.y, tenantScope: form.tenantScope, tenantIds: form.tenantScope === 'SELECTED' ? form.tenantIds : [] });
+        await patch(`/admin/desks/${desk.id}`, { name: form.name, kind: form.kind, hasCharger: form.kind === 'PARKPLATZ' ? form.hasCharger : false, allowSeriesOverride: fromSeriesPolicy(form.seriesPolicy), x: form.x, y: form.y, tenantScope: form.tenantScope, tenantIds: form.tenantScope === 'SELECTED' ? form.tenantIds : [], employeeScope: form.employeeScope, employeeIds: form.employeeScope === 'SELECTED' ? form.employeeIds : [] });
       } else {
-        await post(`/admin/floorplans/${form.floorplanId}/desks`, { name: form.name, kind: form.kind, hasCharger: form.kind === 'PARKPLATZ' ? form.hasCharger : false, allowSeriesOverride: fromSeriesPolicy(form.seriesPolicy), x: form.x, y: form.y, tenantScope: form.tenantScope, tenantIds: form.tenantScope === 'SELECTED' ? form.tenantIds : [] });
+        await post(`/admin/floorplans/${form.floorplanId}/desks`, { name: form.name, kind: form.kind, hasCharger: form.kind === 'PARKPLATZ' ? form.hasCharger : false, allowSeriesOverride: fromSeriesPolicy(form.seriesPolicy), x: form.x, y: form.y, tenantScope: form.tenantScope, tenantIds: form.tenantScope === 'SELECTED' ? form.tenantIds : [], employeeScope: form.employeeScope, employeeIds: form.employeeScope === 'SELECTED' ? form.employeeIds : [] });
       }
       await onSaved();
     } catch (err) {
@@ -552,7 +568,7 @@ function DeskEditor({ desk, floorplans, tenants, defaultFloorplanId, initialPosi
 
   return (
     <>
-      <div className="overlay"><section className="card dialog stack-sm"><h3>{desk ? 'Ressource bearbeiten' : 'Ressource anlegen'}</h3><form className="stack-sm" onSubmit={submit}>{lockFloorplan ? <label className="field"><span>Floorplan</span><input value={floorplans.find((f) => f.id === form.floorplanId)?.name ?? '—'} disabled /></label> : <label className="field"><span>Floorplan</span><select required value={form.floorplanId} onChange={(e) => onFloorplanChange(e.target.value)}><option value="">Floorplan wählen</option>{floorplans.map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}</select></label>}<label className="field"><span>Art</span><select value={form.kind} onChange={(e) => setForm((current) => ({ ...current, kind: e.target.value as ResourceKind }))}>{RESOURCE_KIND_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>{form.kind === 'PARKPLATZ' && <label className="field"><span>E-Ladesäule vorhanden</span><input type="checkbox" checked={form.hasCharger} onChange={(e) => setForm((current) => ({ ...current, hasCharger: e.target.checked }))} /></label>}<label className="field"><span>Serientermine</span><select value={form.seriesPolicy} onChange={(e) => setForm((current) => ({ ...current, seriesPolicy: e.target.value as SeriesPolicy }))}><option value="DEFAULT">Floor-Default verwenden</option><option value="ALLOW">Erlauben</option><option value="DISALLOW">Nicht erlauben</option></select><p className="muted">Default = Einstellung aus Floorplan.</p></label><label className="field"><span>Name</span><input required placeholder="z. B. H4" value={form.name} onChange={(e) => setForm((current) => ({ ...current, name: e.target.value }))} /></label><div className="field"><span>Buchbar für</span><div className="stack-xs"><label className="inline"><input type="radio" checked={form.tenantScope === 'ALL'} onChange={() => setForm((current) => ({ ...current, tenantScope: 'ALL', tenantIds: [] }))} />Alle Mandanten</label><label className="inline"><input type="radio" checked={form.tenantScope === 'SELECTED'} onChange={() => setForm((current) => ({ ...current, tenantScope: 'SELECTED' }))} />Bestimmte Mandanten</label>{form.tenantScope === 'SELECTED' && <div className="stack-xs">{tenants.map((tenant) => <label key={tenant.id} className="inline"><input type="checkbox" checked={form.tenantIds.includes(tenant.id)} onChange={(event) => setForm((current) => ({ ...current, tenantIds: event.target.checked ? Array.from(new Set([...current.tenantIds, tenant.id])) : current.tenantIds.filter((id) => id !== tenant.id) }))} />{tenant.name ? `${tenant.name} (${tenant.domain})` : tenant.domain}</label>)}{tenants.length === 0 && <p className="muted">Keine Mandanten vorhanden.</p>}</div>}</div></div><div className="field"><span>Position</span><div className="inline-between"><Badge tone={form.x !== null && form.y !== null ? 'ok' : 'warn'}>{form.x !== null && form.y !== null ? `Position gesetzt (${Math.round(form.x * 100)}% / ${Math.round(form.y * 100)}%)` : 'Keine Position gesetzt'}</Badge><div className="admin-toolbar">{onRequestPositionMode && <button type="button" className="btn btn-outline" onClick={() => { onClose(); onRequestPositionMode(); }}>Position im Plan ändern</button>}<button type="button" className="btn btn-outline" disabled={!form.floorplanId} onClick={() => setShowPicker(true)}>{form.x !== null && form.y !== null ? 'Neu positionieren' : 'Position im Plan setzen'}</button></div></div>{!form.floorplanId && <p className="muted">Bitte Floorplan wählen.</p>}</div>{inlineError && <p className="error-banner">{inlineError}</p>}<div className="inline-end"><button type="button" className="btn btn-outline" onClick={onClose}>Abbrechen</button><button className="btn" disabled={!canSave}>Speichern</button></div></form></section></div>
+      <div className="overlay"><section className="card dialog stack-sm"><h3>{desk ? 'Ressource bearbeiten' : 'Ressource anlegen'}</h3><form className="stack-sm" onSubmit={submit}>{lockFloorplan ? <label className="field"><span>Floorplan</span><input value={floorplans.find((f) => f.id === form.floorplanId)?.name ?? '—'} disabled /></label> : <label className="field"><span>Floorplan</span><select required value={form.floorplanId} onChange={(e) => onFloorplanChange(e.target.value)}><option value="">Floorplan wählen</option>{floorplans.map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}</select></label>}<label className="field"><span>Art</span><select value={form.kind} onChange={(e) => setForm((current) => ({ ...current, kind: e.target.value as ResourceKind }))}>{RESOURCE_KIND_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>{form.kind === 'PARKPLATZ' && <label className="field"><span>E-Ladesäule vorhanden</span><input type="checkbox" checked={form.hasCharger} onChange={(e) => setForm((current) => ({ ...current, hasCharger: e.target.checked }))} /></label>}<label className="field"><span>Serientermine</span><select value={form.seriesPolicy} onChange={(e) => setForm((current) => ({ ...current, seriesPolicy: e.target.value as SeriesPolicy }))}><option value="DEFAULT">Floor-Default verwenden</option><option value="ALLOW">Erlauben</option><option value="DISALLOW">Nicht erlauben</option></select><p className="muted">Default = Einstellung aus Floorplan.</p></label><label className="field"><span>Name</span><input required placeholder="z. B. H4" value={form.name} onChange={(e) => setForm((current) => ({ ...current, name: e.target.value }))} /></label><div className="field"><span>Buchbar für</span><div className="stack-xs"><label className="inline"><input type="radio" checked={form.tenantScope === 'ALL'} onChange={() => setForm((current) => ({ ...current, tenantScope: 'ALL', tenantIds: [] }))} />Alle Mandanten</label><label className="inline"><input type="radio" checked={form.tenantScope === 'SELECTED'} onChange={() => setForm((current) => ({ ...current, tenantScope: 'SELECTED' }))} />Bestimmte Mandanten</label>{form.tenantScope === 'SELECTED' && <div className="stack-xs">{tenants.map((tenant) => <label key={tenant.id} className="inline"><input type="checkbox" checked={form.tenantIds.includes(tenant.id)} onChange={(event) => setForm((current) => ({ ...current, tenantIds: event.target.checked ? Array.from(new Set([...current.tenantIds, tenant.id])) : current.tenantIds.filter((id) => id !== tenant.id) }))} />{tenant.name ? `${tenant.name} (${tenant.domain})` : tenant.domain}</label>)}{tenants.length === 0 && <p className="muted">Keine Mandanten vorhanden.</p>}</div>}</div></div><div className="field"><span>Mitarbeiter-Freigabe</span><div className="stack-xs"><label className="inline"><input type="radio" checked={form.employeeScope === 'ALL'} onChange={() => setForm((current) => ({ ...current, employeeScope: 'ALL', employeeIds: [] }))} />Alle Mitarbeiter der erlaubten Mandanten</label><label className="inline"><input type="radio" checked={form.employeeScope === 'SELECTED'} onChange={() => setForm((current) => ({ ...current, employeeScope: 'SELECTED' }))} />Bestimmte Mitarbeiter</label>{form.employeeScope === 'SELECTED' && <div className="stack-xs">{availableEmployees.map((employee) => <label key={employee.id} className="inline"><input type="checkbox" checked={form.employeeIds.includes(employee.id)} onChange={(event) => setForm((current) => ({ ...current, employeeIds: event.target.checked ? Array.from(new Set([...current.employeeIds, employee.id])) : current.employeeIds.filter((id) => id !== employee.id) }))} />{employee.displayName} ({employee.email})</label>)}{availableEmployees.length === 0 && <p className="muted">Keine passenden Mitarbeiter verfügbar.</p>}</div>}</div></div><div className="field"><span>Position</span><div className="inline-between"><Badge tone={form.x !== null && form.y !== null ? 'ok' : 'warn'}>{form.x !== null && form.y !== null ? `Position gesetzt (${Math.round(form.x * 100)}% / ${Math.round(form.y * 100)}%)` : 'Keine Position gesetzt'}</Badge><div className="admin-toolbar">{onRequestPositionMode && <button type="button" className="btn btn-outline" onClick={() => { onClose(); onRequestPositionMode(); }}>Position im Plan ändern</button>}<button type="button" className="btn btn-outline" disabled={!form.floorplanId} onClick={() => setShowPicker(true)}>{form.x !== null && form.y !== null ? 'Neu positionieren' : 'Position im Plan setzen'}</button></div></div>{!form.floorplanId && <p className="muted">Bitte Floorplan wählen.</p>}</div>{inlineError && <p className="error-banner">{inlineError}</p>}<div className="inline-end"><button type="button" className="btn btn-outline" onClick={onClose}>Abbrechen</button><button className="btn" disabled={!canSave}>Speichern</button></div></form></section></div>
       {showPicker && <PositionPickerDialog floorplan={floorplan} x={form.x} y={form.y} onClose={() => setShowPicker(false)} onPick={(x, y) => { setForm((current) => ({ ...current, x, y })); setShowPicker(false); setInlineError(''); }} />}
     </>
   );
@@ -677,6 +693,7 @@ function DesksPage({ path, navigate, onLogout, currentUser }: RouteProps) {
   const [floorplanId, setFloorplanId] = useState('');
   const [desks, setDesks] = useState<Desk[]>([]);
   const [tenants, setTenants] = useState<Tenant[]>([]);
+  const [employees, setEmployees] = useState<Employee[]>([]);
   const [tenantFilter, setTenantFilter] = useState('');
   const [query, setQuery] = useState('');
   const [filterMode, setFilterMode] = useState<DeskFilterMode>('all');
@@ -704,9 +721,10 @@ function DesksPage({ path, navigate, onLogout, currentUser }: RouteProps) {
 
   const loadFloorplans = async () => {
     try {
-      const [rows, tenantRows] = await Promise.all([get<Floorplan[]>('/floorplans'), get<Tenant[]>('/admin/tenants')]);
+      const [rows, tenantRows, employeeRows] = await Promise.all([get<Floorplan[]>('/floorplans'), get<Tenant[]>('/admin/tenants'), get<Employee[]>('/admin/employees')]);
       setFloorplans(rows);
       setTenants(tenantRows);
+      setEmployees(employeeRows);
       setFloorplanId((current) => current || rows[0]?.id || '');
     } catch (err) {
       setState((current) => ({ ...current, error: err instanceof Error ? err.message : 'Fehler beim Laden', loading: false, ready: true }));
@@ -1103,7 +1121,7 @@ function DesksPage({ path, navigate, onLogout, currentUser }: RouteProps) {
         </aside>
       </section>
 
-      {(createRequest || editingDesk) && <DeskEditor desk={editingDesk} floorplans={floorplans} tenants={tenants} defaultFloorplanId={floorplanId} initialPosition={createRequest} lockFloorplan={Boolean(createRequest)} onRequestPositionMode={editingDesk ? () => { setPendingRepositionDesk(editingDesk); setPendingRepositionCoords(null); setSavePositionError(''); setCanvasMode('reposition'); } : undefined} onClose={() => { setCreateRequest(null); setEditingDesk(null); navigate('/admin/desks'); }} onSaved={async () => { setCreateRequest(null); setEditingDesk(null); toasts.success('Ressource gespeichert'); await loadDesks(floorplanId); }} onError={toasts.error} />}
+      {(createRequest || editingDesk) && <DeskEditor desk={editingDesk} floorplans={floorplans} tenants={tenants} employees={employees} defaultFloorplanId={floorplanId} initialPosition={createRequest} lockFloorplan={Boolean(createRequest)} onRequestPositionMode={editingDesk ? () => { setPendingRepositionDesk(editingDesk); setPendingRepositionCoords(null); setSavePositionError(''); setCanvasMode('reposition'); } : undefined} onClose={() => { setCreateRequest(null); setEditingDesk(null); navigate('/admin/desks'); }} onSaved={async () => { setCreateRequest(null); setEditingDesk(null); toasts.success('Ressource gespeichert'); await loadDesks(floorplanId); }} onError={toasts.error} />}
       {!isSavePositionDialogOpen && deleteDesk && <ConfirmDialog title="Ressource löschen?" description={`Ressource "${deleteDesk.name}" wird entfernt.`} onCancel={() => setDeleteDesk(null)} onConfirm={async (event) => { const anchorRect = event.currentTarget.getBoundingClientRect(); await del(`/admin/desks/${deleteDesk.id}`); setDeleteDesk(null); toasts.success('Ressource gelöscht', { anchorRect }); await loadDesks(floorplanId); }} />}
       {!isSavePositionDialogOpen && bulkDeleteOpen && <ConfirmDialog title={`${selectedDeskIds.size} Einträge löschen?`} description="Dieser Vorgang ist irreversibel." onCancel={() => setBulkDeleteOpen(false)} onConfirm={(event) => void runBulkDelete(event.currentTarget.getBoundingClientRect())} confirmDisabled={isBulkDeleting} confirmLabel={isBulkDeleting ? 'Lösche…' : 'Löschen'} />}
       {isSavePositionDialogOpen && pendingRepositionDesk && pendingRepositionCoords && (
