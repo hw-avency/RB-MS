@@ -1,5 +1,17 @@
 [
   {
+    "version": "1.5.50",
+    "date": "2026-02-19",
+    "type": "bugfix",
+    "title": "Smart-Parking bestätigt jetzt mit korrekter Erinnerung und stabiler Button-Zeile",
+    "summary": "Im Bestätigungsfenster sind die drei Aktionen jetzt in einer festen Zeile angeordnet. Außerdem erstellt die Kalendererinnerung den Hinweis wieder korrekt 15 Minuten vor dem Parkplatzwechsel.",
+    "items": [
+      "Die Buttons „Zurück“, „Kalendererinnerung erstellen“ und „Jetzt verbindlich buchen“ stehen jetzt auf einer Ebene in der gewünschten Reihenfolge.",
+      "Das Bestätigungsfenster ist breiter, damit die Aktionsbuttons nicht umbrechen.",
+      "Die heruntergeladene Kalenderdatei setzt die Terminzeit jetzt korrekt auf 15 Minuten vor dem Wechsel statt mit falscher Zeitverschiebung."
+    ]
+  },
+  {
     "version": "1.5.49",
     "date": "2026-02-19",
     "type": "bugfix",

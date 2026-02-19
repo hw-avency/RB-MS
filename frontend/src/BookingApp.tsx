@@ -2188,13 +2188,13 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
     const second = parkingSmartProposal.bookings[1];
     const reminderMinute = Math.max(0, second.startMinute - 15);
     const pad = (value: number) => String(value).padStart(2, '0');
-    const minuteToDate = (minute: number) => {
+    const minuteToLocalIcsDate = (minute: number) => {
       const [year, month, day] = selectedDate.split('-').map((value) => Number(value));
-      return new Date(Date.UTC(year, (month ?? 1) - 1, day ?? 1, Math.floor(minute / 60), minute % 60, 0));
+      return `${year}${pad(month ?? 1)}${pad(day ?? 1)}T${pad(Math.floor(minute / 60))}${pad(minute % 60)}00`;
     };
-    const formatIcsDate = (date: Date) => `${date.getUTCFullYear()}${pad(date.getUTCMonth() + 1)}${pad(date.getUTCDate())}T${pad(date.getUTCHours())}${pad(date.getUTCMinutes())}00Z`;
-    const startAt = minuteToDate(reminderMinute);
-    const endAt = minuteToDate(Math.min(24 * 60 - 1, reminderMinute + 15));
+    const formatIcsDateUtc = (date: Date) => `${date.getUTCFullYear()}${pad(date.getUTCMonth() + 1)}${pad(date.getUTCDate())}T${pad(date.getUTCHours())}${pad(date.getUTCMinutes())}00Z`;
+    const startAt = minuteToLocalIcsDate(reminderMinute);
+    const endAt = minuteToLocalIcsDate(Math.min(24 * 60 - 1, reminderMinute + 15));
     const details = `Parkplatzwechsel am ${new Date(`${selectedDate}T00:00:00Z`).toLocaleDateString('de-DE')} um ${formatMinutes(second.startMinute)}.\\nVon: ${first.deskName} (${first.startTime ?? formatMinutes(first.startMinute)}-${first.endTime ?? formatMinutes(first.endMinute)})\\nAuf: ${second.deskName} (${second.startTime ?? formatMinutes(second.startMinute)}-${second.endTime ?? formatMinutes(second.endMinute)})`;
     const ics = [
       'BEGIN:VCALENDAR',
@@ -2202,9 +2202,9 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
       'PRODID:-//RB-MS//ParkingReminder//DE',
       'BEGIN:VEVENT',
       `UID:parking-switch-${selectedDate}-${first.deskId}-${second.deskId}@rb-ms`,
-      `DTSTAMP:${formatIcsDate(new Date())}`,
-      `DTSTART:${formatIcsDate(startAt)}`,
-      `DTEND:${formatIcsDate(endAt)}`,
+      `DTSTAMP:${formatIcsDateUtc(new Date())}`,
+      `DTSTART:${startAt}`,
+      `DTEND:${endAt}`,
       'SUMMARY:Parkplatzwechsel',
       `DESCRIPTION:${details}`,
       'BEGIN:VALARM',
@@ -3460,11 +3460,11 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
             <h3 id="parking-smart-confirm-title">Parkplatz-Buchung bestätigen?</h3>
             <p className="parking-smart-confirm-intro">Bitte bestätige den vorgeschlagenen Parkplatz-Zeitplan.</p>
             <ParkingScheduleGrid entries={parkingScheduleEntries.map((entry) => ({ ...entry, id: `confirm-${entry.id}` }))} />
-            {parkingSmartProposal.switchAfterCharging && parkingSmartProposal.bookings.length >= 2 && (
-              <button type="button" className="btn" onClick={createParkingReminderCalendarEvent} disabled={isParkingSmartLoading}>Kalendererinnerung erstellen</button>
-            )}
-            <div className="inline-end parking-smart-confirm-actions">
+            <div className="inline-end parking-smart-confirm-actions parking-smart-confirm-actions-row">
               <button type="button" className="btn btn-danger" onClick={() => setIsParkingSmartConfirmDialogOpen(false)} disabled={isParkingSmartLoading}>Zurück</button>
+              {parkingSmartProposal.switchAfterCharging && parkingSmartProposal.bookings.length >= 2 && (
+                <button type="button" className="btn" onClick={createParkingReminderCalendarEvent} disabled={isParkingSmartLoading}>Kalendererinnerung erstellen</button>
+              )}
               <button type="button" className="btn" onClick={confirmSmartParkingProposal} disabled={isParkingSmartLoading || hasParkingProposalConflict}>Jetzt verbindlich buchen</button>
             </div>
           </section>
