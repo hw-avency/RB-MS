@@ -1612,7 +1612,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
     try {
       const nextOccupancy = await runWithAppLoading(() => get<OccupancyResponse>(`/occupancy?floorplanId=${floorplanId}&date=${date}`));
       if (currentRequestId !== occupancyRequestIdRef.current) return null;
-      if (nextOccupancy.floorplanId !== activeFloorId) return null;
+      if (nextOccupancy.floorplanId !== floorplanId) return null;
 
       setOccupancy(nextOccupancy);
       markBackendAvailable(true);
