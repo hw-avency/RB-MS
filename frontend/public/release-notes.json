@@ -1,5 +1,17 @@
 [
   {
+    "version": "1.5.51",
+    "date": "2026-02-19",
+    "type": "bugfix",
+    "title": "Parkplatz-Storno zeigt jetzt Für mich oder Für Gast",
+    "summary": "In der Liste vor dem Sammel-Storno von Parkplatz-Buchungen ist jetzt direkt sichtbar, ob ein Eintrag für dich selbst oder für einen Gast angelegt wurde.",
+    "items": [
+      "Jeder Eintrag im Dialog ‚Buchungen stornieren‘ zeigt neben Parkplatz und Zeit zusätzlich den Buchungstyp an.",
+      "Gastbuchungen werden als ‚Für Gast‘ angezeigt; wenn ein Gastname hinterlegt ist, wird dieser direkt ergänzt.",
+      "Eigene Buchungen werden klar als ‚Für mich‘ gekennzeichnet."
+    ]
+  },
+  {
     "version": "1.5.50",
     "date": "2026-02-19",
     "type": "bugfix",
