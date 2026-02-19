@@ -1,5 +1,17 @@
 [
   {
+    "version": "1.5.31",
+    "date": "2026-02-19",
+    "type": "bugfix",
+    "title": "Smart-Parking erkennt volle Stundenfenster zuverlässiger",
+    "summary": "Die intelligente Parkplatzzuweisung berücksichtigt jetzt auch freie Ladefenster innerhalb des Aufenthalts. Dadurch werden Zeiträume wie 12:00–14:00 korrekt als buchbares 2-Stunden-Fenster erkannt.",
+    "items": [
+      "Die Ladefenster-Suche prüft jetzt zusätzlich stündliche Startpunkte innerhalb des gesamten Aufenthalts statt nur am Anfang oder Ende.",
+      "Wenn das Ladefenster in der Mitte liegt, kann die Zuweisung den Aufenthalt in mehrere zusammenhängende Abschnitte aufteilen.",
+      "Freie, volle Stundenfenster werden damit in der Smart-Zuweisung zuverlässiger gefunden und vorgeschlagen."
+    ]
+  },
+  {
     "version": "1.5.30",
     "date": "2026-02-19",
     "type": "feature",
