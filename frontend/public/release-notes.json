@@ -1,5 +1,17 @@
 [
   {
+    "version": "1.5.29",
+    "date": "2026-02-18",
+    "type": "bugfix",
+    "title": "Storno und Parkplatz-Konflikte arbeiten jetzt nutzergenau",
+    "summary": "Stornos im Benutzerbereich betreffen jetzt ausschließlich eigene Buchungen. Der Sammel-Storno auf Parkplätzen läuft als ein einzelner Backend-Request, und parallele Parkplatz-Buchungen zur gleichen Zeit werden für Mitarbeitende zuverlässig verhindert.",
+    "items": [
+      "Im normalen Buchungsdialog können auch Admins nur noch eigene Buchungen stornieren; fremde Buchungen bleiben dem Admin-Bereich vorbehalten.",
+      "Der Button „alle stornieren“ bei mehreren Parkplatz-Buchungen sendet jetzt genau einen Request und löscht nur eigene Buchungen am gewählten Tag auf der gewählten Ressource.",
+      "Für Selbst-Buchungen wird bei Parkplätzen eine Zeitkonflikt-Prüfung erzwungen: dieselbe Person kann nicht mehr zwei Parkplätze im gleichen Zeitraum halten; Gastbuchungen bleiben davon ausgenommen."
+    ]
+  },
+  {
     "version": "1.5.28",
     "date": "2026-02-18",
     "type": "bugfix",

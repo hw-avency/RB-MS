@@ -11,7 +11,6 @@ export type CancelBooking = {
 };
 
 export const canCancelBooking = ({ booking, actor }: { booking: CancelBooking; actor: CancelActor }): boolean => {
-  return actor.isAdmin === true
-    || (booking.bookedFor === 'SELF' && booking.employeeId === actor.employeeId)
+  return (booking.bookedFor === 'SELF' && booking.employeeId === actor.employeeId)
     || (booking.bookedFor === 'GUEST' && booking.createdByEmployeeId === actor.employeeId);
 };

@@ -34,7 +34,7 @@ test('User A cancels B GUEST (created by B) -> forbidden', () => {
   assert.equal(allowed, false);
 });
 
-test('Admin cancels any booking -> allowed', () => {
+test('Admin in user flow cancels foreign booking -> forbidden', () => {
   const selfAllowed = canCancelBooking({
     booking: { bookedFor: 'SELF', employeeId: 'emp-b', createdByEmployeeId: 'emp-b' },
     actor: { employeeId: 'emp-admin', email: 'admin@example.com', isAdmin: true }
@@ -44,6 +44,6 @@ test('Admin cancels any booking -> allowed', () => {
     actor: { employeeId: 'emp-admin', email: 'admin@example.com', isAdmin: true }
   });
 
-  assert.equal(selfAllowed, true);
-  assert.equal(guestAllowed, true);
+  assert.equal(selfAllowed, false);
+  assert.equal(guestAllowed, false);
 });

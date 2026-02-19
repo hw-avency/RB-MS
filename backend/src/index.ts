@@ -3661,6 +3661,43 @@ app.put('/bookings/:id', async (req, res) => {
     return;
   }
 
+  if (nextDesk.kind === 'PARKPLATZ' && existing.bookedFor === 'SELF') {
+    const personalParkingConflicts = await prisma.booking.findMany({
+      where: {
+        date: bookingDate,
+        id: { not: existing.id },
+        bookedFor: 'SELF',
+        employeeId: actorEmployee.id,
+        desk: { kind: 'PARKPLATZ' }
+      },
+      include: { desk: { select: { id: true, name: true } } },
+      orderBy: [{ createdAt: 'desc' }]
+    });
+
+    const personalConflict = personalParkingConflicts.find((candidate) => {
+      const candidateWindow = bookingToWindow(candidate);
+      return candidateWindow ? windowsOverlap(nextWindow, candidateWindow) : false;
+    });
+
+    if (personalConflict) {
+      logBookingEvent('MANUAL_UPDATE_CONFLICT_USER_HAS_PARKING_OVERLAP', {
+        requestId,
+        bookingId: existing.id,
+        conflictingBookingId: personalConflict.id,
+        conflictingDeskId: personalConflict.deskId,
+        date: toISODateOnly(bookingDate)
+      }, 'warn');
+      sendConflict(res, 'User already has a parking booking for this time window', {
+        conflictKind: 'PARKPLATZ',
+        bookingId: personalConflict.id,
+        deskId: personalConflict.deskId,
+        deskName: personalConflict.desk?.name ?? personalConflict.deskId,
+        date: toISODateOnly(bookingDate)
+      });
+      return;
+    }
+  }
+
   const updated = await prisma.booking.update({
     where: { id },
     data: {
@@ -3690,12 +3727,12 @@ app.put('/bookings/:id', async (req, res) => {
   res.status(200).json(mapBookingResponse(updated));
 });
 
-type BookingCancelScope = 'single' | 'series';
+type BookingCancelScope = 'single' | 'series' | 'resource_day_self';
 
 const parseBookingCancelScope = (value: unknown): BookingCancelScope | null => {
   if (typeof value !== 'string') return null;
   const normalized = value.trim().toLowerCase();
-  if (normalized === 'single' || normalized === 'series') return normalized;
+  if (normalized === 'single' || normalized === 'series' || normalized === 'resource_day_self') return normalized;
   return null;
 };
 
@@ -3780,20 +3817,56 @@ const cancelBookingByScope = async ({ id, scope, req, res }: { id: string; scope
         return 1;
       }
 
+      if (scope === 'resource_day_self') {
+        const deleteBookingsResult = await tx.booking.deleteMany({
+          where: {
+            deskId: existing.deskId,
+            date: existing.date,
+            OR: [
+              { bookedFor: 'SELF', employeeId: actorEmployee.id },
+              { bookedFor: 'GUEST', createdByEmployeeId: actorEmployee.id }
+            ]
+          }
+        });
+        return deleteBookingsResult.count;
+      }
+
       const seriesWhereClauses: Array<{ recurringBookingId?: string; recurringGroupId?: string }> = [];
       if (existing.recurringBookingId) seriesWhereClauses.push({ recurringBookingId: existing.recurringBookingId });
       if (existing.recurringGroupId) seriesWhereClauses.push({ recurringGroupId: existing.recurringGroupId });
       if (seriesWhereClauses.length === 0) return 0;
 
       const matchingBookings = await tx.booking.findMany({
-        where: { OR: seriesWhereClauses },
+        where: {
+          OR: seriesWhereClauses,
+          AND: [
+            {
+              OR: [
+                { bookedFor: 'SELF', employeeId: actorEmployee.id },
+                { bookedFor: 'GUEST', createdByEmployeeId: actorEmployee.id }
+              ]
+            }
+          ]
+        },
         select: { recurringBookingId: true }
       });
       const recurringBookingIds = Array.from(new Set(matchingBookings
         .map((booking) => booking.recurringBookingId)
         .filter((value): value is string => Boolean(value))));
 
-      const deleteBookingsResult = await tx.booking.deleteMany({ where: { OR: seriesWhereClauses } });
+      const deleteBookingsResult = await tx.booking.deleteMany({
+        where: {
+          OR: seriesWhereClauses,
+          AND: [
+            {
+              OR: [
+                { bookedFor: 'SELF', employeeId: actorEmployee.id },
+                { bookedFor: 'GUEST', createdByEmployeeId: actorEmployee.id }
+              ]
+            }
+          ]
+        }
+      });
       if (recurringBookingIds.length > 0) {
         await tx.recurringBooking.deleteMany({ where: { id: { in: recurringBookingIds } } });
       }
@@ -3823,7 +3896,7 @@ app.delete('/bookings/:id', async (req, res) => {
 
   const scope = parseBookingCancelScope(req.query.scope ?? 'single');
   if (!scope) {
-    res.status(400).json({ error: 'validation', message: 'scope must be single or series' });
+    res.status(400).json({ error: 'validation', message: 'scope must be single, series or resource_day_self' });
     return;
   }
 
@@ -3930,7 +4003,7 @@ app.post('/bookings/:id/cancel', async (req, res) => {
 
   const scope = parseBookingCancelScope((req.body as { scope?: unknown } | undefined)?.scope ?? 'single');
   if (!scope) {
-    res.status(400).json({ error: 'validation', message: 'scope must be single or series' });
+    res.status(400).json({ error: 'validation', message: 'scope must be single, series or resource_day_self' });
     return;
   }
 

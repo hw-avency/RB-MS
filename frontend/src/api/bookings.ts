@@ -182,7 +182,7 @@ export async function createRoomBooking(payload: RoomCreatePayload, meta: Bookin
   }
 }
 
-export async function cancelBooking(bookingId: string, scope: 'single' | 'series' = 'single', meta?: BookingMutationMeta): Promise<{ deletedCount: number; scope: 'single' | 'series' }> {
+export async function cancelBooking(bookingId: string, scope: 'single' | 'series' | 'resource_day_self' = 'single', meta?: BookingMutationMeta): Promise<{ deletedCount: number; scope: 'single' | 'series' | 'resource_day_self' }> {
   if (!bookingId) {
     throw new Error('Missing bookingId');
   }
@@ -220,11 +220,11 @@ export async function cancelBooking(bookingId: string, scope: 'single' | 'series
     && 'deletedCount' in body
     && typeof (body as { deletedCount?: unknown }).deletedCount === 'number'
     && 'scope' in body
-    && ((body as { scope?: unknown }).scope === 'single' || (body as { scope?: unknown }).scope === 'series')
+    && ((body as { scope?: unknown }).scope === 'single' || (body as { scope?: unknown }).scope === 'series' || (body as { scope?: unknown }).scope === 'resource_day_self')
   ) {
     return {
       deletedCount: (body as { deletedCount: number }).deletedCount,
-      scope: (body as { scope: 'single' | 'series' }).scope
+      scope: (body as { scope: 'single' | 'series' | 'resource_day_self' }).scope
     };
   }
 
