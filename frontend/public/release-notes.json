@@ -1,5 +1,17 @@
 [
   {
+    "version": "1.5.36",
+    "date": "2026-02-19",
+    "type": "bugfix",
+    "title": "Backend-Build und Mitarbeiter-Freigabe im Admin repariert",
+    "summary": "Der Backend-Deploy bricht nicht mehr an einer TypeScript-Prüfung ab. Außerdem zeigt die Mitarbeiter-Freigabe bei Ressourcen wieder passende Mitarbeitende an.",
+    "items": [
+      "Ein TypeScript-Null-Check im Floorplan-Endpunkt wurde korrigiert, damit der Backend-Build auf Render wieder erfolgreich durchläuft.",
+      "Die Admin-Mitarbeiterliste liefert wieder die Mandanten-Zuordnung mit, damit Freigaben für Ressourcen korrekt gefiltert werden können.",
+      "Bei \"Mitarbeiter-Freigabe: Bestimmte Mitarbeiter\" stehen im Admin-Dialog wieder auswählbare Personen zur Verfügung, statt fälschlich leer zu bleiben."
+    ]
+  },
+  {
     "version": "1.5.35",
     "date": "2026-02-19",
     "type": "bugfix",

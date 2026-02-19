@@ -1758,6 +1758,7 @@ const employeeSelect = {
   displayName: true,
   role: true,
   isActive: true,
+  tenantDomainId: true,
   phone: true,
   photoUrl: true,
   photoUpdatedAt: true
@@ -3186,7 +3187,7 @@ app.get('/floorplans', async (req, res) => {
     ? floorplans
     : floorplans.filter((floorplan) => isFloorplanVisibleForTenant(floorplan, actor?.tenantDomainId ?? null));
 
-  if (actor?.role !== 'admin' && visible.length > 0) {
+  if (actor && actor.role !== 'admin' && visible.length > 0) {
     const visibleFloorplanIds = visible.map((floorplan) => floorplan.id);
     const accessibleDesks = await prisma.desk.findMany({
       where: {
