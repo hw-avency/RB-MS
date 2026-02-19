@@ -6,6 +6,8 @@ import { prisma } from './prisma';
 
 type BookingFixture = {
   id: string;
+  deskId?: string;
+  date?: string;
   bookedFor: 'SELF' | 'GUEST';
   userEmail: string | null;
   employeeId: string | null;
@@ -25,6 +27,8 @@ beforeEach(() => {
     userEmail: 'user-b@example.com',
     employeeId: 'user-b',
     createdByEmployeeId: 'user-b',
+    deskId: 'desk-room-b',
+    date: '2026-02-18',
     desk: { kind: 'RAUM' }
   });
 
@@ -34,6 +38,8 @@ beforeEach(() => {
     userEmail: null,
     employeeId: null,
     createdByEmployeeId: 'user-a',
+    deskId: 'desk-room-b',
+    date: '2026-02-18',
     desk: { kind: 'RAUM' }
   });
 
@@ -45,6 +51,8 @@ beforeEach(() => {
     createdByEmployeeId: 'user-a',
     recurringBookingId: 'series-a',
     recurringGroupId: 'group-a',
+    deskId: 'desk-series',
+    date: '2026-02-18',
     desk: { kind: 'TISCH' }
   });
 
@@ -56,6 +64,8 @@ beforeEach(() => {
     createdByEmployeeId: 'user-a',
     recurringBookingId: 'series-a',
     recurringGroupId: 'group-a',
+    deskId: 'desk-series',
+    date: '2026-02-19',
     desk: { kind: 'PARKPLATZ' }
   });
 
@@ -66,24 +76,36 @@ beforeEach(() => {
     bookings.delete(id);
     return booking;
   };
-  (prisma.booking.findMany as unknown) = async ({ where }: { where: { OR?: Array<{ recurringBookingId?: string; recurringGroupId?: string }> } }) => {
+  (prisma.booking.findMany as unknown) = async ({ where }: { where?: any }) => {
     const clauses = where?.OR ?? [];
+    const ownerFilters = where?.AND?.[0]?.OR ?? null;
     return Array.from(bookings.values())
-      .filter((booking) => clauses.some((clause) => (
+      .filter((booking) => clauses.length === 0 || clauses.some((clause: any) => (
         (clause.recurringBookingId && booking.recurringBookingId === clause.recurringBookingId)
         || (clause.recurringGroupId && booking.recurringGroupId === clause.recurringGroupId)
       )))
+      .filter((booking) => !ownerFilters || ownerFilters.some((ownerClause: any) => (
+        (ownerClause.bookedFor === 'SELF' && ownerClause.employeeId === booking.employeeId)
+        || (ownerClause.bookedFor === 'GUEST' && ownerClause.createdByEmployeeId === booking.createdByEmployeeId)
+      )))
       .map((booking) => ({ recurringBookingId: booking.recurringBookingId ?? null }));
   };
-  (prisma.booking.deleteMany as unknown) = async ({ where }: { where: { OR?: Array<{ recurringBookingId?: string; recurringGroupId?: string }> } }) => {
+  (prisma.booking.deleteMany as unknown) = async ({ where }: { where?: any }) => {
     const clauses = where?.OR ?? [];
+    const ownerFilters = where?.AND?.[0]?.OR ?? where?.OR ?? null;
     let count = 0;
     for (const [id, booking] of Array.from(bookings.entries())) {
-      const matches = clauses.some((clause) => (
+      const matchesSeries = clauses.length === 0 || clauses.some((clause: any) => (
         (clause.recurringBookingId && booking.recurringBookingId === clause.recurringBookingId)
         || (clause.recurringGroupId && booking.recurringGroupId === clause.recurringGroupId)
       ));
-      if (matches) {
+      const matchesDeskDate = (!where?.deskId || booking.deskId === where.deskId)
+        && (!where?.date || booking.date === where.date);
+      const matchesOwner = !ownerFilters || ownerFilters.some((ownerClause: any) => (
+        (ownerClause.bookedFor === 'SELF' && ownerClause.employeeId === booking.employeeId)
+        || (ownerClause.bookedFor === 'GUEST' && ownerClause.createdByEmployeeId === booking.createdByEmployeeId)
+      ));
+      if ((matchesSeries && matchesOwner) || (matchesDeskDate && matchesOwner)) {
         bookings.delete(id);
         count += 1;
       }
@@ -94,7 +116,7 @@ beforeEach(() => {
   (prisma.$transaction as unknown) = async (callback: (tx: typeof prisma) => Promise<unknown>) => callback(prisma);
 });
 
-const cancelAs = async ({ bookingId, userId, email, role = 'user', scope = 'single' }: { bookingId: string; userId: string; email: string; role?: 'user' | 'admin'; scope?: 'single' | 'series' }) => {
+const cancelAs = async ({ bookingId, userId, email, role = 'user', scope = 'single' }: { bookingId: string; userId: string; email: string; role?: 'user' | 'admin'; scope?: 'single' | 'series' | 'resource_day_self' }) => {
   const server = app.listen(0);
   await new Promise<void>((resolve) => server.once('listening', () => resolve()));
 
@@ -140,10 +162,10 @@ test('A cancels A_GUEST -> 200', async () => {
   assert.equal(bookings.has('booking-a-guest'), false);
 });
 
-test('Admin cancels B_SELF -> 200', async () => {
+test('Admin cancels B_SELF in user endpoint -> 403', async () => {
   const response = await cancelAs({ bookingId: 'booking-b-self', userId: 'admin-user', email: 'admin@example.com', role: 'admin' });
-  assert.equal(response.status, 200);
-  assert.equal(bookings.has('booking-b-self'), false);
+  assert.equal(response.status, 403);
+  assert.equal(bookings.has('booking-b-self'), true);
 });
 
 
@@ -159,4 +181,34 @@ test('Single cancel keeps remaining series occurrences', async () => {
   assert.equal(response.status, 200);
   assert.equal(bookings.has('booking-series-a-1'), false);
   assert.equal(bookings.has('booking-series-a-2'), true);
+});
+
+
+test('Resource day self cancel deletes only actor bookings on same desk/day', async () => {
+  bookings.set('booking-a-self-second', {
+    id: 'booking-a-self-second',
+    bookedFor: 'SELF',
+    userEmail: 'user-a@example.com',
+    employeeId: 'user-a',
+    createdByEmployeeId: 'user-a',
+    deskId: 'desk-series',
+    date: '2026-02-18',
+    desk: { kind: 'PARKPLATZ' }
+  });
+  bookings.set('booking-b-self-same-desk-day', {
+    id: 'booking-b-self-same-desk-day',
+    bookedFor: 'SELF',
+    userEmail: 'user-b@example.com',
+    employeeId: 'user-b',
+    createdByEmployeeId: 'user-b',
+    deskId: 'desk-series',
+    date: '2026-02-18',
+    desk: { kind: 'PARKPLATZ' }
+  });
+
+  const response = await cancelAs({ bookingId: 'booking-series-a-1', userId: 'user-a', email: 'user-a@example.com', scope: 'resource_day_self' });
+  assert.equal(response.status, 200);
+  assert.equal(bookings.has('booking-series-a-1'), false);
+  assert.equal(bookings.has('booking-a-self-second'), false);
+  assert.equal(bookings.has('booking-b-self-same-desk-day'), true);
 });

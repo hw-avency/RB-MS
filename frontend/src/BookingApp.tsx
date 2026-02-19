@@ -2480,17 +2480,46 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
 
     try {
       if (cancelAllByDefault) {
-        for (const currentBookingId of bookingIds) {
-          await cancelBookingWithRefresh({
-            bookingId: currentBookingId,
-            cancelMode,
-            requestId,
-            deskId: cancelConfirmDesk.id,
-            date: selectedDate,
-            keepPopoverOpen: cancelConfirmContext.keepPopoverOpen,
-            popupDeskId: cancelConfirmContext.deskId,
-            isRoomCancel
+        const endpointAll = `${API_BASE}/bookings/${bookingId}?scope=resource_day_self`;
+        updateCancelDebug({ lastAction: 'CANCEL_REQUEST', bookingId, endpoint: endpointAll, httpStatus: null, errorMessage: '' });
+
+        let deletedCount = 0;
+        await runWithAppLoading(async () => {
+          const result = await cancelBooking(bookingId, 'resource_day_self', isRoomCancel ? { requestId } : undefined);
+          deletedCount = result.deletedCount;
+        });
+
+        updateCancelDebug({ lastAction: 'CANCEL_SUCCESS', bookingId, endpoint: endpointAll, httpStatus: 200, errorMessage: '' });
+        toast.success(`Alle eigenen Buchungen storniert (${deletedCount} Termin(e))`, { deskId: cancelConfirmDesk.id });
+
+        setBookingVersion((value) => value + 1);
+        setCancelDialogError('');
+        if (cancelConfirmContext.keepPopoverOpen) {
+          setCancelFlowState('DESK_POPOVER_OPEN');
+          window.requestAnimationFrame(() => {
+            refreshDeskPopupAnchorRect(cancelConfirmContext.deskId);
           });
+        } else {
+          setCancelFlowState('NONE');
+          setDeskPopup(null);
+        }
+        setCancelConfirmContext(null);
+
+        const refreshed = await reloadBookings(isRoomCancel ? { requestId, roomId: cancelConfirmDesk.id, date: selectedDate } : undefined);
+        try {
+          const calendarEntries = await runWithAppLoading(() => get<CalendarBooking[]>(`/bookings?from=${calendarRange.from}&to=${calendarRange.to}`));
+          setCalendarBookings(calendarEntries);
+          setBookedCalendarDays(Array.from(new Set(calendarEntries.map((entry) => toBookingDateKey(entry.date)))));
+        } catch {
+          setCalendarBookings([]);
+          setBookedCalendarDays([]);
+        }
+
+        const refreshedDesk = refreshed?.desks.find((desk) => desk.id === cancelConfirmDesk.id);
+        const refreshedCount = refreshedDesk ? normalizeDeskBookings(refreshedDesk).length : 0;
+        updateCancelDebug({ lastAction: 'REFRESH_DONE', bookingId, endpoint: endpointAll, httpStatus: 200, errorMessage: '' });
+        if (isRoomCancel) {
+          logMutation('ROOM_REFETCH_DONE', { requestId, roomId: cancelConfirmDesk.id, count: refreshedCount });
         }
       } else {
         await cancelBookingWithRefresh({

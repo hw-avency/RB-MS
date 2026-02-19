@@ -26,8 +26,8 @@ export const isMineBooking = (booking: BookingOwnershipInput, meEmployeeId?: str
   return false;
 };
 
-export const canCancelBooking = (booking: BookingOwnershipInput, meEmployeeId?: string | null, isAdmin = false): boolean => (
-  isAdmin || isMineBooking(booking, meEmployeeId)
+export const canCancelBooking = (booking: BookingOwnershipInput, meEmployeeId?: string | null, _isAdmin = false): boolean => (
+  isMineBooking(booking, meEmployeeId)
 );
 
 export const bookingDisplayName = (booking: BookingOwnershipInput): string => {
