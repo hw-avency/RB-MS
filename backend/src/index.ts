@@ -3188,23 +3188,24 @@ app.get('/floorplans', async (req, res) => {
     : floorplans.filter((floorplan) => isFloorplanVisibleForTenant(floorplan, actor?.tenantDomainId ?? null));
 
   if (actor && actor.role !== 'admin' && visible.length > 0) {
+    const authorizedActor = actor;
     const visibleFloorplanIds = visible.map((floorplan) => floorplan.id);
     const accessibleDesks = await prisma.desk.findMany({
       where: {
         floorplanId: { in: visibleFloorplanIds },
         AND: [
-          actor.tenantDomainId
+          authorizedActor.tenantDomainId
             ? {
               OR: [
                 { tenantScope: 'ALL' },
-                { deskTenants: { some: { tenantId: actor.tenantDomainId } } }
+                { deskTenants: { some: { tenantId: authorizedActor.tenantDomainId } } }
               ]
             }
             : { tenantScope: 'ALL' },
           {
             OR: [
               { employeeScope: 'ALL' },
-              { deskEmployees: { some: { employeeId: actor.id } } }
+              { deskEmployees: { some: { employeeId: authorizedActor.id } } }
             ]
           }
         ]

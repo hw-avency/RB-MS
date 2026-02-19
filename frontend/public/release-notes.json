@@ -1,5 +1,16 @@
 [
   {
+    "version": "1.5.49",
+    "date": "2026-02-19",
+    "type": "bugfix",
+    "title": "Backend-Build für Floorplans wieder stabil",
+    "summary": "Der Backend-TypeScript-Build läuft wieder, weil die Floorplan-Filterung intern konsistent mit einem gesicherten Benutzerkontext arbeitet.",
+    "items": [
+      "Ein Build-Fehler in der Floorplan-API wurde behoben, der beim Deploy zu einer TypeScript-Nullprüfung geführt hat.",
+      "Die Sichtbarkeitslogik für zugeordnete Desks nutzt jetzt einen eindeutig gesicherten Benutzerkontext und kompiliert dadurch zuverlässig."
+    ]
+  },
+  {
     "version": "1.5.48",
     "date": "2026-02-19",
     "type": "feature",
