@@ -1,5 +1,17 @@
 [
   {
+    "version": "1.5.53",
+    "date": "2026-02-19",
+    "type": "bugfix",
+    "title": "Smart-Parking-Bestätigung zeigt jetzt klaren Erfolgsabschluss",
+    "summary": "Das Bestätigungsfenster der intelligenten Parkplatzzuweisung ist jetzt kompakter und führt nach dem verbindlichen Buchen in eine klare Erfolgsmeldung mit den nächsten Aktionen.",
+    "items": [
+      "Der Bestätigungsdialog passt seine Breite jetzt inhaltlich an und hält Zeitplan-Kacheln sowie Aktionsbuttons in einer durchgehenden Zeile ohne Umbruch.",
+      "Die Aktion „Kalendererinnerung erstellen“ wurde aus dem vorherigen Bestätigungsschritt entfernt.",
+      "Nach „Jetzt verbindlich buchen“ erscheint eine Erfolgsmeldung mit Auflistung der gebuchten Parkplätze und den Buttons „Kalendererinnerung erstellen“ sowie „Schließen“."
+    ]
+  },
+  {
     "version": "1.5.52",
     "date": "2026-02-19",
     "type": "bugfix",

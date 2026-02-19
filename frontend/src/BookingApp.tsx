@@ -737,6 +737,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
   const [isParkingSmartLoading, setIsParkingSmartLoading] = useState(false);
   const [isParkingSmartDialogOpen, setIsParkingSmartDialogOpen] = useState(false);
   const [isParkingSmartConfirmDialogOpen, setIsParkingSmartConfirmDialogOpen] = useState(false);
+  const [parkingSmartBookingSuccessEntries, setParkingSmartBookingSuccessEntries] = useState<Array<{ id: string; deskName: string; timeLabel: string }> | null>(null);
   const [parkingBulkCancelPreview, setParkingBulkCancelPreview] = useState<Array<{ id: string; deskLabel: string; timeLabel: string; bookedForLabel: string }>>([]);
   const [isParkingBulkCancelOpen, setIsParkingBulkCancelOpen] = useState(false);
   const [isParkingBulkCancelling, setIsParkingBulkCancelling] = useState(false);
@@ -2163,6 +2164,11 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
     }
     setIsParkingSmartLoading(true);
     setParkingSmartError('');
+    const successEntries = parkingSmartProposal.bookings.map((entry, index) => ({
+      id: `${entry.deskId}-${index}`,
+      deskName: entry.deskName,
+      timeLabel: `${entry.startTime ?? formatMinutes(entry.startMinute)}-${entry.endTime ?? formatMinutes(entry.endMinute)}`
+    }));
     try {
       await post('/bookings/parking-smart/confirm', {
         date: selectedDate,
@@ -2170,10 +2176,8 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
         guestName: parkingSmartBookedFor === 'GUEST' ? parkingSmartGuestName.trim() : undefined,
         bookings: parkingSmartProposal.bookings.map((entry) => ({ deskId: entry.deskId, startMinute: entry.startMinute, endMinute: entry.endMinute }))
       });
-      toast.success('Parkplatz gebucht');
-      setParkingSmartProposal(null);
-      setIsParkingSmartConfirmDialogOpen(false);
       setIsParkingSmartDialogOpen(false);
+      setParkingSmartBookingSuccessEntries(successEntries);
       reloadBookings().catch(() => undefined);
     } catch (error) {
       setParkingSmartError(getApiErrorMessage(error, 'Nicht mehr verfügbar, bitte neu zuweisen.'));
@@ -2266,6 +2270,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
     setParkingSmartBookedFor('SELF');
     setParkingSmartGuestName('');
     setParkingChargeMinutes(240);
+    setParkingSmartBookingSuccessEntries(null);
     setIsParkingSmartConfirmDialogOpen(false);
     setIsParkingSmartDialogOpen(true);
   };
@@ -2278,6 +2283,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
     setParkingSmartBookedFor('SELF');
     setParkingSmartGuestName('');
     setParkingChargeMinutes(240);
+    setParkingSmartBookingSuccessEntries(null);
     setIsParkingSmartConfirmDialogOpen(false);
     setIsParkingSmartDialogOpen(false);
   };
@@ -3457,19 +3463,43 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
         document.body
       )}
 
-      {isParkingSmartConfirmDialogOpen && parkingSmartProposal && createPortal(
+      {isParkingSmartConfirmDialogOpen && (parkingSmartProposal || parkingSmartBookingSuccessEntries) && createPortal(
         <div className="overlay" role="presentation">
           <section className="card dialog rebook-dialog parking-smart-confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="parking-smart-confirm-title">
-            <h3 id="parking-smart-confirm-title">Parkplatz-Buchung bestätigen?</h3>
-            <p className="parking-smart-confirm-intro">Bitte bestätige den vorgeschlagenen Parkplatz-Zeitplan.</p>
-            <ParkingScheduleGrid entries={parkingScheduleEntries.map((entry) => ({ ...entry, id: `confirm-${entry.id}` }))} />
-            <div className="inline-end parking-smart-confirm-actions parking-smart-confirm-actions-row">
-              <button type="button" className="btn btn-danger" onClick={() => setIsParkingSmartConfirmDialogOpen(false)} disabled={isParkingSmartLoading}>Zurück</button>
-              {parkingSmartProposal.switchAfterCharging && parkingSmartProposal.bookings.length >= 2 && (
-                <button type="button" className="btn" onClick={createParkingReminderCalendarEvent} disabled={isParkingSmartLoading}>Kalendererinnerung erstellen</button>
-              )}
-              <button type="button" className="btn" onClick={confirmSmartParkingProposal} disabled={isParkingSmartLoading || hasParkingProposalConflict}>Jetzt verbindlich buchen</button>
-            </div>
+            {parkingSmartBookingSuccessEntries
+              ? (
+                <>
+                  <h3 id="parking-smart-confirm-title">Parkplatz-Buchung erfolgreich</h3>
+                  <p className="parking-smart-confirm-intro">
+                    {parkingSmartBookingSuccessEntries.length === 1
+                      ? 'Folgender Parkplatz wurde erfolgreich gebucht:'
+                      : 'Folgende Parkplätze wurden erfolgreich gebucht:'}
+                  </p>
+                  <div className="parking-smart-success-list" role="list" aria-label="Erfolgreich gebuchte Parkplätze">
+                    {parkingSmartBookingSuccessEntries.map((entry) => (
+                      <div key={entry.id} className="parking-smart-success-item" role="listitem">
+                        <strong>{entry.deskName}</strong>
+                        <span>{entry.timeLabel}</span>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="inline-end parking-smart-confirm-actions parking-smart-confirm-actions-row">
+                    <button type="button" className="btn" onClick={createParkingReminderCalendarEvent} disabled={isParkingSmartLoading || !parkingSmartProposal || parkingSmartProposal.bookings.length < 2}>Kalendererinnerung erstellen</button>
+                    <button type="button" className="btn btn-danger" onClick={closeParkingSmartDialog} disabled={isParkingSmartLoading}>Schließen</button>
+                  </div>
+                </>
+                )
+              : parkingSmartProposal && (
+                <>
+                  <h3 id="parking-smart-confirm-title">Parkplatz-Buchung bestätigen?</h3>
+                  <p className="parking-smart-confirm-intro">Bitte bestätige den vorgeschlagenen Parkplatz-Zeitplan.</p>
+                  <ParkingScheduleGrid entries={parkingScheduleEntries.map((entry) => ({ ...entry, id: `confirm-${entry.id}` }))} />
+                  <div className="inline-end parking-smart-confirm-actions parking-smart-confirm-actions-row">
+                    <button type="button" className="btn btn-danger" onClick={() => setIsParkingSmartConfirmDialogOpen(false)} disabled={isParkingSmartLoading}>Zurück</button>
+                    <button type="button" className="btn" onClick={confirmSmartParkingProposal} disabled={isParkingSmartLoading || hasParkingProposalConflict}>Jetzt verbindlich buchen</button>
+                  </div>
+                </>
+                )}
           </section>
         </div>,
         document.body
