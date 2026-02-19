@@ -518,7 +518,10 @@ function DeskEditor({ desk, floorplans, tenants, employees, defaultFloorplanId, 
 
   const canSave = form.floorplanId && form.name.trim().length > 0 && form.x !== null && form.y !== null && (form.tenantScope === 'ALL' || form.tenantIds.length > 0) && (form.employeeScope === 'ALL' || form.employeeIds.length > 0);
   const floorplan = floorplans.find((item) => item.id === form.floorplanId) ?? null;
-  const availableEmployees = employees.filter((employee) => employee.tenantDomainId && (form.tenantScope === 'ALL' || form.tenantIds.includes(employee.tenantDomainId)));
+  const availableEmployees = employees.filter((employee) => {
+    if (form.tenantScope === 'ALL') return true;
+    return Boolean(employee.tenantDomainId && form.tenantIds.includes(employee.tenantDomainId));
+  });
 
   const onFloorplanChange = (nextFloorplanId: string) => {
     setForm((current) => ({ ...current, floorplanId: nextFloorplanId, kind: desk ? current.kind : (floorplans.find((item) => item.id === nextFloorplanId)?.defaultResourceKind ?? current.kind), x: current.floorplanId === nextFloorplanId ? current.x : null, y: current.floorplanId === nextFloorplanId ? current.y : null }));
@@ -540,7 +543,10 @@ function DeskEditor({ desk, floorplans, tenants, employees, defaultFloorplanId, 
       if (current.employeeScope !== 'SELECTED') return current;
       const allowedEmployeeIds = new Set(
         employees
-          .filter((employee) => employee.tenantDomainId && (current.tenantScope === 'ALL' || current.tenantIds.includes(employee.tenantDomainId)))
+          .filter((employee) => {
+            if (current.tenantScope === 'ALL') return true;
+            return Boolean(employee.tenantDomainId && current.tenantIds.includes(employee.tenantDomainId));
+          })
           .map((employee) => employee.id)
       );
       const filteredEmployeeIds = current.employeeIds.filter((employeeId) => allowedEmployeeIds.has(employeeId));
