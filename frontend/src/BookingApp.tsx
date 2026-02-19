@@ -663,6 +663,7 @@ function TopLoadingBar({ loading }: { loading: boolean }) {
 export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogout, currentUser }: { onOpenAdmin: () => void; canOpenAdmin: boolean; currentUserEmail?: string; onLogout: () => Promise<void>; currentUser: AuthUser }) {
   const [floorplans, setFloorplans] = useState<Floorplan[]>([]);
   const [selectedFloorplanId, setSelectedFloorplanId] = useState(() => getInitialFloorplanId());
+  const [activeFloorId, setActiveFloorId] = useState(() => getInitialFloorplanId());
   const [selectedDate, setSelectedDate] = useState(today);
   const [visibleMonth, setVisibleMonth] = useState(startOfMonth(today));
 
@@ -781,21 +782,6 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
     }
   }, [overviewView, floorplans, selectedFloorplanId]);
 
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-
-    const syncFromUrl = () => {
-      const params = new URLSearchParams(window.location.search);
-      const nextOverview = params.get(OVERVIEW_QUERY_KEY);
-      const nextFloorplanId = params.get(FLOORPLAN_QUERY_KEY) ?? '';
-      setOverviewView((current) => (isOverviewView(nextOverview) ? nextOverview : current));
-      setSelectedFloorplanId((current) => (current === nextFloorplanId ? current : nextFloorplanId));
-    };
-
-    window.addEventListener('popstate', syncFromUrl);
-    return () => window.removeEventListener('popstate', syncFromUrl);
-  }, []);
-
   const [highlightedDeskId, setHighlightedDeskId] = useState('');
   const occupantRowRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const highlightTimerRef = useRef<number | null>(null);
@@ -813,6 +799,35 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
   const floorplanSuppressClickRef = useRef(false);
   const availabilityCacheRef = useRef<Map<string, Map<string, DayAvailabilityTone>>>(new Map());
   const deskAnchorElementsRef = useRef<Map<string, HTMLElement>>(new Map());
+  const occupancyRequestIdRef = useRef(0);
+  const floorplanResourcesRequestIdRef = useRef(0);
+
+  const switchFloorplan = useCallback((nextFloorplanId: string) => {
+    if (nextFloorplanId === selectedFloorplanId) return;
+    setActiveFloorId(nextFloorplanId);
+    setOccupancy(null);
+    setFloorplanResources([]);
+    setSelectedDeskId('');
+    setHoveredDeskId('');
+    setDeskPopup(null);
+    setIsUpdatingOccupancy(Boolean(nextFloorplanId));
+    setSelectedFloorplanId(nextFloorplanId);
+  }, [selectedFloorplanId]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    const syncFromUrl = () => {
+      const params = new URLSearchParams(window.location.search);
+      const nextOverview = params.get(OVERVIEW_QUERY_KEY);
+      const nextFloorplanId = params.get(FLOORPLAN_QUERY_KEY) ?? '';
+      setOverviewView((current) => (isOverviewView(nextOverview) ? nextOverview : current));
+      switchFloorplan(nextFloorplanId);
+    };
+
+    window.addEventListener('popstate', syncFromUrl);
+    return () => window.removeEventListener('popstate', syncFromUrl);
+  }, [switchFloorplan]);
 
   const refreshDeskPopupAnchorRect = useCallback((deskId: string) => {
     const anchorElement = deskAnchorElementsRef.current.get(deskId);
@@ -1190,13 +1205,18 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
   }, [applyFloorplanTransform, floorplanInitialTransform, stopFloorplanDragging]);
   const employeesByEmail = useMemo(() => new Map(employees.map((employee) => [employee.email.toLowerCase(), employee])), [employees]);
   const employeesById = useMemo(() => new Map(employees.map((employee) => [employee.id, employee])), [employees]);
+  const visibleOccupancy = useMemo(() => {
+    if (!occupancy) return null;
+    if (occupancy.floorplanId !== activeFloorId) return null;
+    return occupancy;
+  }, [activeFloorId, occupancy]);
   const desks = useMemo(() => enrichDeskBookings({
-    desks: occupancy?.desks ?? [],
+    desks: visibleOccupancy?.desks ?? [],
     employeesById,
     employeesByEmail,
     currentUserEmail,
     currentUser
-  }), [occupancy?.desks, employeesByEmail, employeesById, currentUserEmail, currentUser]);
+  }), [visibleOccupancy?.desks, employeesByEmail, employeesById, currentUserEmail, currentUser]);
   const selectableResourceKinds = useMemo(() => {
     const availableKinds = new Set<ResourceKind>();
     for (const desk of desks) {
@@ -1360,8 +1380,8 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
   const floorplanTransformStyle = floorplanTransformEnabled
     ? { transform: `translate3d(${floorplanTransform.translateX}px, ${floorplanTransform.translateY}px, 0) scale(${floorplanTransform.scale})` }
     : undefined;
-  const resourcesCount = occupancy?.desks.length ?? 0;
-  const bookingsCount = useMemo(() => (occupancy?.desks ?? []).reduce((total, desk) => total + normalizeDeskBookings(desk).length, 0), [occupancy?.desks]);
+  const resourcesCount = visibleOccupancy?.desks.length ?? 0;
+  const bookingsCount = useMemo(() => (visibleOccupancy?.desks ?? []).reduce((total, desk) => total + normalizeDeskBookings(desk).length, 0), [visibleOccupancy?.desks]);
   const floorplanMarkersCount = filteredDesks.filter((desk) => Number.isFinite(desk.x) && Number.isFinite(desk.y)).length;
   const floorplanCanvasDesks = floorplanImageLoadState === 'loaded'
     ? filteredDesks
@@ -1582,10 +1602,14 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
   const loadOccupancy = async (floorplanId: string, date: string): Promise<OccupancyResponse | null> => {
     if (!floorplanId) return null;
 
+    const currentRequestId = occupancyRequestIdRef.current + 1;
+    occupancyRequestIdRef.current = currentRequestId;
     setIsUpdatingOccupancy(true);
 
     try {
       const nextOccupancy = await runWithAppLoading(() => get<OccupancyResponse>(`/occupancy?floorplanId=${floorplanId}&date=${date}`));
+      if (currentRequestId !== occupancyRequestIdRef.current) return null;
+      if (nextOccupancy.floorplanId !== activeFloorId) return null;
 
       setOccupancy(nextOccupancy);
       markBackendAvailable(true);
@@ -1593,6 +1617,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
       setSelectedDeskId((prev) => (nextOccupancy.desks.some((desk) => desk.id === prev) ? prev : ''));
       return nextOccupancy;
     } catch (error) {
+      if (currentRequestId !== occupancyRequestIdRef.current) return null;
       if (error instanceof ApiError && error.code === 'BACKEND_UNREACHABLE') {
         setBackendDown(true);
       }
@@ -1607,7 +1632,9 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
       toast.error(getApiErrorMessage(error, 'Belegung konnte nicht geladen werden.'));
       return null;
     } finally {
-      setIsUpdatingOccupancy(false);
+      if (currentRequestId === occupancyRequestIdRef.current) {
+        setIsUpdatingOccupancy(false);
+      }
     }
   };
 
@@ -1647,6 +1674,15 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
   useEffect(() => {
     loadInitial();
   }, [currentUserEmail]);
+
+  useEffect(() => {
+    if (selectedFloorplanId === activeFloorId) return;
+    setActiveFloorId(selectedFloorplanId);
+    setOccupancy(null);
+    setFloorplanResources([]);
+    setSelectedDeskId('');
+    setIsUpdatingOccupancy(Boolean(selectedFloorplanId));
+  }, [activeFloorId, selectedFloorplanId]);
 
   useEffect(() => {
     if (!selectedFloorplanId) return;
@@ -1707,12 +1743,17 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
     let cancelled = false;
 
     const loadFloorplanResources = async () => {
+      const currentRequestId = floorplanResourcesRequestIdRef.current + 1;
+      floorplanResourcesRequestIdRef.current = currentRequestId;
       try {
         const resources = await runWithAppLoading(() => get<FloorplanResource[]>(`/floorplans/${selectedFloorplanId}/desks`));
+        if (currentRequestId !== floorplanResourcesRequestIdRef.current) return;
+        if (selectedFloorplanId !== activeFloorId) return;
         if (cancelled) return;
         setFloorplanResources(resources);
       } catch {
         if (cancelled) return;
+        if (currentRequestId !== floorplanResourcesRequestIdRef.current) return;
         setFloorplanResources([]);
       }
     };
@@ -1722,7 +1763,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
     return () => {
       cancelled = true;
     };
-  }, [backendDown, selectedFloorplanId]);
+  }, [activeFloorId, backendDown, selectedFloorplanId]);
 
 
   useEffect(() => {
@@ -2778,7 +2819,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
       <h3 className="section-title">Datum &amp; Ansicht</h3>
       <label className="stack-xs">
         <span className="field-label">Standort</span>
-        <select value={selectedFloorplanId} onChange={(event) => setSelectedFloorplanId(event.target.value)}>
+        <select value={selectedFloorplanId} onChange={(event) => switchFloorplan(event.target.value)}>
           {floorplans.map((floorplan) => <option key={floorplan.id} value={floorplan.id}>{floorplan.name}</option>)}
         </select>
       </label>
@@ -2968,12 +3009,17 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
     let cancelled = false;
 
     const loadFloorplanResources = async () => {
+      const currentRequestId = floorplanResourcesRequestIdRef.current + 1;
+      floorplanResourcesRequestIdRef.current = currentRequestId;
       try {
         const resources = await runWithAppLoading(() => get<FloorplanResource[]>(`/floorplans/${selectedFloorplanId}/desks`));
+        if (currentRequestId !== floorplanResourcesRequestIdRef.current) return;
+        if (selectedFloorplanId !== activeFloorId) return;
         if (cancelled) return;
         setFloorplanResources(resources);
       } catch {
         if (cancelled) return;
+        if (currentRequestId !== floorplanResourcesRequestIdRef.current) return;
         setFloorplanResources([]);
       }
     };
@@ -2983,7 +3029,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
     return () => {
       cancelled = true;
     };
-  }, [backendDown, selectedFloorplanId]);
+  }, [activeFloorId, backendDown, selectedFloorplanId]);
 
 
   useEffect(() => {
@@ -3061,7 +3107,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
               {isBootstrapping ? (
                 <div className="skeleton h-420" />
               ) : selectedFloorplan ? (
-                <div className="floorplan-viewport" style={{ height: FLOORPLAN_VIEWPORT_HEIGHT, minHeight: 520 }}>
+                <div className={`floorplan-viewport ${isUpdatingOccupancy ? 'floorplan-viewport-loading' : ''}`} style={{ height: FLOORPLAN_VIEWPORT_HEIGHT, minHeight: 520 }}>
                   {!floorplanImageSrc ? (
                     <div className="floorplan-status-banner is-error" role="alert">Floorplan-Bildquelle fehlt.</div>
                   ) : (
@@ -3093,6 +3139,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
                       {showRoomDebugInfo && floorplanImageSrc ? <span> src={floorplanImageSrc}</span> : null}
                     </div>
                   )}
+                  {isUpdatingOccupancy && floorplanImageLoadState === 'loaded' && <div className="floorplan-status-banner" aria-live="polite">Lade Ressourcen…</div>}
                 </div>
               ) : (
                 <div className="empty-state"><p>Kein Floorplan ausgewählt.</p></div>
