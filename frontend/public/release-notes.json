@@ -1,5 +1,17 @@
 [
   {
+    "version": "1.5.42",
+    "date": "2026-02-19",
+    "type": "bugfix",
+    "title": "Floor-Wechsel zeigt keine alten Ressourcen mehr",
+    "summary": "Beim Umschalten des Standorts werden alte Pins sofort entfernt. Neue Ressourcen erscheinen erst, wenn die passenden Daten geladen sind.",
+    "items": [
+      "Beim Wechsel des Floorplans wird die aktuelle Ressourcen- und Belegungsansicht sofort geleert, bevor neue Daten geladen werden.",
+      "Verspätete Antworten von älteren Requests werden verworfen, damit keine falschen Pins mehr kurz eingeblendet werden.",
+      "Während des Ladens zeigt der Floorplan einen klaren Ladehinweis statt veralteter Ressourcen."
+    ]
+  },
+  {
     "version": "1.5.41",
     "date": "2026-02-19",
     "type": "feature",

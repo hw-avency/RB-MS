@@ -122,6 +122,7 @@ input, select { border: 1px solid hsl(var(--border)); border-radius: 12px; paddi
 .floorplan-canvas{position:relative;width:100%;height:100%}.floorplan-canvas-contain{display:grid;place-items:center}.floorplan-image{position:relative;display:block;width:100%;height:100%;border-radius:10px;z-index:0;object-fit:contain}.floorplan-image-contain{width:auto;max-width:100%;max-height:100%;object-fit:contain}.floorplan-marker-overlay{position:absolute;z-index:10}.desk-overlay{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:10}
 .floorplan-viewport{position:relative;width:100%;height:100%;min-height:416px;overflow:hidden;border-radius:10px}
 .floorplan-status-banner{position:absolute;left:12px;top:12px;padding:6px 10px;border-radius:10px;background:rgba(15,23,42,.7);color:#f8fafc;font-size:12px;line-height:1.25;z-index:15;pointer-events:none;max-width:min(90%,620px);overflow-wrap:anywhere}
+.floorplan-viewport-loading .desk-overlay{opacity:0;transition:opacity 120ms ease-in}
 .floorplan-status-banner.is-error{background:rgba(127,29,29,.86)}
 .floorplan-debug{position:absolute;left:10px;top:10px;padding:8px 10px;border-radius:8px;background:rgba(15,23,42,.86);color:#f8fafc;font-size:11px;line-height:1.35;z-index:25;pointer-events:auto;max-width:min(94%,840px);overflow-wrap:anywhere}
 .floorplan-debug-toggle{display:flex;align-items:center;gap:6px;margin-top:6px;pointer-events:auto}
