@@ -1,5 +1,17 @@
 [
   {
+    "version": "1.5.37",
+    "date": "2026-02-19",
+    "type": "feature",
+    "title": "Smart-Parking-Zeitplan ist jetzt klar in Blöcke gegliedert",
+    "summary": "Parkplatznummer, Ladeplatz-Status und Zeitfenster werden im Smart-Parking jetzt als eigene visuelle Blöcke angezeigt. Dadurch ist der Zeitplan im Vorschlag und im Bestätigungsdialog deutlich schneller lesbar.",
+    "items": [
+      "Jede Parkplatzphase wird jetzt als eigener Block mit großer Parkplatznummer und separater Zeitzeile dargestellt.",
+      "Ladeplätze zeigen statt kryptischem Kürzel ein eigenes Badge mit Blitz-Icon und der Bezeichnung \"E-Ladeplatz\".",
+      "Im Bestätigungsdialog sind die einzelnen Phasen klar voneinander getrennt, damit Umpark-Wechsel leichter erkennbar sind."
+    ]
+  },
+  {
     "version": "1.5.36",
     "date": "2026-02-19",
     "type": "bugfix",

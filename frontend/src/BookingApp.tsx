@@ -8,6 +8,7 @@ import { createMutationRequestId, logMutation, toBodySnippet } from './api/mutat
 import { Avatar } from './components/Avatar';
 import { BookingForm, createDefaultBookingFormValues } from './components/BookingForm';
 import type { BookingFormSubmitPayload, BookingFormValues } from './components/BookingForm';
+import { ParkingTimeBlock } from './components/ParkingTimeBlock';
 import { UserMenu } from './components/UserMenu';
 import { FloorplanCanvas } from './FloorplanCanvas';
 import { APP_TITLE, APP_VERSION, COMPANY_LOGO_URL } from './config';
@@ -119,6 +120,11 @@ type CancelSeriesPreviewState = {
   details: BookingCancelPreview | null;
   error: string;
 };
+
+function extractParkingNumber(label: string): string {
+  const match = label.match(/\d+/);
+  return match?.[0] ?? label;
+}
 
 function SparklesIcon() {
   return (
@@ -3299,7 +3305,16 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
               {parkingSmartProposal && (
                 <div className="stack-xs">
                   <strong>Vorschlag</strong>
-                  {parkingSmartProposal.bookings.map((entry, index) => <p key={`${entry.deskId}-${index}`}>{entry.hasCharger ? '⚡ ' : ''}{entry.deskName} · {entry.startTime ?? formatMinutes(entry.startMinute)}–{entry.endTime ?? formatMinutes(entry.endMinute)}</p>)}
+                  {parkingSmartProposal.bookings.map((entry, index) => (
+                    <ParkingTimeBlock
+                      key={`${entry.deskId}-${index}`}
+                      number={extractParkingNumber(entry.deskName)}
+                      startTime={entry.startTime ?? formatMinutes(entry.startMinute)}
+                      endTime={entry.endTime ?? formatMinutes(entry.endMinute)}
+                      hasCharging={entry.hasCharger}
+                      hint={entry.hasCharger ? 'Ladezeit' : undefined}
+                    />
+                  ))}
                   {parkingSmartProposal.switchAfterCharging && <p className="muted">Wechsel nach Ladedauer.</p>}
                   <button type="button" className="btn" onClick={() => setIsParkingSmartConfirmDialogOpen(true)} disabled={isParkingSmartLoading}>Vorschlag bestätigen</button>
                 </div>
@@ -3315,8 +3330,17 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
           <section className="card dialog rebook-dialog" role="dialog" aria-modal="true" aria-labelledby="parking-smart-confirm-title">
             <h3 id="parking-smart-confirm-title">Parkplatz-Buchung bestätigen?</h3>
             <p>Bitte bestätige den vorgeschlagenen Parkplatz-Zeitplan.</p>
-            <div className="stack-xxs">
-              {parkingSmartProposal.bookings.map((entry, index) => <p key={`confirm-${entry.deskId}-${index}`}>{entry.hasCharger ? '⚡ ' : ''}{entry.deskName} · {entry.startTime ?? formatMinutes(entry.startMinute)}–{entry.endTime ?? formatMinutes(entry.endMinute)}</p>)}
+            <div className="stack-xs parking-time-block-list">
+              {parkingSmartProposal.bookings.map((entry, index) => (
+                <ParkingTimeBlock
+                  key={`confirm-${entry.deskId}-${index}`}
+                  number={extractParkingNumber(entry.deskName)}
+                  startTime={entry.startTime ?? formatMinutes(entry.startMinute)}
+                  endTime={entry.endTime ?? formatMinutes(entry.endMinute)}
+                  hasCharging={entry.hasCharger}
+                  hint={entry.hasCharger ? 'Ladezeit' : undefined}
+                />
+              ))}
             </div>
             {parkingRelocationTime && (
               <p className="parking-relocation-warning" role="alert">
