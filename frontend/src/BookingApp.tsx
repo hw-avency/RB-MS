@@ -728,6 +728,8 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
   const [parkingSmartArrivalTime, setParkingSmartArrivalTime] = useState('08:00');
   const [parkingSmartDepartureTime, setParkingSmartDepartureTime] = useState('16:00');
   const [parkingChargeMinutes, setParkingChargeMinutes] = useState(60);
+  const [parkingSmartBookedFor, setParkingSmartBookedFor] = useState<'SELF' | 'GUEST'>('SELF');
+  const [parkingSmartGuestName, setParkingSmartGuestName] = useState('');
   const [parkingSmartProposal, setParkingSmartProposal] = useState<ParkingSmartProposal | null>(null);
   const [parkingSmartError, setParkingSmartError] = useState('');
   const [parkingSmartInfo, setParkingSmartInfo] = useState('');
@@ -2060,6 +2062,11 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
       setParkingSmartProposal(null);
       return;
     }
+    if (parkingSmartBookedFor === 'GUEST' && parkingSmartGuestName.trim().length < 2) {
+      setParkingSmartError('Gastname muss mindestens 2 Zeichen haben.');
+      setParkingSmartProposal(null);
+      return;
+    }
 
     setParkingSmartError('');
     setParkingSmartInfo('');
@@ -2105,12 +2112,17 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
 
   const confirmSmartParkingProposal = async () => {
     if (!parkingSmartProposal) return;
+    if (parkingSmartBookedFor === 'GUEST' && parkingSmartGuestName.trim().length < 2) {
+      setParkingSmartError('Gastname muss mindestens 2 Zeichen haben.');
+      return;
+    }
     setIsParkingSmartLoading(true);
     setParkingSmartError('');
     try {
       await post('/bookings/parking-smart/confirm', {
         date: selectedDate,
-        bookedFor: 'SELF',
+        bookedFor: parkingSmartBookedFor,
+        guestName: parkingSmartBookedFor === 'GUEST' ? parkingSmartGuestName.trim() : undefined,
         bookings: parkingSmartProposal.bookings.map((entry) => ({ deskId: entry.deskId, startMinute: entry.startMinute, endMinute: entry.endMinute }))
       });
       toast.success('Parkplatz gebucht');
@@ -2129,6 +2141,8 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
     setParkingSmartError('');
     setParkingSmartInfo('');
     setParkingSmartProposal(null);
+    setParkingSmartBookedFor('SELF');
+    setParkingSmartGuestName('');
     setIsParkingSmartConfirmDialogOpen(false);
     setIsParkingSmartDialogOpen(true);
   };
@@ -2138,6 +2152,8 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
     setParkingSmartError('');
     setParkingSmartInfo('');
     setParkingSmartProposal(null);
+    setParkingSmartBookedFor('SELF');
+    setParkingSmartGuestName('');
     setIsParkingSmartConfirmDialogOpen(false);
     setIsParkingSmartDialogOpen(false);
   };
@@ -2162,9 +2178,17 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
       endTime: entry.endTime ?? formatMinutes(entry.endMinute),
       hasCharging: entry.hasCharger,
       hint: entry.hasCharger ? 'Ladezeit' : undefined,
-      warning: parkingRelocationTime && parkingSmartProposal.switchAfterCharging && index === 0 ? `Umparken um ${parkingRelocationTime}` : undefined
+      transitionLabel: parkingRelocationTime && parkingSmartProposal.switchAfterCharging && index === 0 ? `Umparken um ${parkingRelocationTime}` : undefined
     }));
   }, [parkingRelocationTime, parkingSmartProposal]);
+
+  const hasParkingProposalConflict = useMemo(() => {
+    if (!parkingSmartProposal) return false;
+    return parkingSmartProposal.bookings.some((entry, index) => parkingSmartProposal.bookings.some((candidate, candidateIndex) => {
+      if (index === candidateIndex || entry.deskId !== candidate.deskId) return false;
+      return entry.startMinute < candidate.endMinute && candidate.startMinute < entry.endMinute;
+    }));
+  }, [parkingSmartProposal]);
 
   const updateExistingDeskBooking = async () => {
     if (!popupDesk || !popupMySelectedBooking || isRoomResource(popupDesk)) return;
@@ -3302,24 +3326,40 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
             <div className="desk-popup-body parking-smart-dialog-body">
               <div className="parking-smart-form-grid">
                 <label className="field parking-smart-field">
+                  <span>Parken für</span>
+                  <select value={parkingSmartBookedFor} onChange={(event) => {
+                    const nextValue = event.target.value === 'GUEST' ? 'GUEST' : 'SELF';
+                    setParkingSmartBookedFor(nextValue);
+                    if (nextValue === 'SELF') setParkingSmartGuestName('');
+                  }} disabled={isParkingSmartLoading}>
+                    <option value="SELF">Für mich</option>
+                    <option value="GUEST">Für Gast</option>
+                  </select>
+                </label>
+                {parkingSmartBookedFor === 'GUEST' && (
+                  <label className="field parking-smart-field">
+                    <span>Gastname</span>
+                    <input type="text" value={parkingSmartGuestName} onChange={(event) => setParkingSmartGuestName(event.target.value)} placeholder="Name des Gasts" disabled={isParkingSmartLoading} />
+                  </label>
+                )}
+                <label className="field parking-smart-field">
                   <span>Anreise</span>
                   <div className="time-input-wrap">
                     <input type="time" min="00:00" max="23:30" step={1800} value={parkingSmartArrivalTime} onChange={(event) => setParkingSmartArrivalTime(event.target.value)} disabled={isParkingSmartLoading} />
-                    <button type="button" className="time-input-icon" aria-label="Anreise-Zeit auswählen" onClick={(event) => event.currentTarget.previousElementSibling instanceof HTMLInputElement && event.currentTarget.previousElementSibling.showPicker?.()} disabled={isParkingSmartLoading}>🕒</button>
+                    <span className="time-input-icon" aria-hidden="true">🕒</span>
                   </div>
                 </label>
                 <label className="field parking-smart-field">
                   <span>Abreise</span>
                   <div className="time-input-wrap">
                     <input type="time" min="00:30" max="23:59" step={1800} value={parkingSmartDepartureTime} onChange={(event) => setParkingSmartDepartureTime(event.target.value)} disabled={isParkingSmartLoading} />
-                    <button type="button" className="time-input-icon" aria-label="Abreise-Zeit auswählen" onClick={(event) => event.currentTarget.previousElementSibling instanceof HTMLInputElement && event.currentTarget.previousElementSibling.showPicker?.()} disabled={isParkingSmartLoading}>🕒</button>
+                    <span className="time-input-icon" aria-hidden="true">🕒</span>
                   </div>
                 </label>
                 <div className="field parking-smart-field">
                   <span>Laden erforderlich</span>
                   <label className="toggle parking-smart-toggle">
                     <input type="checkbox" checked={parkingChargeMinutes > 0} onChange={(event) => setParkingChargeMinutes(event.target.checked ? (parkingChargeMinutes > 0 ? parkingChargeMinutes : 60) : 0)} disabled={isParkingSmartLoading} />
-                    <span>{parkingChargeMinutes > 0 ? 'Ja' : 'Nein'}</span>
                   </label>
                 </div>
                 {parkingChargeMinutes > 0 && (
@@ -3336,19 +3376,25 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
                 )}
               </div>
               {isParkingTimeRangeInvalid && <p className="field-error">Abreise muss nach der Anreise liegen.</p>}
+              {hasParkingProposalConflict && <p className="field-error">Überlappende Buchungszeiten für denselben Parkplatz sind nicht erlaubt.</p>}
               {parkingSmartError && <p className="field-error">{parkingSmartError}</p>}
               {parkingSmartInfo && <p className="muted">{parkingSmartInfo}</p>}
               {parkingSmartProposal && (
                 <div className="stack-xs parking-smart-proposal-block">
                   <strong>Vorschlag</strong>
                   <ParkingScheduleGrid entries={parkingScheduleEntries} />
-                  {parkingSmartProposal.switchAfterCharging && <p className="muted parking-smart-proposal-note">Wechsel nach Ladedauer.</p>}
-                  <button type="button" className="btn" onClick={() => setIsParkingSmartConfirmDialogOpen(true)} disabled={isParkingSmartLoading}>Vorschlag bestätigen</button>
                 </div>
               )}
               <div className="parking-smart-actions">
                 <button type="button" className="btn btn-outline" onClick={closeParkingSmartDialog} disabled={isParkingSmartLoading}>Abbrechen</button>
-                <button type="button" className="btn" onClick={requestSmartParkingProposal} disabled={isParkingSmartLoading || isParkingTimeRangeInvalid}>Vorschlag berechnen</button>
+                {parkingSmartProposal
+                  ? (
+                    <>
+                      <button type="button" className="btn btn-ghost" onClick={requestSmartParkingProposal} disabled={isParkingSmartLoading || isParkingTimeRangeInvalid}>Vorschlag neu berechnen</button>
+                      <button type="button" className="btn" onClick={() => setIsParkingSmartConfirmDialogOpen(true)} disabled={isParkingSmartLoading || hasParkingProposalConflict}>Vorschlag bestätigen</button>
+                    </>
+                    )
+                  : <button type="button" className="btn" onClick={requestSmartParkingProposal} disabled={isParkingSmartLoading || isParkingTimeRangeInvalid}>Vorschlag berechnen</button>}
               </div>
             </div>
           </section>
@@ -3362,10 +3408,9 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
             <h3 id="parking-smart-confirm-title">Parkplatz-Buchung bestätigen?</h3>
             <p>Bitte bestätige den vorgeschlagenen Parkplatz-Zeitplan.</p>
             <ParkingScheduleGrid entries={parkingScheduleEntries.map((entry) => ({ ...entry, id: `confirm-${entry.id}` }))} />
-            {parkingRelocationTime && <p className="parking-relocation-inline" role="alert">Umparken um {parkingRelocationTime} Uhr erforderlich.</p>}
             <div className="inline-end">
               <button type="button" className="btn btn-outline" onClick={() => setIsParkingSmartConfirmDialogOpen(false)} disabled={isParkingSmartLoading}>Zurück</button>
-              <button type="button" className="btn" onClick={confirmSmartParkingProposal} disabled={isParkingSmartLoading}>Jetzt verbindlich buchen</button>
+              <button type="button" className="btn" onClick={confirmSmartParkingProposal} disabled={isParkingSmartLoading || hasParkingProposalConflict}>Jetzt verbindlich buchen</button>
             </div>
           </section>
         </div>,
@@ -3394,21 +3439,22 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
                 disabled={isSubmittingFeedback}
               />
             </label>
-            <label className="stack-xs">
-              <span className="field-label">Screenshot (optional, für Bugs)</span>
-              <input
-                type="file"
-                accept={FEEDBACK_SCREENSHOT_ACCEPT}
-                disabled={isSubmittingFeedback || feedbackType !== 'BUG'}
-                onChange={(event) => { void onFeedbackScreenshotChange(event.target.files?.[0] ?? null); }}
-              />
-              {feedbackType !== 'BUG' && <span className="muted">Screenshots können aktuell nur bei Bug-Meldungen angehängt werden.</span>}
-              {feedbackScreenshotName && <span className="muted">Ausgewählt: {feedbackScreenshotName}</span>}
-              {feedbackScreenshotError && <span className="error-banner">{feedbackScreenshotError}</span>}
-              {feedbackScreenshotDataUrl && feedbackType === 'BUG' && (
-                <img src={feedbackScreenshotDataUrl} alt="Screenshot Vorschau" className="feedback-screenshot-preview" />
-              )}
-            </label>
+            {feedbackType === 'BUG' && (
+              <label className="stack-xs">
+                <span className="field-label">Screenshot (optional, für Bugs)</span>
+                <input
+                  type="file"
+                  accept={FEEDBACK_SCREENSHOT_ACCEPT}
+                  disabled={isSubmittingFeedback}
+                  onChange={(event) => { void onFeedbackScreenshotChange(event.target.files?.[0] ?? null); }}
+                />
+                {feedbackScreenshotName && <span className="muted">Ausgewählt: {feedbackScreenshotName}</span>}
+                {feedbackScreenshotError && <span className="error-banner">{feedbackScreenshotError}</span>}
+                {feedbackScreenshotDataUrl && (
+                  <img src={feedbackScreenshotDataUrl} alt="Screenshot Vorschau" className="feedback-screenshot-preview" />
+                )}
+              </label>
+            )}
             <div className="inline-end">
               <button className="btn btn-outline" onClick={() => { setFeedbackDialogOpen(false); setFeedbackScreenshotDataUrl(''); setFeedbackScreenshotName(''); setFeedbackScreenshotError(''); }} disabled={isSubmittingFeedback}>Abbrechen</button>
               <button className="btn" onClick={() => void submitFeedbackReport()} disabled={isSubmittingFeedback}>

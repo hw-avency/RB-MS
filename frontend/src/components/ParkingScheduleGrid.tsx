@@ -1,4 +1,5 @@
 import { ParkingScheduleTile } from './ParkingScheduleTile';
+import { ParkingTransitionIndicator } from './ParkingTransitionIndicator';
 
 type ParkingScheduleEntry = {
   id: string;
@@ -7,7 +8,7 @@ type ParkingScheduleEntry = {
   endTime: string;
   hasCharging: boolean;
   hint?: string;
-  warning?: string;
+  transitionLabel?: string;
 };
 
 type ParkingScheduleGridProps = {
@@ -18,15 +19,16 @@ export function ParkingScheduleGrid({ entries }: ParkingScheduleGridProps) {
   return (
     <div className="parking-schedule-grid" aria-label="Parkplatz-Zeitplan">
       {entries.map((entry) => (
-        <ParkingScheduleTile
-          key={entry.id}
-          number={entry.number}
-          startTime={entry.startTime}
-          endTime={entry.endTime}
-          hasCharging={entry.hasCharging}
-          hint={entry.hint}
-          warning={entry.warning}
-        />
+        <div key={entry.id} className="parking-schedule-item">
+          <ParkingScheduleTile
+            number={entry.number}
+            startTime={entry.startTime}
+            endTime={entry.endTime}
+            hasCharging={entry.hasCharging}
+            hint={entry.hint}
+          />
+          {entry.transitionLabel && <ParkingTransitionIndicator text={entry.transitionLabel} />}
+        </div>
       ))}
     </div>
   );

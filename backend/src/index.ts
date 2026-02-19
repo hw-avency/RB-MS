@@ -4393,6 +4393,22 @@ app.post('/bookings/parking-smart/confirm', async (req, res) => {
     return;
   }
 
+  const overlappingPayloadEntry = validated.find((entry, index) => validated.some((candidate, candidateIndex) => {
+    if (index === candidateIndex || entry.deskId !== candidate.deskId) return false;
+    return parkingWindowsOverlap(entry, candidate);
+  }));
+  if (overlappingPayloadEntry) {
+    logBookingEvent('SMART_CONFIRM_VALIDATION_FAILED', {
+      requestId,
+      reason: 'overlapping bookings in payload',
+      deskId: overlappingPayloadEntry.deskId,
+      startMinute: overlappingPayloadEntry.startMinute,
+      endMinute: overlappingPayloadEntry.endMinute
+    }, 'warn');
+    res.status(409).json({ error: 'conflict', message: 'Überlappende Buchungszeiten für denselben Parkplatz sind nicht erlaubt.' });
+    return;
+  }
+
   const deskIds = Array.from(new Set(validated.map((entry) => entry.deskId)));
   const desks = await prisma.desk.findMany({ where: { id: { in: deskIds } }, select: { id: true, kind: true } });
   if (desks.length !== deskIds.length || desks.some((desk) => desk.kind !== 'PARKPLATZ')) {

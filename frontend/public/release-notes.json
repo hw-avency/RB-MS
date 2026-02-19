@@ -1,5 +1,18 @@
 [
   {
+    "version": "1.5.41",
+    "date": "2026-02-19",
+    "type": "feature",
+    "title": "Smart-Parking unterstützt Gäste und blockiert Überlappungen konsequent",
+    "summary": "Die intelligente Parkplatzzuweisung funktioniert jetzt für „Für mich“ und „Für Gast“. Gleichzeitig verhindern Frontend und Backend überlappende Buchungen auf demselben Parkplatz zuverlässig.",
+    "items": [
+      "Im Dialog „Parkplatz intelligent zuweisen“ kann jetzt zwischen „Für mich“ und „Für Gast“ gewählt werden; bei Gastbuchungen wird der Gastname direkt erfasst und beim Buchen übertragen.",
+      "Die Aktionslogik wurde bereinigt: erst „Vorschlag berechnen“, danach mit vorhandenem Vorschlag „Vorschlag neu berechnen“ oder „Vorschlag bestätigen“ – immer nur eine Primary-Aktion.",
+      "Überlappende Zeitfenster auf demselben Parkplatz werden bereits in der UI blockiert und serverseitig zusätzlich als Konflikt abgewiesen.",
+      "Feature-Requests blenden den Screenshot-Bereich komplett aus; Screenshots bleiben nur bei Bug-Meldungen sichtbar."
+    ]
+  },
+  {
     "version": "1.5.40",
     "date": "2026-02-19",
     "type": "feature",
