@@ -1,5 +1,16 @@
 [
   {
+    "version": "1.5.55",
+    "date": "2026-02-19",
+    "type": "bugfix",
+    "title": "Frontend-Build für Parkplatz-Dialog wieder erfolgreich",
+    "summary": "Ein fehlender interner Ressourcen-Check wurde ergänzt, damit der Frontend-Build nicht mehr wegen eines undefinierten Namens abbricht.",
+    "items": [
+      "Die Buchungslogik kennt jetzt wieder eindeutig den Typ ‚Parkplatz‘, bevor Parkplatz-Standardzeiten gesetzt werden.",
+      "Dadurch läuft die TypeScript-Kompilierung an dieser Stelle wieder ohne Fehler durch."
+    ]
+  },
+  {
     "version": "1.5.54",
     "date": "2026-02-19",
     "type": "feature",

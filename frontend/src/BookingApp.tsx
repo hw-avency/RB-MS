@@ -519,7 +519,8 @@ const getDefaultSlotForDesk = (desk: OccupancyDesk): BookingFormValues['slot'] |
 };
 
 const isRoomResource = (desk?: OccupancyDesk | null): boolean => desk?.kind === 'RAUM';
-const isTimeBasedResource = (desk?: OccupancyDesk | null): boolean => desk?.kind === 'RAUM' || desk?.kind === 'PARKPLATZ';
+const isParkingResource = (desk?: OccupancyDesk | null): boolean => desk?.kind === 'PARKPLATZ';
+const isTimeBasedResource = (desk?: OccupancyDesk | null): boolean => desk?.kind === 'RAUM' || isParkingResource(desk);
 
 const canBookDesk = (desk?: OccupancyDesk | null): boolean => {
   if (!desk) return false;
