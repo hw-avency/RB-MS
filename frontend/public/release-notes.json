@@ -1,5 +1,17 @@
 [
   {
+    "version": "1.5.40",
+    "date": "2026-02-19",
+    "type": "feature",
+    "title": "Ressourcen-Dialog im Admin nutzt jetzt klare Tabs",
+    "summary": "Der Dialog zum Anlegen und Bearbeiten von Ressourcen ist jetzt als Tab-Navigation aufgebaut. Pflichtfehler werden direkt am betroffenen Tab markiert und beim Speichern sofort auffindbar gemacht.",
+    "items": [
+      "Grunddaten, Mandanten, Mitarbeiter und Position sind jetzt in vier separaten Tabs organisiert, damit die Eingaben deutlich ruhiger und übersichtlicher bleiben.",
+      "Bei Validierungsfehlern wird der betroffene Tab mit rotem Indikator markiert; ein Speicherversuch springt automatisch in den ersten fehlerhaften Bereich.",
+      "Mandanten- und Mitarbeiterlogik bleibt gekoppelt: Änderungen an den erlaubten Mandanten aktualisieren die Mitarbeiterauswahl sofort und entfernen ungültige Einträge automatisch."
+    ]
+  },
+  {
     "version": "1.5.39",
     "date": "2026-02-19",
     "type": "feature",

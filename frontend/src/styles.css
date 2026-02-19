@@ -288,9 +288,13 @@ tr{cursor:pointer}.row-selected{background:hsl(var(--muted))}
 .resource-editor-header p{margin:0}
 .resource-editor-form{display:flex;flex-direction:column;min-height:0;flex:1}
 .resource-editor-form fieldset{border:0;margin:0;padding:0;min-height:0;overflow:auto}
-.resource-editor-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;padding:16px 22px}
+.resource-editor-tabs{display:flex;gap:8px;padding:12px 22px 0;overflow:auto}
+.resource-editor-tab{border:1px solid hsl(var(--border));background:hsl(var(--card));border-radius:10px;padding:10px 14px;font-weight:600;color:hsl(var(--muted-foreground));display:inline-flex;align-items:center;justify-content:center;gap:8px;white-space:nowrap;flex:1 1 0;min-width:max-content}
+.resource-editor-tab.is-active{border-color:hsl(var(--primary));color:hsl(var(--foreground));background:hsl(var(--primary)/.1)}
+.resource-editor-tab.has-error{border-color:#ef4444;color:#b91c1c}
+.resource-editor-tab-indicator{width:8px;height:8px;border-radius:999px;background:#ef4444;display:inline-block}
+.resource-editor-tab-panel{padding:14px 22px 18px}
 .resource-editor-section{border:1px solid hsl(var(--border));border-radius:14px;padding:14px;background:hsl(var(--card))}
-.resource-editor-section h4{margin:0}
 .resource-editor-section p{margin:0}
 .resource-position-box{border:1px solid hsl(var(--border));border-radius:12px;padding:12px;display:grid;gap:10px}
 .resource-position-box.is-missing{background:#fffbeb;border-color:#fbbf24}
@@ -307,8 +311,10 @@ tr{cursor:pointer}.row-selected{background:hsl(var(--muted))}
 .compact-chip{border:1px solid hsl(var(--border));border-radius:999px;background:hsl(var(--muted));padding:4px 10px;font-size:12px;display:inline-flex;align-items:center;gap:6px;cursor:pointer}
 
 @media (max-width: 900px){
-  .resource-editor-grid{grid-template-columns:1fr;padding:14px}
   .resource-editor-header,.resource-editor-footer{padding:14px}
+  .resource-editor-tabs{padding:10px 14px 0}
+  .resource-editor-tab-panel{padding:12px 14px 16px}
+  .resource-editor-tab{flex:0 0 auto}
   .compact-multi-select-toolbar{grid-template-columns:1fr}
 }
 .rebook-dialog{width:min(420px,100%);padding:22px;gap:10px}

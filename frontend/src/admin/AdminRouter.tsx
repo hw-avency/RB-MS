@@ -591,8 +591,10 @@ function CompactMultiSelect({
 }
 
 function DeskEditor({ desk, floorplans, tenants, employees, defaultFloorplanId, initialPosition, lockFloorplan, onRequestPositionMode, onClose, onSaved, onError }: { desk: Desk | null; floorplans: Floorplan[]; tenants: Tenant[]; employees: Employee[]; defaultFloorplanId: string; initialPosition?: { x: number; y: number } | null; lockFloorplan?: boolean; onRequestPositionMode?: () => void; onClose: () => void; onSaved: () => Promise<void>; onError: (message: string) => void }) {
+  type EditorTab = 'BASIC' | 'TENANTS' | 'EMPLOYEES' | 'POSITION';
   const [showPicker, setShowPicker] = useState(false);
   const [inlineError, setInlineError] = useState('');
+  const [activeTab, setActiveTab] = useState<EditorTab>('BASIC');
   const [employeeFilterLimited, setEmployeeFilterLimited] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [form, setForm] = useState<DeskFormState>({
@@ -659,16 +661,30 @@ function DeskEditor({ desk, floorplans, tenants, employees, defaultFloorplanId, 
     });
   }, [availableEmployees]);
 
+  const floorplanInvalid = !form.floorplanId;
   const nameInvalid = !form.name.trim();
   const tenantInvalid = form.tenantScope === 'SELECTED' && form.tenantIds.length === 0;
   const employeeInvalid = form.employeeScope === 'SELECTED' && form.employeeIds.length === 0;
   const positionInvalid = form.x === null || form.y === null;
-  const canSave = !nameInvalid && !tenantInvalid && !employeeInvalid && !positionInvalid && !isSubmitting;
+  const tabErrors: Record<EditorTab, boolean> = {
+    BASIC: floorplanInvalid || nameInvalid,
+    TENANTS: tenantInvalid,
+    EMPLOYEES: employeeInvalid,
+    POSITION: positionInvalid,
+  };
+  const firstErrorTab = (Object.entries(tabErrors).find(([, hasError]) => hasError)?.[0] as EditorTab | undefined) ?? null;
+  const canSave = !firstErrorTab && !isSubmitting;
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
     if (!canSave) {
-      setInlineError(positionInvalid ? 'Bitte Position im Plan setzen.' : 'Bitte Pflichtfelder prüfen.');
+      if (firstErrorTab) setActiveTab(firstErrorTab);
+      if (floorplanInvalid) setInlineError('Bitte Floorplan auswählen.');
+      else if (nameInvalid) setInlineError('Bitte Namen angeben.');
+      else if (tenantInvalid) setInlineError('Bitte mindestens einen Mandanten auswählen.');
+      else if (employeeInvalid) setInlineError('Bitte mindestens einen Mitarbeiter auswählen.');
+      else if (positionInvalid) setInlineError('Bitte Position im Plan setzen.');
+      else setInlineError('Bitte Pflichtfelder prüfen.');
       return;
     }
     setIsSubmitting(true);
@@ -702,67 +718,86 @@ function DeskEditor({ desk, floorplans, tenants, employees, defaultFloorplanId, 
         <section className="card dialog resource-editor-dialog" role="dialog" aria-modal="true">
           <header className="resource-editor-header">
             <h3>{desk ? 'Ressource bearbeiten' : 'Ressource anlegen'}</h3>
-            <p className="muted">Verwalte Grunddaten, Buchbarkeit und Freigaben in klaren Bereichen.</p>
+            <p className="muted">Verwalte Grunddaten, Buchbarkeit und Position in klar getrennten Tabs.</p>
           </header>
           <form className="resource-editor-form" onSubmit={submit}>
             <fieldset disabled={isSubmitting}>
-              <div className="resource-editor-grid">
-                <section className="resource-editor-section stack-sm">
-                  <h4>Grunddaten</h4>
-                  <p className="muted">Basiseinstellungen für diese Ressource.</p>
-                  {lockFloorplan ? <label className="field"><span>Floorplan</span><input value={floorplans.find((f) => f.id === form.floorplanId)?.name ?? '—'} disabled /></label> : <label className="field"><span>Floorplan</span><select required value={form.floorplanId} onChange={(e) => onFloorplanChange(e.target.value)}><option value="">Floorplan wählen</option>{floorplans.map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}</select></label>}
-                  <label className="field"><span>Art/Typ</span><select value={form.kind} onChange={(e) => setForm((current) => ({ ...current, kind: e.target.value as ResourceKind }))}>{RESOURCE_KIND_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
-                  <label className="field"><span>Name</span><input placeholder="z. B. H4" value={form.name} onChange={(e) => setForm((current) => ({ ...current, name: e.target.value }))} /></label>
-                  {nameInvalid && <p className="error-inline">Name ist erforderlich.</p>}
-                  <label className="field"><span>Serientermine</span><select value={form.seriesPolicy} onChange={(e) => setForm((current) => ({ ...current, seriesPolicy: e.target.value as SeriesPolicy }))}><option value="DEFAULT">Floor-Default verwenden</option><option value="ALLOW">Erlauben</option><option value="DISALLOW">Verbieten</option></select><p className="muted">Default = Einstellung aus Floorplan.</p></label>
-                  {form.kind === 'PARKPLATZ' && <label className="inline"><input type="checkbox" checked={form.hasCharger} onChange={(e) => setForm((current) => ({ ...current, hasCharger: e.target.checked }))} />E-Ladesäule vorhanden</label>}
-                </section>
-
-                <section className="resource-editor-section stack-sm">
-                  <h4>Buchbarkeit</h4>
-                  <p className="muted">Steuert, welche Mandanten buchen dürfen.</p>
-                  <div className="stack-xs">
-                    <label className="inline"><input type="radio" checked={form.tenantScope === 'ALL'} onChange={() => setForm((current) => ({ ...current, tenantScope: 'ALL', tenantIds: [] }))} />Alle Mandanten</label>
-                    <label className="inline"><input type="radio" checked={form.tenantScope === 'SELECTED'} onChange={() => setForm((current) => ({ ...current, tenantScope: 'SELECTED' }))} />Bestimmte Mandanten</label>
-                  </div>
-                  {form.tenantScope === 'SELECTED' && (
-                    <>
-                      <CompactMultiSelect label="Mandanten auswählen" options={tenantOptions} selectedIds={form.tenantIds} onChange={(tenantIds) => setForm((current) => ({ ...current, tenantIds }))} searchPlaceholder="Mandanten suchen" emptyText="Keine Mandanten gefunden." />
-                      {tenantInvalid && <p className="error-inline">Bitte mindestens einen Mandanten auswählen.</p>}
-                    </>
-                  )}
-                </section>
-
-                <section className="resource-editor-section stack-sm">
-                  <h4>Mitarbeiter-Freigabe</h4>
-                  <p className="muted">Optional auf einzelne Mitarbeitende eingrenzen.</p>
-                  <div className="stack-xs">
-                    <label className="inline"><input type="radio" checked={form.employeeScope === 'ALL'} onChange={() => setForm((current) => ({ ...current, employeeScope: 'ALL', employeeIds: [] }))} />Alle Mitarbeiter der erlaubten Mandanten</label>
-                    <label className="inline"><input type="radio" checked={form.employeeScope === 'SELECTED'} onChange={() => setForm((current) => ({ ...current, employeeScope: 'SELECTED' }))} />Bestimmte Mitarbeiter</label>
-                  </div>
-                  {form.employeeScope === 'SELECTED' && (
-                    <>
-                      <label className="inline"><input type="checkbox" checked={employeeFilterLimited} onChange={(event) => setEmployeeFilterLimited(event.target.checked)} />Nur Mitarbeiter der ausgewählten Mandanten anzeigen</label>
-                      <CompactMultiSelect label="Mitarbeiter auswählen" options={employeeOptions} selectedIds={form.employeeIds} onChange={(employeeIds) => setForm((current) => ({ ...current, employeeIds }))} searchPlaceholder="Mitarbeiter suchen" emptyText="Keine passenden Mitarbeiter verfügbar." selectAllLabel="Alle Treffer auswählen" />
-                      {employeeInvalid && <p className="error-inline">Bitte mindestens einen Mitarbeiter auswählen.</p>}
-                    </>
-                  )}
-                </section>
-
-                <section className="resource-editor-section stack-sm">
-                  <h4>Position</h4>
-                  <p className="muted">Koordinate im Floorplan setzen oder ändern.</p>
-                  <div className={`resource-position-box ${positionInvalid ? 'is-missing' : 'is-set'}`}>
-                    <Badge tone={positionInvalid ? 'warn' : 'ok'}>{positionInvalid ? 'Position fehlt' : 'Position gesetzt'}</Badge>
-                    <p className="muted">Koordinaten: {positionInvalid ? 'Nicht gesetzt' : `${Math.round(form.x ?? 0)}px / ${Math.round(form.y ?? 0)}px`}</p>
-                    <div className="admin-toolbar">
-                      {onRequestPositionMode && <button type="button" className="btn btn-outline" onClick={() => { onClose(); onRequestPositionMode(); }}>Position im Plan ändern</button>}
-                      <button type="button" className="btn btn-outline" disabled={!form.floorplanId} onClick={() => setShowPicker(true)}>{positionInvalid ? 'Position im Plan setzen' : 'Neu positionieren'}</button>
+              <div className="resource-editor-tabs" role="tablist" aria-label="Ressourcen-Dialog Bereiche">
+                {[
+                  { id: 'BASIC', label: 'Grunddaten' },
+                  { id: 'TENANTS', label: 'Mandanten' },
+                  { id: 'EMPLOYEES', label: 'Mitarbeiter' },
+                  { id: 'POSITION', label: 'Position' },
+                ].map((tab) => {
+                  const isActive = activeTab === tab.id;
+                  const hasError = tabErrors[tab.id as EditorTab];
+                  return (
+                    <button
+                      key={tab.id}
+                      type="button"
+                      role="tab"
+                      aria-selected={isActive}
+                      aria-controls={`desk-editor-panel-${tab.id.toLowerCase()}`}
+                      className={`resource-editor-tab ${isActive ? 'is-active' : ''} ${hasError ? 'has-error' : ''}`}
+                      onClick={() => setActiveTab(tab.id as EditorTab)}
+                    >
+                      <span>{tab.label}</span>
+                      {hasError && <span className="resource-editor-tab-indicator" aria-label="Enthält Fehler" />}
+                    </button>
+                  );
+                })}
+              </div>
+              <div className="resource-editor-tab-panel">
+                {activeTab === 'BASIC' && (
+                  <section id="desk-editor-panel-basic" className="resource-editor-section stack-sm" role="tabpanel">
+                    {lockFloorplan ? <label className="field"><span>Floorplan</span><input value={floorplans.find((f) => f.id === form.floorplanId)?.name ?? '—'} disabled /></label> : <label className="field"><span>Floorplan</span><select required value={form.floorplanId} onChange={(e) => onFloorplanChange(e.target.value)}><option value="">Floorplan wählen</option>{floorplans.map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}</select></label>}
+                    {floorplanInvalid && <p className="error-inline">Floorplan ist erforderlich.</p>}
+                    <label className="field"><span>Art/Typ</span><select value={form.kind} onChange={(e) => setForm((current) => ({ ...current, kind: e.target.value as ResourceKind }))}>{RESOURCE_KIND_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
+                    <label className="field"><span>Name</span><input placeholder="z. B. H4" value={form.name} onChange={(e) => setForm((current) => ({ ...current, name: e.target.value }))} /></label>
+                    {nameInvalid && <p className="error-inline">Name ist erforderlich.</p>}
+                    <label className="field"><span>Serientermine</span><select value={form.seriesPolicy} onChange={(e) => setForm((current) => ({ ...current, seriesPolicy: e.target.value as SeriesPolicy }))}><option value="DEFAULT">Floor-Default verwenden</option><option value="ALLOW">Erlauben</option><option value="DISALLOW">Verbieten</option></select><p className="muted">Default = Einstellung aus Floorplan.</p></label>
+                    {form.kind === 'PARKPLATZ' && <label className="inline"><input type="checkbox" checked={form.hasCharger} onChange={(e) => setForm((current) => ({ ...current, hasCharger: e.target.checked }))} />E-Ladesäule vorhanden</label>}
+                  </section>
+                )}
+                {activeTab === 'TENANTS' && (
+                  <section id="desk-editor-panel-tenants" className="resource-editor-section stack-sm" role="tabpanel">
+                    <div className="stack-xs">
+                      <label className="inline"><input type="radio" checked={form.tenantScope === 'ALL'} onChange={() => setForm((current) => ({ ...current, tenantScope: 'ALL', tenantIds: [] }))} />Alle Mandanten</label>
+                      <label className="inline"><input type="radio" checked={form.tenantScope === 'SELECTED'} onChange={() => setForm((current) => ({ ...current, tenantScope: 'SELECTED' }))} />Bestimmte Mandanten</label>
                     </div>
-                    {!form.floorplanId && <p className="muted">Bitte zuerst Floorplan wählen.</p>}
-                    {positionInvalid && <p className="error-inline">Bitte Position setzen, bevor gespeichert wird.</p>}
-                  </div>
-                </section>
+                    {form.tenantScope === 'SELECTED' && <CompactMultiSelect label="Mandanten auswählen" options={tenantOptions} selectedIds={form.tenantIds} onChange={(tenantIds) => setForm((current) => ({ ...current, tenantIds }))} searchPlaceholder="Mandanten suchen" emptyText="Keine Mandanten gefunden." />}
+                    {tenantInvalid && <p className="error-inline">Bitte mindestens einen Mandanten auswählen.</p>}
+                  </section>
+                )}
+                {activeTab === 'EMPLOYEES' && (
+                  <section id="desk-editor-panel-employees" className="resource-editor-section stack-sm" role="tabpanel">
+                    <div className="stack-xs">
+                      <label className="inline"><input type="radio" checked={form.employeeScope === 'ALL'} onChange={() => setForm((current) => ({ ...current, employeeScope: 'ALL', employeeIds: [] }))} />Alle Mitarbeiter der erlaubten Mandanten</label>
+                      <label className="inline"><input type="radio" checked={form.employeeScope === 'SELECTED'} onChange={() => setForm((current) => ({ ...current, employeeScope: 'SELECTED' }))} />Bestimmte Mitarbeiter</label>
+                    </div>
+                    {form.employeeScope === 'SELECTED' && (
+                      <>
+                        <label className="inline"><input type="checkbox" checked={employeeFilterLimited} onChange={(event) => setEmployeeFilterLimited(event.target.checked)} />Nur Mitarbeiter der ausgewählten Mandanten anzeigen</label>
+                        <CompactMultiSelect label="Mitarbeiter auswählen" options={employeeOptions} selectedIds={form.employeeIds} onChange={(employeeIds) => setForm((current) => ({ ...current, employeeIds }))} searchPlaceholder="Mitarbeiter suchen" emptyText="Keine passenden Mitarbeiter verfügbar." selectAllLabel="Alle Treffer auswählen" />
+                      </>
+                    )}
+                    {employeeInvalid && <p className="error-inline">Bitte mindestens einen Mitarbeiter auswählen.</p>}
+                  </section>
+                )}
+                {activeTab === 'POSITION' && (
+                  <section id="desk-editor-panel-position" className="resource-editor-section stack-sm" role="tabpanel">
+                    <div className={`resource-position-box ${positionInvalid ? 'is-missing' : 'is-set'}`}>
+                      <Badge tone={positionInvalid ? 'warn' : 'ok'}>{positionInvalid ? 'Position fehlt' : 'Position gesetzt'}</Badge>
+                      <p className="muted">Koordinaten: {positionInvalid ? 'Nicht gesetzt' : `${Math.round(form.x ?? 0)}px / ${Math.round(form.y ?? 0)}px`}</p>
+                      <div className="admin-toolbar">
+                        {onRequestPositionMode && <button type="button" className="btn btn-outline" onClick={() => { onClose(); onRequestPositionMode(); }}>Position im Plan ändern</button>}
+                        <button type="button" className="btn btn-outline" disabled={!form.floorplanId} onClick={() => setShowPicker(true)}>{positionInvalid ? 'Position im Plan setzen' : 'Neu positionieren'}</button>
+                      </div>
+                      {!form.floorplanId && <p className="muted">Bitte zuerst Floorplan wählen.</p>}
+                      {positionInvalid && <p className="error-inline">Bitte Position setzen, bevor gespeichert wird.</p>}
+                    </div>
+                  </section>
+                )}
               </div>
             </fieldset>
             {inlineError && <p className="error-banner">{inlineError}</p>}
