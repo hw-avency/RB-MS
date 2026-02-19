@@ -18,6 +18,10 @@ function LogOut({ size = 16, className }: IconProps) {
   return <svg className={className} xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="m16 17 5-5-5-5" /><path d="M21 12H9" /><path d="M13 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h8" /></svg>;
 }
 
+function Settings({ size = 16, className }: IconProps) {
+  return <svg className={className} xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M12 3a2 2 0 0 1 2 2v.25a2 2 0 0 0 1.45 1.92l.24.08a2 2 0 0 0 2.28-.77l.16-.2a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.2.16a2 2 0 0 0-.77 2.28l.08.24A2 2 0 0 0 21 14h.25a2 2 0 0 1 0 4H21a2 2 0 0 0-1.92 1.45l-.08.24a2 2 0 0 0 .77 2.28l.2.16a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.16-.2a2 2 0 0 0-2.28-.77l-.24.08A2 2 0 0 0 14 21v.25a2 2 0 0 1-4 0V21a2 2 0 0 0-1.45-1.92l-.24-.08a2 2 0 0 0-2.28.77l-.16.2a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.2-.16a2 2 0 0 0 .77-2.28l-.08-.24A2 2 0 0 0 3 18h-.25a2 2 0 0 1 0-4H3a2 2 0 0 0 1.92-1.45l.08-.24a2 2 0 0 0-.77-2.28l-.2-.16a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.16.2a2 2 0 0 0 2.28.77l.24-.08A2 2 0 0 0 10 5v-.25a2 2 0 0 1 2-2Z" /><circle cx="12" cy="12" r="3" /></svg>;
+}
+
 const getInitials = (user: UserInfo): string => {
   const source = (user.name ?? user.displayName ?? user.email).trim();
   if (!source) return 'U';
@@ -30,11 +34,12 @@ const getInitials = (user: UserInfo): string => {
   return source.slice(0, 2).toUpperCase();
 };
 
-export function UserMenu({ user, onLogout, onOpenAdmin, showAdminAction = false }: {
+export function UserMenu({ user, onLogout, onOpenAdmin, showAdminAction = false, onOpenSettings }: {
   user: UserInfo;
   onLogout: () => Promise<void>;
   onOpenAdmin?: () => void;
   showAdminAction?: boolean;
+  onOpenSettings?: () => void;
 }) {
   const [photoFailed, setPhotoFailed] = useState(false);
   const initials = useMemo(() => getInitials(user), [user]);
@@ -78,6 +83,12 @@ export function UserMenu({ user, onLogout, onOpenAdmin, showAdminAction = false 
             <button className="user-menu-item" role="menuitem" onClick={() => { close(); onOpenAdmin(); }}>
               <Shield size={16} />
               <span>Admin</span>
+            </button>
+          )}
+          {onOpenSettings && (
+            <button className="user-menu-item" role="menuitem" onClick={() => { close(); onOpenSettings(); }}>
+              <Settings size={16} />
+              <span>Settings</span>
             </button>
           )}
           <button className="user-menu-item user-menu-item-danger" role="menuitem" onClick={() => { close(); void onLogout(); }}>

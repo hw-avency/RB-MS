@@ -1,5 +1,19 @@
 [
   {
+    "version": "1.5.54",
+    "date": "2026-02-19",
+    "type": "feature",
+    "title": "Persönliche Settings für Parkplatz-Defaults und Erinnerungen",
+    "summary": "Nutzer können jetzt eigene Voreinstellungen für Floor, Erinnerungszeit und Standard-Uhrzeiten speichern. Zusätzlich wurden Anzeige und Defaults im Parkplatz-Flow verbessert.",
+    "items": [
+      "Im Profil-Menü gibt es jetzt den neuen Punkt „Settings“ über „Logout“ mit persönlichen Einstellungen.",
+      "Du kannst einen eigenen Default Floor festlegen, der den Admin-Default für deinen Account überschreibt.",
+      "Die Kalendererinnerung beim Parkplatzwechsel ist jetzt standardmäßig direkt zur Wechselzeit und kann pro Nutzer in Minuten vorher konfiguriert werden.",
+      "Für Parkplatzbuchungen lassen sich Standard-Anreise- und Abreisezeiten speichern; diese gelten für manuelle und intelligente Zuweisung.",
+      "Im Dialog „Alle Parkplatz-Buchungen stornieren“ startet die Zeitspalte jetzt bündig in einer gemeinsamen vertikalen Linie."
+    ]
+  },
+  {
     "version": "1.5.53",
     "date": "2026-02-19",
     "type": "bugfix",
