@@ -1641,10 +1641,11 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
   }, [floorplans, selectedFloorplanId]);
 
   useEffect(() => {
-    if (selectedFloorplanId && !backendDown) {
-      loadOccupancy(selectedFloorplanId, selectedDate);
-    }
-  }, [selectedFloorplanId, selectedDate, backendDown]);
+    if (backendDown || isBootstrapping || !selectedFloorplanId) return;
+    if (!floorplans.some((floorplan) => floorplan.id === selectedFloorplanId)) return;
+
+    loadOccupancy(selectedFloorplanId, selectedDate);
+  }, [backendDown, floorplans, isBootstrapping, selectedDate, selectedFloorplanId]);
 
   useEffect(() => {
     if (backendDown) {

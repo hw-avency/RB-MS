@@ -1,5 +1,16 @@
 [
   {
+    "version": "1.5.33",
+    "date": "2026-02-19",
+    "type": "bugfix",
+    "title": "Reload zeigt keinen falschen Floor-Fehler mehr",
+    "summary": "Beim Neuladen bleibt die Floor-Auswahl stabil, ohne eine irreführende \"floor not found\"-Meldung anzuzeigen.",
+    "items": [
+      "Die Belegungsabfrage startet jetzt erst, wenn die Floor-Liste vollständig geladen und die Auswahl gültig aufgelöst ist.",
+      "Dadurch erscheinen beim Reload keine falschen Fehl-Toast-Meldungen mehr, obwohl die Floors korrekt funktionieren."
+    ]
+  },
+  {
     "version": "1.5.32",
     "date": "2026-02-19",
     "type": "bugfix",
