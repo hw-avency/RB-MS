@@ -24,6 +24,15 @@ const findFreeSpot = (
   predicate: (spot: ParkingSpot) => boolean
 ): ParkingSpot | null => spots.find((spot) => predicate(spot) && isSpotFree(spot.id, window, bookings)) ?? null;
 
+const pushUniqueCandidate = (
+  list: Array<{ startMinute: number; endMinute: number; chargeAtStart: boolean }>,
+  candidate: { startMinute: number; endMinute: number; chargeAtStart: boolean }
+): void => {
+  if (candidate.endMinute <= candidate.startMinute) return;
+  if (list.some((entry) => entry.startMinute === candidate.startMinute && entry.endMinute === candidate.endMinute)) return;
+  list.push(candidate);
+};
+
 export const buildParkingAssignmentProposal = ({
   startMinute,
   attendanceMinutes,
@@ -54,13 +63,21 @@ export const buildParkingAssignmentProposal = ({
   }
 
   const resolvedChargingMinutes = Math.min(attendanceMinutes, Math.max(0, chargingMinutes));
-  const chargeWindowCandidates = [
-    { startMinute, endMinute: startMinute + resolvedChargingMinutes, chargeAtStart: true },
-    { startMinute: endMinute - resolvedChargingMinutes, endMinute, chargeAtStart: false }
-  ].filter((candidate, index, all) => (
-    candidate.endMinute > candidate.startMinute
-    && all.findIndex((entry) => entry.startMinute === candidate.startMinute && entry.endMinute === candidate.endMinute) === index
-  ));
+  const chargeWindowCandidates: Array<{ startMinute: number; endMinute: number; chargeAtStart: boolean }> = [];
+  pushUniqueCandidate(chargeWindowCandidates, { startMinute, endMinute: startMinute + resolvedChargingMinutes, chargeAtStart: true });
+  pushUniqueCandidate(chargeWindowCandidates, { startMinute: endMinute - resolvedChargingMinutes, endMinute, chargeAtStart: false });
+
+  const firstWholeHourStart = Math.ceil(startMinute / 60) * 60;
+  const latestWholeHourStart = endMinute - resolvedChargingMinutes;
+  for (let candidateStart = firstWholeHourStart; candidateStart <= latestWholeHourStart; candidateStart += 60) {
+    const candidateEnd = candidateStart + resolvedChargingMinutes;
+    if (candidateEnd > endMinute) continue;
+    pushUniqueCandidate(chargeWindowCandidates, {
+      startMinute: candidateStart,
+      endMinute: candidateEnd,
+      chargeAtStart: candidateStart === startMinute
+    });
+  }
 
   let chargerWindowFound = false;
 
@@ -79,28 +96,51 @@ export const buildParkingAssignmentProposal = ({
       };
     }
 
-    if (candidate.chargeAtStart) {
-      const restWindow = { startMinute: candidate.endMinute, endMinute };
-      const regularSpot = findFreeSpot(spots, bookings, restWindow, (spot) => !spot.hasCharger);
-      if (regularSpot) {
+    const beforeWindow = { startMinute, endMinute: candidate.startMinute };
+    const afterWindow = { startMinute: candidate.endMinute, endMinute };
+    const hasBefore = beforeWindow.endMinute > beforeWindow.startMinute;
+    const hasAfter = afterWindow.endMinute > afterWindow.startMinute;
+
+    if (!hasBefore && hasAfter) {
+      const regularAfter = findFreeSpot(spots, bookings, afterWindow, (spot) => !spot.hasCharger);
+      if (regularAfter) {
         return {
           type: 'split',
           bookings: [
             { deskId: chargerSpot.id, startMinute, endMinute: candidate.endMinute, hasCharger: true },
-            { deskId: regularSpot.id, startMinute: candidate.endMinute, endMinute, hasCharger: regularSpot.hasCharger }
+            { deskId: regularAfter.id, startMinute: candidate.endMinute, endMinute, hasCharger: regularAfter.hasCharger }
           ],
           usedFallbackChargerFullWindow: false
         };
       }
-    } else {
-      const restWindow = { startMinute, endMinute: candidate.startMinute };
-      const regularSpot = findFreeSpot(spots, bookings, restWindow, (spot) => !spot.hasCharger);
-      if (regularSpot) {
+      continue;
+    }
+
+    if (hasBefore && !hasAfter) {
+      const regularBefore = findFreeSpot(spots, bookings, beforeWindow, (spot) => !spot.hasCharger);
+      if (regularBefore) {
         return {
           type: 'split',
           bookings: [
-            { deskId: regularSpot.id, startMinute, endMinute: candidate.startMinute, hasCharger: regularSpot.hasCharger },
+            { deskId: regularBefore.id, startMinute, endMinute: candidate.startMinute, hasCharger: regularBefore.hasCharger },
             { deskId: chargerSpot.id, startMinute: candidate.startMinute, endMinute, hasCharger: true }
+          ],
+          usedFallbackChargerFullWindow: false
+        };
+      }
+      continue;
+    }
+
+    if (hasBefore && hasAfter) {
+      const regularBefore = findFreeSpot(spots, bookings, beforeWindow, (spot) => !spot.hasCharger);
+      const regularAfter = findFreeSpot(spots, bookings, afterWindow, (spot) => !spot.hasCharger);
+      if (regularBefore && regularAfter) {
+        return {
+          type: 'split',
+          bookings: [
+            { deskId: regularBefore.id, startMinute, endMinute: candidate.startMinute, hasCharger: regularBefore.hasCharger },
+            { deskId: chargerSpot.id, startMinute: candidate.startMinute, endMinute: candidate.endMinute, hasCharger: true },
+            { deskId: regularAfter.id, startMinute: candidate.endMinute, endMinute, hasCharger: regularAfter.hasCharger }
           ],
           usedFallbackChargerFullWindow: false
         };

@@ -94,6 +94,35 @@ test('split assignment can place charging window at the end when start is blocke
   assert.equal(proposal.bookings[1]?.endMinute, 12 * 60);
 });
 
+test('split assignment can use a free full-hour charging window in the middle of attendance', () => {
+  const proposal = buildParkingAssignmentProposal({
+    startMinute: 8 * 60,
+    attendanceMinutes: 8 * 60,
+    chargingMinutes: 2 * 60,
+    spots: [
+      { id: 'charger-1', hasCharger: true },
+      { id: 'regular-1', hasCharger: false }
+    ],
+    bookings: [
+      { deskId: 'charger-1', startMinute: 8 * 60, endMinute: 12 * 60 },
+      { deskId: 'charger-1', startMinute: 14 * 60, endMinute: 18 * 60 }
+    ]
+  });
+
+  assert.equal(proposal.type, 'split');
+  if (proposal.type !== 'split') return;
+  assert.equal(proposal.bookings.length, 3);
+  assert.equal(proposal.bookings[0]?.deskId, 'regular-1');
+  assert.equal(proposal.bookings[0]?.startMinute, 8 * 60);
+  assert.equal(proposal.bookings[0]?.endMinute, 12 * 60);
+  assert.equal(proposal.bookings[1]?.deskId, 'charger-1');
+  assert.equal(proposal.bookings[1]?.startMinute, 12 * 60);
+  assert.equal(proposal.bookings[1]?.endMinute, 14 * 60);
+  assert.equal(proposal.bookings[2]?.deskId, 'regular-1');
+  assert.equal(proposal.bookings[2]?.startMinute, 14 * 60);
+  assert.equal(proposal.bookings[2]?.endMinute, 16 * 60);
+});
+
 test('no proposal when split and fallback are impossible', () => {
   const proposal = buildParkingAssignmentProposal({
     startMinute: 8 * 60,
