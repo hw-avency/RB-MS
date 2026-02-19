@@ -1,5 +1,16 @@
 [
   {
+    "version": "1.6.1",
+    "date": "2026-02-19",
+    "type": "bugfix",
+    "title": "Release Notes laden im Admin jetzt immer den aktuellen Stand",
+    "summary": "Die Release-Notes-Ansicht holt die JSON-Datei jetzt ohne veralteten Browser-Cache. Dadurch erscheinen nach einem Deploy die neuesten Einträge zuverlässig im Admin-Panel.",
+    "items": [
+      "Der Abruf der Datei „release-notes.json“ nutzt jetzt eine versionsgebundene URL.",
+      "Zusätzlich wird der Request explizit ohne Cache ausgeführt, damit nach Deploy keine alte Datei angezeigt wird."
+    ]
+  },
+  {
     "version": "1.6.0",
     "date": "2026-02-19",
     "type": "bugfix",
