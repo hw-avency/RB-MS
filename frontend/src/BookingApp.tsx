@@ -213,6 +213,32 @@ const getInitialFloorplanId = (): string => {
   return new URLSearchParams(window.location.search).get(FLOORPLAN_QUERY_KEY) ?? '';
 };
 
+const normalizeFloorplanUrlValue = (value: string): string => value
+  .normalize('NFD')
+  .replace(/\p{Diacritic}/gu, '')
+  .toLowerCase()
+  .replace(/[^a-z0-9]+/g, '-')
+  .replace(/(^-|-$)/g, '');
+
+const floorplanUrlValue = (floorplan: Floorplan): string => {
+  const normalizedName = normalizeFloorplanUrlValue(floorplan.name ?? '');
+  return normalizedName || floorplan.id;
+};
+
+const resolveFloorplanSelection = (rawValue: string, floorplans: Floorplan[]): string => {
+  const candidate = rawValue.trim();
+  if (!candidate) return '';
+
+  const byId = floorplans.find((plan) => plan.id === candidate);
+  if (byId) return byId.id;
+
+  const normalizedCandidate = normalizeFloorplanUrlValue(candidate);
+  const byName = floorplans.find((plan) => normalizeFloorplanUrlValue(plan.name) === normalizedCandidate);
+  if (byName) return byName.id;
+
+  return '';
+};
+
 const clamp = (value: number, min: number, max: number): number => Math.min(max, Math.max(min, value));
 
 const FLOORPLAN_FIT_PADDING = 24;
@@ -691,6 +717,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
   const [parkingSmartInfo, setParkingSmartInfo] = useState('');
   const [isParkingSmartLoading, setIsParkingSmartLoading] = useState(false);
   const [isParkingSmartDialogOpen, setIsParkingSmartDialogOpen] = useState(false);
+  const [isParkingSmartConfirmDialogOpen, setIsParkingSmartConfirmDialogOpen] = useState(false);
   const [rebookConfirm, setRebookConfirm] = useState<RebookConfirmState | null>(null);
   const [isRebooking, setIsRebooking] = useState(false);
   const [recurringConflictState, setRecurringConflictState] = useState<RecurringConflictState | null>(null);
@@ -720,9 +747,10 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
   useEffect(() => {
     if (typeof window === 'undefined') return;
     const params = new URLSearchParams(window.location.search);
+    const selectedFloorplanForUrl = floorplans.find((floorplan) => floorplan.id === selectedFloorplanId) ?? null;
     params.set(OVERVIEW_QUERY_KEY, overviewView);
-    if (selectedFloorplanId) {
-      params.set(FLOORPLAN_QUERY_KEY, selectedFloorplanId);
+    if (selectedFloorplanForUrl) {
+      params.set(FLOORPLAN_QUERY_KEY, floorplanUrlValue(selectedFloorplanForUrl));
     } else {
       params.delete(FLOORPLAN_QUERY_KEY);
     }
@@ -733,7 +761,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
     if (nextUrl !== currentUrl) {
       window.history.replaceState({}, '', nextUrl);
     }
-  }, [overviewView, selectedFloorplanId]);
+  }, [overviewView, floorplans, selectedFloorplanId]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -1581,9 +1609,10 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
           ...floorplan,
           imageUrl: floorplan.imageUrl || floorplan.imageURL || floorplan.image || ''
         }));
+        const resolvedInitialFloorplanId = resolveFloorplanSelection(selectedFloorplanId, normalizedFloorplans);
         setFloorplans(normalizedFloorplans);
         setEmployees(nextEmployees);
-        setSelectedFloorplanId((prev) => prev || normalizedFloorplans.find((plan) => plan.isDefault)?.id || normalizedFloorplans[0]?.id || '');
+        setSelectedFloorplanId(resolvedInitialFloorplanId || normalizedFloorplans.find((plan) => plan.isDefault)?.id || normalizedFloorplans[0]?.id || '');
         setSelectedEmployeeEmail((prev) => prev || currentUserEmail || nextEmployees[0]?.email || '');
         setBackendDown(false);
       });
@@ -1604,7 +1633,8 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
   useEffect(() => {
     if (!selectedFloorplanId) return;
     if (floorplans.some((floorplan) => floorplan.id === selectedFloorplanId)) return;
-    setSelectedFloorplanId(floorplans.find((plan) => plan.isDefault)?.id || floorplans[0]?.id || '');
+    const resolvedFloorplanId = resolveFloorplanSelection(selectedFloorplanId, floorplans);
+    setSelectedFloorplanId(resolvedFloorplanId || floorplans.find((plan) => plan.isDefault)?.id || floorplans[0]?.id || '');
     setSelectedDeskId('');
     setFloorplanResources([]);
     setOccupancy(null);
@@ -2017,6 +2047,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
     setParkingSmartError('');
     setParkingSmartInfo('');
     setParkingSmartProposal(null);
+    setIsParkingSmartConfirmDialogOpen(false);
     setIsParkingSmartLoading(true);
     try {
       const response = await post<ParkingSmartProposeResponse>('/bookings/parking-smart/propose', {
@@ -2067,6 +2098,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
       });
       toast.success('Parkplatz gebucht');
       setParkingSmartProposal(null);
+      setIsParkingSmartConfirmDialogOpen(false);
       setIsParkingSmartDialogOpen(false);
       reloadBookings().catch(() => undefined);
     } catch (error) {
@@ -2080,6 +2112,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
     setParkingSmartError('');
     setParkingSmartInfo('');
     setParkingSmartProposal(null);
+    setIsParkingSmartConfirmDialogOpen(false);
     setIsParkingSmartDialogOpen(true);
   };
 
@@ -2088,8 +2121,15 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
     setParkingSmartError('');
     setParkingSmartInfo('');
     setParkingSmartProposal(null);
+    setIsParkingSmartConfirmDialogOpen(false);
     setIsParkingSmartDialogOpen(false);
   };
+
+  const parkingRelocationTime = useMemo(() => {
+    if (!parkingSmartProposal?.switchAfterCharging || parkingSmartProposal.bookings.length < 2) return null;
+    const firstSegment = parkingSmartProposal.bookings[0];
+    return firstSegment.endTime ?? formatMinutes(firstSegment.endMinute);
+  }, [parkingSmartProposal]);
 
   const updateExistingDeskBooking = async () => {
     if (!popupDesk || !popupMySelectedBooking || isRoomResource(popupDesk)) return;
@@ -3249,9 +3289,31 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
                   <strong>Vorschlag</strong>
                   {parkingSmartProposal.bookings.map((entry, index) => <p key={`${entry.deskId}-${index}`}>{entry.hasCharger ? '⚡ ' : ''}{entry.deskName} · {entry.startTime ?? formatMinutes(entry.startMinute)}–{entry.endTime ?? formatMinutes(entry.endMinute)}</p>)}
                   {parkingSmartProposal.switchAfterCharging && <p className="muted">Wechsel nach Ladedauer.</p>}
-                  <button type="button" className="btn" onClick={confirmSmartParkingProposal} disabled={isParkingSmartLoading}>Vorschlag bestätigen</button>
+                  <button type="button" className="btn" onClick={() => setIsParkingSmartConfirmDialogOpen(true)} disabled={isParkingSmartLoading}>Vorschlag bestätigen</button>
                 </div>
               )}
+            </div>
+          </section>
+        </div>,
+        document.body
+      )}
+
+      {isParkingSmartConfirmDialogOpen && parkingSmartProposal && createPortal(
+        <div className="overlay" role="presentation">
+          <section className="card dialog rebook-dialog" role="dialog" aria-modal="true" aria-labelledby="parking-smart-confirm-title">
+            <h3 id="parking-smart-confirm-title">Parkplatz-Buchung bestätigen?</h3>
+            <p>Bitte bestätige den vorgeschlagenen Parkplatz-Zeitplan.</p>
+            <div className="stack-xxs">
+              {parkingSmartProposal.bookings.map((entry, index) => <p key={`confirm-${entry.deskId}-${index}`}>{entry.hasCharger ? '⚡ ' : ''}{entry.deskName} · {entry.startTime ?? formatMinutes(entry.startMinute)}–{entry.endTime ?? formatMinutes(entry.endMinute)}</p>)}
+            </div>
+            {parkingRelocationTime && (
+              <p className="parking-relocation-warning" role="alert">
+                <strong>Wichtig:</strong> Sie müssen Ihr Auto um <strong>{parkingRelocationTime} Uhr</strong> umparken.
+              </p>
+            )}
+            <div className="inline-end">
+              <button type="button" className="btn btn-outline" onClick={() => setIsParkingSmartConfirmDialogOpen(false)} disabled={isParkingSmartLoading}>Zurück</button>
+              <button type="button" className="btn" onClick={confirmSmartParkingProposal} disabled={isParkingSmartLoading}>Jetzt verbindlich buchen</button>
             </div>
           </section>
         </div>,

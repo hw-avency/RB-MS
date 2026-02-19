@@ -1,5 +1,18 @@
 [
   {
+    "version": "1.5.32",
+    "date": "2026-02-19",
+    "type": "bugfix",
+    "title": "Floorplan-URL bleibt stabil und Smart-Parking fragt vor dem Buchen nach",
+    "summary": "Der ausgewählte Floorplan im Userbereich bleibt jetzt auch nach einem Reload auf der URL-Auswahl. Zusätzlich gibt es vor der finalen Smart-Parking-Buchung ein Bestätigungsfenster mit deutlichem Umpark-Hinweis.",
+    "items": [
+      "Floorplans aus der URL werden jetzt robuster aufgelöst, auch wenn die URL den Namen statt der internen ID enthält.",
+      "Die URL schreibt den Floorplan jetzt in einer lesbaren Struktur aus dem Floorplan-Namen und bleibt nach dem Reload auf der gewählten Ansicht.",
+      "Beim Bestätigen eines Smart-Parking-Vorschlags öffnet sich zuerst ein separates Bestätigungsfenster.",
+      "Wenn ein Wechsel nötig ist, zeigt das Fenster gut sichtbar die genaue Uhrzeit zum Umparken an, bevor verbindlich gebucht wird."
+    ]
+  },
+  {
     "version": "1.5.31",
     "date": "2026-02-19",
     "type": "bugfix",
