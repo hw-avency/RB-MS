@@ -259,6 +259,8 @@ tr{cursor:pointer}.row-selected{background:hsl(var(--muted))}
 .rebook-dialog{width:min(420px,100%);padding:22px;gap:10px}
 .rebook-dialog h3{margin:0;font-size:17px;line-height:1.25}
 .rebook-dialog p{margin:0;font-size:14px;line-height:1.45}
+
+.parking-relocation-warning{margin:0;padding:10px 12px;border-radius:10px;border:1px solid #f59e0b;background:#fffbeb;color:#92400e;font-size:14px;line-height:1.45}
 .rebook-date{font-weight:700}
 .rebook-subline{font-size:13px}
 .rebook-actions{margin-top:2px}
