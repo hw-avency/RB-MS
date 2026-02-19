@@ -7,6 +7,7 @@ import { UserMenu } from '../components/UserMenu';
 import { FloorplanCanvas } from '../FloorplanCanvas';
 import { useToast } from '../components/toast';
 import { Popover } from '../components/ui/Popover';
+import { APP_VERSION } from '../config';
 import { RESOURCE_KIND_OPTIONS, resourceKindLabel, type ResourceKind } from '../resourceKinds';
 
 type SeriesPolicy = 'DEFAULT' | 'ALLOW' | 'DISALLOW';
@@ -2527,7 +2528,7 @@ function ReleaseNotesPage({ path, navigate, onLogout, currentUser }: RouteProps)
     void (async () => {
       setState({ loading: true, error: '', ready: false });
       try {
-        const response = await fetch('/release-notes.json');
+        const response = await fetch(`/release-notes.json?v=${encodeURIComponent(APP_VERSION)}`, { cache: 'no-store' });
         if (!response.ok) {
           throw new Error(`Release Notes konnten nicht geladen werden (${response.status})`);
         }
