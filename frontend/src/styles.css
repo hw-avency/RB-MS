@@ -316,15 +316,28 @@ tr{cursor:pointer}.row-selected{background:hsl(var(--muted))}
 .rebook-dialog p{margin:0;font-size:14px;line-height:1.45}
 
 .parking-relocation-warning{margin:0;padding:10px 12px;border-radius:10px;border:1px solid #f59e0b;background:#fffbeb;color:#92400e;font-size:14px;line-height:1.45}
-.parking-time-block-list{gap:12px}
-.parking-time-block{border:1px solid hsl(var(--border));border-radius:12px;padding:12px;background:hsl(var(--card));display:grid;gap:6px}
-.parking-time-block-header{display:flex;align-items:center;gap:10px}
-.parking-time-block-number{width:44px;height:44px;border-radius:12px;background:hsl(var(--primary));color:hsl(var(--primary-foreground));font-weight:800;font-size:18px;display:grid;place-items:center;line-height:1}
-.parking-time-block-meta p{margin:0;font-size:14px;font-weight:600}
-.parking-time-block-standard{color:hsl(var(--foreground))}
-.parking-time-block-charging{display:inline-flex;align-items:center;gap:6px;color:#0f766e;background:rgba(20,184,166,.12);padding:2px 8px;border-radius:999px}
-.parking-time-block-time{margin:0;font-size:18px;font-weight:600;letter-spacing:.01em}
-.parking-time-block-hint{margin:0;font-size:12px;color:hsl(var(--muted-foreground))}
+.parking-smart-helper{font-size:12px;line-height:1.35}
+.parking-smart-dialog-body{padding:14px 16px 0;gap:10px}
+.parking-smart-form-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px 12px}
+.parking-smart-field{min-width:0}
+.time-input-wrap{position:relative;display:flex;align-items:center}
+.time-input-wrap input{padding-right:42px}
+.time-input-icon{position:absolute;right:6px;top:50%;transform:translateY(-50%);width:30px;height:30px;border:1px solid hsl(var(--border));border-radius:9px;background:hsl(var(--muted)/.45);display:grid;place-items:center;cursor:pointer}
+.parking-smart-toggle{min-height:38px;border:1px solid hsl(var(--border));border-radius:12px;padding:0 10px;background:hsl(var(--card));justify-content:space-between}
+.parking-smart-toggle input{width:auto}
+.parking-smart-proposal-block{padding-top:4px}
+.parking-smart-proposal-note{font-size:12px}
+.parking-smart-actions{position:sticky;bottom:0;z-index:2;background:hsl(var(--card));border-top:1px solid hsl(var(--border));margin:4px -16px 0;padding:10px 16px;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+.parking-schedule-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
+.parking-schedule-tile{position:relative;aspect-ratio:1/1;border:1px solid hsl(var(--border));border-radius:12px;padding:10px;background:hsl(var(--card));display:grid;justify-items:center;align-content:center;gap:8px;text-align:center}
+.parking-schedule-number{min-width:52px;height:40px;border-radius:999px;background:hsl(var(--primary));color:hsl(var(--primary-foreground));font-weight:800;font-size:18px;display:grid;place-items:center;padding:0 12px}
+.parking-schedule-tag{margin:0;font-size:12px;font-weight:700;border-radius:999px;padding:2px 8px;display:inline-flex;align-items:center;gap:4px}
+.parking-schedule-tag-standard{background:hsl(var(--muted));color:hsl(var(--muted-foreground))}
+.parking-schedule-tag-charging{color:#0f766e;background:rgba(20,184,166,.12)}
+.parking-schedule-time{margin:0;font-size:18px;font-weight:700;letter-spacing:.01em}
+.parking-schedule-hint{margin:0;font-size:12px;color:hsl(var(--muted-foreground));min-height:16px}
+.parking-schedule-warning-badge{position:absolute;left:8px;top:8px;margin:0;background:#fffbeb;color:#92400e;border:1px solid #f59e0b;border-radius:999px;padding:2px 8px;font-size:11px;font-weight:700}
+.parking-relocation-inline{margin:2px 0 0;font-size:13px;color:#92400e}
 .rebook-date{font-weight:700}
 .rebook-subline{font-size:13px}
 .rebook-actions{margin-top:2px}
@@ -446,6 +459,9 @@ tr{cursor:pointer}.row-selected{background:hsl(var(--muted))}
 @keyframes indeterminate{0%{transform:translateX(-120%)}100%{transform:translateX(340%)}}
 @keyframes resourcePulse{0%{transform:scale(1);opacity:.16}50%{transform:scale(1.06);opacity:.26}100%{transform:scale(1);opacity:.16}}
 
+
+@media (max-width: 1100px){.parking-schedule-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media (max-width: 768px){.parking-smart-form-grid{grid-template-columns:1fr}.parking-schedule-grid{grid-template-columns:1fr}.parking-smart-actions{grid-template-columns:1fr}.parking-smart-dialog-body{padding:12px 12px 0}}
 @media (prefers-reduced-motion: reduce){
   .pulseHalo{animation:none}
 }

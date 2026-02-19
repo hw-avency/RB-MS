@@ -8,7 +8,7 @@ import { createMutationRequestId, logMutation, toBodySnippet } from './api/mutat
 import { Avatar } from './components/Avatar';
 import { BookingForm, createDefaultBookingFormValues } from './components/BookingForm';
 import type { BookingFormSubmitPayload, BookingFormValues } from './components/BookingForm';
-import { ParkingTimeBlock } from './components/ParkingTimeBlock';
+import { ParkingScheduleGrid } from './components/ParkingScheduleGrid';
 import { UserMenu } from './components/UserMenu';
 import { FloorplanCanvas } from './FloorplanCanvas';
 import { APP_TITLE, APP_VERSION, COMPANY_LOGO_URL } from './config';
@@ -727,7 +727,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
   const [dialogErrorMessage, setDialogErrorMessage] = useState('');
   const [parkingSmartArrivalTime, setParkingSmartArrivalTime] = useState('08:00');
   const [parkingSmartDepartureTime, setParkingSmartDepartureTime] = useState('16:00');
-  const [parkingChargeMinutes, setParkingChargeMinutes] = useState(120);
+  const [parkingChargeMinutes, setParkingChargeMinutes] = useState(60);
   const [parkingSmartProposal, setParkingSmartProposal] = useState<ParkingSmartProposal | null>(null);
   const [parkingSmartError, setParkingSmartError] = useState('');
   const [parkingSmartInfo, setParkingSmartInfo] = useState('');
@@ -2148,6 +2148,24 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
     return firstSegment.endTime ?? formatMinutes(firstSegment.endMinute);
   }, [parkingSmartProposal]);
 
+  const isParkingTimeRangeInvalid = useMemo(
+    () => Boolean(parkingSmartArrivalTime && parkingSmartDepartureTime && toMinutes(parkingSmartDepartureTime) <= toMinutes(parkingSmartArrivalTime)),
+    [parkingSmartArrivalTime, parkingSmartDepartureTime]
+  );
+
+  const parkingScheduleEntries = useMemo(() => {
+    if (!parkingSmartProposal) return [];
+    return parkingSmartProposal.bookings.map((entry, index) => ({
+      id: `${entry.deskId}-${index}`,
+      number: extractParkingNumber(entry.deskName),
+      startTime: entry.startTime ?? formatMinutes(entry.startMinute),
+      endTime: entry.endTime ?? formatMinutes(entry.endMinute),
+      hasCharging: entry.hasCharger,
+      hint: entry.hasCharger ? 'Ladezeit' : undefined,
+      warning: parkingRelocationTime && parkingSmartProposal.switchAfterCharging && index === 0 ? `Umparken um ${parkingRelocationTime}` : undefined
+    }));
+  }, [parkingRelocationTime, parkingSmartProposal]);
+
   const updateExistingDeskBooking = async () => {
     if (!popupDesk || !popupMySelectedBooking || isRoomResource(popupDesk)) return;
     if (!popupMySelectedBooking.id) {
@@ -3277,48 +3295,61 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
             <div className="desk-popup-header">
               <div className="stack-xxs">
                 <h3 id="parking-smart-title">Parkplatz intelligent zuweisen</h3>
-                <p className="muted">Automatische Empfehlung für Lade- und Restzeit auf dem ausgewählten Floor.</p>
+                <p className="parking-smart-helper muted">Automatische Empfehlung für Lade- und Restzeit auf dem ausgewählten Floor.</p>
               </div>
               <button type="button" className="btn btn-ghost desk-popup-close" aria-label="Dialog schließen" onClick={closeParkingSmartDialog} disabled={isParkingSmartLoading}>✕</button>
             </div>
-            <div className="desk-popup-body stack-xs">
-              <label className="field"><span>Anreise</span><input type="time" min="00:00" max="23:30" step={1800} value={parkingSmartArrivalTime} onChange={(event) => setParkingSmartArrivalTime(event.target.value)} disabled={isParkingSmartLoading} /></label>
-              <label className="field"><span>Abreise</span><input type="time" min="00:30" max="23:59" step={1800} value={parkingSmartDepartureTime} onChange={(event) => setParkingSmartDepartureTime(event.target.value)} disabled={isParkingSmartLoading} /></label>
-              <label className="field">
-                <span>Müssen Sie laden?</span>
-                <select
-                  value={String(parkingChargeMinutes)}
-                  onChange={(event) => setParkingChargeMinutes(Math.max(0, Number(event.target.value) || 0))}
-                  disabled={isParkingSmartLoading}
-                >
-                  <option value="0">Nein</option>
-                  {Array.from({ length: 8 }, (_, index) => {
-                    const hours = index + 1;
-                    const minutes = hours * 60;
-                    return <option key={hours} value={minutes}>{hours} {hours === 1 ? 'Stunde' : 'Stunden'}</option>;
-                  })}
-                </select>
-              </label>
-              <button type="button" className="btn btn-outline" onClick={requestSmartParkingProposal} disabled={isParkingSmartLoading}>Parkplatz anfordern</button>
+            <div className="desk-popup-body parking-smart-dialog-body">
+              <div className="parking-smart-form-grid">
+                <label className="field parking-smart-field">
+                  <span>Anreise</span>
+                  <div className="time-input-wrap">
+                    <input type="time" min="00:00" max="23:30" step={1800} value={parkingSmartArrivalTime} onChange={(event) => setParkingSmartArrivalTime(event.target.value)} disabled={isParkingSmartLoading} />
+                    <button type="button" className="time-input-icon" aria-label="Anreise-Zeit auswählen" onClick={(event) => event.currentTarget.previousElementSibling instanceof HTMLInputElement && event.currentTarget.previousElementSibling.showPicker?.()} disabled={isParkingSmartLoading}>🕒</button>
+                  </div>
+                </label>
+                <label className="field parking-smart-field">
+                  <span>Abreise</span>
+                  <div className="time-input-wrap">
+                    <input type="time" min="00:30" max="23:59" step={1800} value={parkingSmartDepartureTime} onChange={(event) => setParkingSmartDepartureTime(event.target.value)} disabled={isParkingSmartLoading} />
+                    <button type="button" className="time-input-icon" aria-label="Abreise-Zeit auswählen" onClick={(event) => event.currentTarget.previousElementSibling instanceof HTMLInputElement && event.currentTarget.previousElementSibling.showPicker?.()} disabled={isParkingSmartLoading}>🕒</button>
+                  </div>
+                </label>
+                <div className="field parking-smart-field">
+                  <span>Laden erforderlich</span>
+                  <label className="toggle parking-smart-toggle">
+                    <input type="checkbox" checked={parkingChargeMinutes > 0} onChange={(event) => setParkingChargeMinutes(event.target.checked ? (parkingChargeMinutes > 0 ? parkingChargeMinutes : 60) : 0)} disabled={isParkingSmartLoading} />
+                    <span>{parkingChargeMinutes > 0 ? 'Ja' : 'Nein'}</span>
+                  </label>
+                </div>
+                {parkingChargeMinutes > 0 && (
+                  <label className="field parking-smart-field">
+                    <span>Ladedauer</span>
+                    <select value={String(parkingChargeMinutes)} onChange={(event) => setParkingChargeMinutes(Math.max(60, Number(event.target.value) || 60))} disabled={isParkingSmartLoading}>
+                      {Array.from({ length: 8 }, (_, index) => {
+                        const hours = index + 1;
+                        const minutes = hours * 60;
+                        return <option key={hours} value={minutes}>{hours} h</option>;
+                      })}
+                    </select>
+                  </label>
+                )}
+              </div>
+              {isParkingTimeRangeInvalid && <p className="field-error">Abreise muss nach der Anreise liegen.</p>}
               {parkingSmartError && <p className="field-error">{parkingSmartError}</p>}
               {parkingSmartInfo && <p className="muted">{parkingSmartInfo}</p>}
               {parkingSmartProposal && (
-                <div className="stack-xs">
+                <div className="stack-xs parking-smart-proposal-block">
                   <strong>Vorschlag</strong>
-                  {parkingSmartProposal.bookings.map((entry, index) => (
-                    <ParkingTimeBlock
-                      key={`${entry.deskId}-${index}`}
-                      number={extractParkingNumber(entry.deskName)}
-                      startTime={entry.startTime ?? formatMinutes(entry.startMinute)}
-                      endTime={entry.endTime ?? formatMinutes(entry.endMinute)}
-                      hasCharging={entry.hasCharger}
-                      hint={entry.hasCharger ? 'Ladezeit' : undefined}
-                    />
-                  ))}
-                  {parkingSmartProposal.switchAfterCharging && <p className="muted">Wechsel nach Ladedauer.</p>}
+                  <ParkingScheduleGrid entries={parkingScheduleEntries} />
+                  {parkingSmartProposal.switchAfterCharging && <p className="muted parking-smart-proposal-note">Wechsel nach Ladedauer.</p>}
                   <button type="button" className="btn" onClick={() => setIsParkingSmartConfirmDialogOpen(true)} disabled={isParkingSmartLoading}>Vorschlag bestätigen</button>
                 </div>
               )}
+              <div className="parking-smart-actions">
+                <button type="button" className="btn btn-outline" onClick={closeParkingSmartDialog} disabled={isParkingSmartLoading}>Abbrechen</button>
+                <button type="button" className="btn" onClick={requestSmartParkingProposal} disabled={isParkingSmartLoading || isParkingTimeRangeInvalid}>Vorschlag berechnen</button>
+              </div>
             </div>
           </section>
         </div>,
@@ -3330,23 +3361,8 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
           <section className="card dialog rebook-dialog" role="dialog" aria-modal="true" aria-labelledby="parking-smart-confirm-title">
             <h3 id="parking-smart-confirm-title">Parkplatz-Buchung bestätigen?</h3>
             <p>Bitte bestätige den vorgeschlagenen Parkplatz-Zeitplan.</p>
-            <div className="stack-xs parking-time-block-list">
-              {parkingSmartProposal.bookings.map((entry, index) => (
-                <ParkingTimeBlock
-                  key={`confirm-${entry.deskId}-${index}`}
-                  number={extractParkingNumber(entry.deskName)}
-                  startTime={entry.startTime ?? formatMinutes(entry.startMinute)}
-                  endTime={entry.endTime ?? formatMinutes(entry.endMinute)}
-                  hasCharging={entry.hasCharger}
-                  hint={entry.hasCharger ? 'Ladezeit' : undefined}
-                />
-              ))}
-            </div>
-            {parkingRelocationTime && (
-              <p className="parking-relocation-warning" role="alert">
-                <strong>Wichtig:</strong> Sie müssen Ihr Auto um <strong>{parkingRelocationTime} Uhr</strong> umparken.
-              </p>
-            )}
+            <ParkingScheduleGrid entries={parkingScheduleEntries.map((entry) => ({ ...entry, id: `confirm-${entry.id}` }))} />
+            {parkingRelocationTime && <p className="parking-relocation-inline" role="alert">Umparken um {parkingRelocationTime} Uhr erforderlich.</p>}
             <div className="inline-end">
               <button type="button" className="btn btn-outline" onClick={() => setIsParkingSmartConfirmDialogOpen(false)} disabled={isParkingSmartLoading}>Zurück</button>
               <button type="button" className="btn" onClick={confirmSmartParkingProposal} disabled={isParkingSmartLoading}>Jetzt verbindlich buchen</button>
