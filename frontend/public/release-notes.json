@@ -1,5 +1,17 @@
 [
   {
+    "version": "1.5.47",
+    "date": "2026-02-19",
+    "type": "bugfix",
+    "title": "Smart-Parking-Bestätigung passt sich kompakter an",
+    "summary": "Das Bestätigungsfenster der intelligenten Parkplatz-Zuweisung ist jetzt inhaltssensitiv statt unnötig breit. Zusätzlich haben die Zeitplan-Kacheln oben und unten mehr Luft.",
+    "items": [
+      "Der Bestätigungsdialog wächst jetzt nur noch bis zur benötigten Breite und bleibt dadurch auf Desktop deutlich kompakter.",
+      "Die Parkplatz-Kacheln haben innen mindestens 10 px Abstand zum Inhalt.",
+      "Zwischen mehreren Kachelzeilen bleibt vertikal mindestens 10 px Abstand, damit der Zeitplan ruhiger lesbar ist."
+    ]
+  },
+  {
     "version": "1.5.46",
     "date": "2026-02-19",
     "type": "bugfix",
