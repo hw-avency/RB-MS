@@ -1,5 +1,17 @@
 [
   {
+    "version": "1.5.30",
+    "date": "2026-02-19",
+    "type": "feature",
+    "title": "Floorplan-Ansicht bleibt über URL stabil",
+    "summary": "Die ausgewählte Floorplan- und Overview-Ansicht wird jetzt direkt über die URL mitgeführt. Außerdem nutzt der Admin-Bereich saubere Root-Pfade wie /admin statt Hash-URLs.",
+    "items": [
+      "Wenn du einen Floorplan auswählst, steht die Auswahl als URL-Parameter in der Adresse und bleibt nach Reload erhalten.",
+      "Die rechte Overview-Ansicht (z. B. Anwesenheit oder Räume) wird ebenfalls per URL gespeichert und nach dem Neuladen wiederhergestellt.",
+      "Navigation und Admin-Bereich laufen jetzt über Root-Routen wie /admin und /admin/bookings statt über #/…-Links."
+    ]
+  },
+  {
     "version": "1.5.29",
     "date": "2026-02-18",
     "type": "bugfix",

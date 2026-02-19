@@ -17,18 +17,29 @@ type LoginDebugInfo = {
 
 const AUTH_NOTICE_STORAGE_KEY = 'rbms_auth_notice';
 
-const toRoutePath = (hash: string) => {
-  if (!hash || hash === '#') return '/';
-  const raw = hash.startsWith('#') ? hash.slice(1) : hash;
+const toRoutePath = (value: string) => {
+  if (!value || value === '#') return '/';
+  const raw = value.startsWith('#') ? value.slice(1) : value;
   if (!raw) return '/';
   return raw.startsWith('/') ? raw : `/${raw}`;
 };
 
-const currentPath = () => toRoutePath(window.location.hash);
+const currentPath = () => {
+  const pathFromHash = toRoutePath(window.location.hash);
+  if (pathFromHash !== '/') {
+    window.history.replaceState({}, '', pathFromHash);
+    return pathFromHash;
+  }
+
+  const routePath = `${window.location.pathname}${window.location.search}`;
+  return routePath || '/';
+};
+
 const navigate = (to: string) => {
   const target = to.startsWith('/') ? to : `/${to}`;
   if (currentPath() !== target) {
-    window.location.hash = target;
+    window.history.pushState({}, '', target);
+    window.dispatchEvent(new PopStateEvent('popstate'));
   }
 };
 
@@ -131,8 +142,8 @@ export function App() {
 
   useEffect(() => {
     const handler = () => setPath(currentPath());
-    window.addEventListener('hashchange', handler);
-    return () => window.removeEventListener('hashchange', handler);
+    window.addEventListener('popstate', handler);
+    return () => window.removeEventListener('popstate', handler);
   }, []);
 
   useEffect(() => {
