@@ -3372,7 +3372,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
             </div>
             <div className="desk-popup-body parking-smart-dialog-body">
               <div className="parking-smart-form-grid">
-                <label className="field parking-smart-field">
+                <label className="field parking-smart-field parking-smart-field-full">
                   <span>Parken für</span>
                   <select value={parkingSmartBookedFor} onChange={(event) => {
                     const nextValue = event.target.value === 'GUEST' ? 'GUEST' : 'SELF';
@@ -3384,35 +3384,31 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
                   </select>
                 </label>
                 {parkingSmartBookedFor === 'GUEST' && (
-                  <label className="field parking-smart-field">
+                  <label className="field parking-smart-field parking-smart-field-full">
                     <span>Gastname</span>
                     <input type="text" value={parkingSmartGuestName} onChange={(event) => setParkingSmartGuestName(event.target.value)} placeholder="Name des Gasts" disabled={isParkingSmartLoading} />
                   </label>
                 )}
-                <label className="field parking-smart-field">
-                  <span>Anreise</span>
-                  <div className="time-input-wrap">
+                <div className="parking-smart-row">
+                  <label className="field parking-smart-field">
+                    <span>Anreise</span>
                     <input type="time" min="00:00" max="23:30" step={1800} value={parkingSmartArrivalTime} onChange={(event) => setParkingSmartArrivalTime(event.target.value)} disabled={isParkingSmartLoading} />
-                    <span className="time-input-icon" aria-hidden="true">🕒</span>
-                  </div>
-                </label>
-                <label className="field parking-smart-field">
-                  <span>Abreise</span>
-                  <div className="time-input-wrap">
+                  </label>
+                  <label className="field parking-smart-field">
+                    <span>Abreise</span>
                     <input type="time" min="00:30" max="23:59" step={1800} value={parkingSmartDepartureTime} onChange={(event) => setParkingSmartDepartureTime(event.target.value)} disabled={isParkingSmartLoading} />
-                    <span className="time-input-icon" aria-hidden="true">🕒</span>
-                  </div>
-                </label>
-                <div className="field parking-smart-field">
-                  <span>Laden erforderlich</span>
-                  <label className="toggle parking-smart-toggle">
-                    <input type="checkbox" checked={parkingChargeMinutes > 0} onChange={(event) => setParkingChargeMinutes(event.target.checked ? (parkingChargeMinutes > 0 ? parkingChargeMinutes : 60) : 0)} disabled={isParkingSmartLoading} />
                   </label>
                 </div>
-                {parkingChargeMinutes > 0 && (
+                <div className="parking-smart-row">
+                  <div className="field parking-smart-field">
+                    <span>Laden erforderlich</span>
+                    <label className="toggle parking-smart-toggle">
+                      <input type="checkbox" checked={parkingChargeMinutes > 0} onChange={(event) => setParkingChargeMinutes(event.target.checked ? (parkingChargeMinutes > 0 ? parkingChargeMinutes : 60) : 0)} disabled={isParkingSmartLoading} />
+                    </label>
+                  </div>
                   <label className="field parking-smart-field">
                     <span>Ladedauer</span>
-                    <select value={String(parkingChargeMinutes)} onChange={(event) => setParkingChargeMinutes(Math.max(60, Number(event.target.value) || 60))} disabled={isParkingSmartLoading}>
+                    <select value={String(parkingChargeMinutes > 0 ? parkingChargeMinutes : 60)} onChange={(event) => setParkingChargeMinutes(Math.max(60, Number(event.target.value) || 60))} disabled={isParkingSmartLoading || parkingChargeMinutes <= 0}>
                       {Array.from({ length: 8 }, (_, index) => {
                         const hours = index + 1;
                         const minutes = hours * 60;
@@ -3420,7 +3416,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
                       })}
                     </select>
                   </label>
-                )}
+                </div>
               </div>
               {isParkingTimeRangeInvalid && <p className="field-error">Abreise muss nach der Anreise liegen.</p>}
               {hasParkingProposalConflict && <p className="field-error">Überlappende Buchungszeiten für denselben Parkplatz sind nicht erlaubt.</p>}
@@ -3441,7 +3437,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
                       <button type="button" className="btn" onClick={() => setIsParkingSmartConfirmDialogOpen(true)} disabled={isParkingSmartLoading || hasParkingProposalConflict}>Vorschlag bestätigen</button>
                     </>
                     )
-                  : <button type="button" className="btn" onClick={requestSmartParkingProposal} disabled={isParkingSmartLoading || isParkingTimeRangeInvalid}>Vorschlag berechnen</button>}
+                  : <button type="button" className="btn parking-smart-calculate-btn" onClick={requestSmartParkingProposal} disabled={isParkingSmartLoading || isParkingTimeRangeInvalid}>Vorschlag berechnen</button>}
               </div>
             </div>
           </section>
