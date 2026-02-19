@@ -737,7 +737,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
   const [isParkingSmartLoading, setIsParkingSmartLoading] = useState(false);
   const [isParkingSmartDialogOpen, setIsParkingSmartDialogOpen] = useState(false);
   const [isParkingSmartConfirmDialogOpen, setIsParkingSmartConfirmDialogOpen] = useState(false);
-  const [parkingBulkCancelPreview, setParkingBulkCancelPreview] = useState<Array<{ id: string; deskLabel: string; timeLabel: string }>>([]);
+  const [parkingBulkCancelPreview, setParkingBulkCancelPreview] = useState<Array<{ id: string; deskLabel: string; timeLabel: string; bookedForLabel: string }>>([]);
   const [isParkingBulkCancelOpen, setIsParkingBulkCancelOpen] = useState(false);
   const [isParkingBulkCancelling, setIsParkingBulkCancelling] = useState(false);
   const [rebookConfirm, setRebookConfirm] = useState<RebookConfirmState | null>(null);
@@ -2232,7 +2232,10 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
       .map((entry) => ({
         id: entry.booking.id ?? '',
         deskLabel: entry.desk.name,
-        timeLabel: bookingSlotLabel(entry.booking)
+        timeLabel: bookingSlotLabel(entry.booking),
+        bookedForLabel: entry.booking.bookedFor === 'GUEST'
+          ? `Für Gast${entry.booking.guestName?.trim() ? `: ${entry.booking.guestName.trim()}` : ''}`
+          : 'Für mich'
       }));
     if (parkingBookings.length === 0) return;
     setParkingBulkCancelPreview(parkingBookings);
@@ -3482,6 +3485,7 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
                 <div key={entry.id} className="parking-bulk-cancel-item">
                   <strong>{entry.deskLabel}</strong>
                   <span className="muted">{entry.timeLabel}</span>
+                  <span className="muted">{entry.bookedForLabel}</span>
                 </div>
               ))}
             </div>
