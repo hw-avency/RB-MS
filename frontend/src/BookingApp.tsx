@@ -2392,10 +2392,10 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
       startTime: entry.startTime ?? formatMinutes(entry.startMinute),
       endTime: entry.endTime ?? formatMinutes(entry.endMinute),
       hasCharging: entry.hasCharger,
-      hint: entry.hasCharger ? 'Ladezeit' : undefined,
+      hint: parkingChargeMinutes > 0 && entry.hasCharger ? 'Ladezeit' : undefined,
       transitionLabel: parkingRelocationTime && parkingSmartProposal.switchAfterCharging && index === 0 ? `Umparken um ${parkingRelocationTime}` : undefined
     }));
-  }, [parkingRelocationTime, parkingSmartProposal]);
+  }, [parkingChargeMinutes, parkingRelocationTime, parkingSmartProposal]);
 
   const hasParkingProposalConflict = useMemo(() => {
     if (!parkingSmartProposal) return false;
