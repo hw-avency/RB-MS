@@ -37,6 +37,103 @@ const pushUniqueCandidate = (
   list.push(candidate);
 };
 
+const toAssignmentBooking = (
+  spot: ParkingSpot,
+  window: ParkingWindow
+): { deskId: string; startMinute: number; endMinute: number; hasCharger: boolean } => ({
+  deskId: spot.id,
+  startMinute: window.startMinute,
+  endMinute: window.endMinute,
+  hasCharger: spot.hasCharger
+});
+
+const buildSplitNoChargingProposal = (
+  fullWindow: ParkingWindow,
+  spots: ParkingSpot[],
+  bookings: ParkingBooking[]
+): ParkingAssignmentProposal | null => {
+  const preferredSpots = [...spots].sort((left, right) => Number(left.hasCharger) - Number(right.hasCharger));
+  const candidateBoundaries = new Set<number>([fullWindow.startMinute, fullWindow.endMinute]);
+  for (const booking of bookings) {
+    const clippedStart = Math.max(fullWindow.startMinute, booking.startMinute);
+    const clippedEnd = Math.min(fullWindow.endMinute, booking.endMinute);
+    if (clippedStart > fullWindow.startMinute && clippedStart < fullWindow.endMinute) candidateBoundaries.add(clippedStart);
+    if (clippedEnd > fullWindow.startMinute && clippedEnd < fullWindow.endMinute) candidateBoundaries.add(clippedEnd);
+  }
+
+  const boundaries = Array.from(candidateBoundaries).sort((left, right) => left - right);
+  const getSegment = (start: number, end: number): ParkingWindow | null => (end > start ? { startMinute: start, endMinute: end } : null);
+  const asSplitType = (bookingCount: number): 'single' | 'split' => (bookingCount === 1 ? 'single' : 'split');
+
+  for (const firstEnd of boundaries) {
+    const firstWindow = getSegment(fullWindow.startMinute, firstEnd);
+    if (!firstWindow) continue;
+    for (const firstSpot of preferredSpots) {
+      if (!isSpotFree(firstSpot.id, firstWindow, bookings)) continue;
+      if (firstEnd === fullWindow.endMinute) {
+        return {
+          type: asSplitType(1),
+          bookings: [toAssignmentBooking(firstSpot, firstWindow)],
+          usedFallbackChargerFullWindow: false
+        };
+      }
+
+      for (const secondEnd of boundaries) {
+        const secondWindow = getSegment(firstEnd, secondEnd);
+        if (!secondWindow) continue;
+        for (const secondSpot of preferredSpots) {
+          if (!isSpotFree(secondSpot.id, secondWindow, bookings)) continue;
+          if (secondEnd === fullWindow.endMinute) {
+            const mergedWithFirst = firstSpot.id === secondSpot.id;
+            return {
+              type: asSplitType(mergedWithFirst ? 1 : 2),
+              bookings: mergedWithFirst
+                ? [toAssignmentBooking(firstSpot, { startMinute: fullWindow.startMinute, endMinute: fullWindow.endMinute })]
+                : [toAssignmentBooking(firstSpot, firstWindow), toAssignmentBooking(secondSpot, secondWindow)],
+              usedFallbackChargerFullWindow: false
+            };
+          }
+
+          const thirdWindow = getSegment(secondEnd, fullWindow.endMinute);
+          if (!thirdWindow) continue;
+          for (const thirdSpot of preferredSpots) {
+            if (!isSpotFree(thirdSpot.id, thirdWindow, bookings)) continue;
+
+            const merged: Array<{ spot: ParkingSpot; window: ParkingWindow }> = [
+              { spot: firstSpot, window: firstWindow },
+              { spot: secondSpot, window: secondWindow },
+              { spot: thirdSpot, window: thirdWindow }
+            ];
+
+            const compacted = merged.reduce<Array<{ spot: ParkingSpot; window: ParkingWindow }>>((acc, entry) => {
+              const previous = acc.at(-1);
+              if (previous && previous.spot.id === entry.spot.id && previous.window.endMinute === entry.window.startMinute) {
+                previous.window.endMinute = entry.window.endMinute;
+              } else {
+                acc.push({
+                  spot: entry.spot,
+                  window: { startMinute: entry.window.startMinute, endMinute: entry.window.endMinute }
+                });
+              }
+              return acc;
+            }, []);
+
+            if (compacted.length > 3) continue;
+
+            return {
+              type: asSplitType(compacted.length),
+              bookings: compacted.map((entry) => toAssignmentBooking(entry.spot, entry.window)),
+              usedFallbackChargerFullWindow: false
+            };
+          }
+        }
+      }
+    }
+  }
+
+  return null;
+};
+
 export const buildParkingAssignmentProposal = ({
   startMinute,
   attendanceMinutes,
@@ -56,14 +153,8 @@ export const buildParkingAssignmentProposal = ({
   const fullWindow = { startMinute, endMinute };
 
   if (chargingMinutes <= 0) {
-    const regularSpot = findFreeSpot(spots, bookings, fullWindow, (spot) => !spot.hasCharger);
-    const freeSpot = regularSpot ?? findFreeSpot(spots, bookings, fullWindow, (spot) => spot.hasCharger);
-    if (!freeSpot) return { type: 'none', reason: 'NO_PARKING' };
-    return {
-      type: 'single',
-      bookings: [{ deskId: freeSpot.id, startMinute, endMinute, hasCharger: freeSpot.hasCharger }],
-      usedFallbackChargerFullWindow: false
-    };
+    const noChargingProposal = buildSplitNoChargingProposal(fullWindow, spots, bookings);
+    return noChargingProposal ?? { type: 'none', reason: 'NO_PARKING' };
   }
 
   const resolvedChargingMinutes = Math.min(attendanceMinutes, Math.max(0, chargingMinutes));
