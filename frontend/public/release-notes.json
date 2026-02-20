@@ -1,5 +1,16 @@
 [
   {
+    "version": "1.6.3",
+    "date": "2026-02-20",
+    "type": "bugfix",
+    "title": "Smart-Parking zeigt Ladezeit nur noch bei aktivem Ladebedarf",
+    "summary": "In der Vorschlags-Kachel der intelligenten Parkplatzzuweisung erscheint der Hinweis zur Ladezeit jetzt nur noch dann, wenn „Laden erforderlich“ wirklich eingeschaltet ist.",
+    "items": [
+      "Wird ohne verpflichtenden Ladebedarf gebucht, zeigt die Kachel keinen irreführenden Hinweis „Ladezeit“ mehr an – auch wenn ein Ladeparkplatz zugewiesen wurde.",
+      "Ist „Laden erforderlich“ aktiv, bleibt die Ladezeit-Kennzeichnung wie gewohnt sichtbar."
+    ]
+  },
+  {
     "version": "1.6.2",
     "date": "2026-02-19",
     "type": "bugfix",
