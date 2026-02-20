@@ -1,5 +1,17 @@
 [
   {
+    "version": "1.6.2",
+    "date": "2026-02-19",
+    "type": "bugfix",
+    "title": "Smart-Parking bietet jetzt auch Wechsel ohne Laden an",
+    "summary": "Wenn über den ganzen Zeitraum kein einzelner Parkplatz frei ist, schlägt die intelligente Zuweisung jetzt auch ohne Ladebedarf einen Parkplatzwechsel vor.",
+    "items": [
+      "Die Split-Logik greift jetzt auch bei ‚Laden nicht erforderlich‘ und kann so zusammenhängendes Parken über mehrere freie Zeitfenster ermöglichen.",
+      "Dabei werden maximal zwei Parkplatzwechsel vorgeschlagen (höchstens drei Abschnitte insgesamt).",
+      "Wären mehr Wechsel nötig, wird weiterhin bewusst keine passende Kombination angeboten."
+    ]
+  },
+  {
     "version": "1.6.1",
     "date": "2026-02-19",
     "type": "bugfix",
