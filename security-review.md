@@ -1,6 +1,6 @@
 # Security review (common web vulnerabilities)
-
-Date: 2026-02-26
+Reviewer: Hendrik
+Date: 2026-02-26 
 Scope: `backend/src/index.ts`, selected frontend rendering patterns
 
 ## Checked categories
