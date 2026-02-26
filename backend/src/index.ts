@@ -231,6 +231,17 @@ app.use(cors(corsOptions));
 app.options('*', cors(corsOptions));
 app.use(express.json({ limit: '6mb' }));
 
+app.use((_req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
+  if (isProd) {
+    res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+  }
+  next();
+});
+
 const bookingNoStorePaths = new Set(['/bookings', '/occupancy', '/admin/bookings']);
 app.use((req, res, next) => {
   if (req.method === 'GET' && bookingNoStorePaths.has(req.path)) {
@@ -363,9 +374,40 @@ app.use(attachRequestId);
 
 const SESSION_COOKIE_NAME = 'rbms_session';
 const SESSION_TTL_MS = 1000 * 60 * 60 * 12;
+const LOGIN_RATE_LIMIT_WINDOW_MS = 15 * 60 * 1000;
+const LOGIN_RATE_LIMIT_MAX_ATTEMPTS = 10;
 const SYSTEM_STATE_SINGLETON_ID = 'global';
 type OidcFlowState = { nonce: string; createdAt: Date };
 const OIDC_STATE_TTL_MS = 1000 * 60 * 10;
+type LoginRateLimitEntry = { failedAttempts: number; firstAttemptAt: number; blockedUntil: number };
+const loginRateLimitStore = new Map<string, LoginRateLimitEntry>();
+
+const getLoginRateLimitKey = (ip: string | undefined, normalizedEmail: string) => `${ip ?? 'unknown'}::${normalizedEmail}`;
+
+const getLoginRateLimit = (key: string, now: number): LoginRateLimitEntry => {
+  const existing = loginRateLimitStore.get(key);
+  if (!existing || now - existing.firstAttemptAt > LOGIN_RATE_LIMIT_WINDOW_MS) {
+    const freshEntry: LoginRateLimitEntry = { failedAttempts: 0, firstAttemptAt: now, blockedUntil: 0 };
+    loginRateLimitStore.set(key, freshEntry);
+    return freshEntry;
+  }
+
+  return existing;
+};
+
+const registerLoginFailure = (key: string, now: number): LoginRateLimitEntry => {
+  const entry = getLoginRateLimit(key, now);
+  entry.failedAttempts += 1;
+  if (entry.failedAttempts >= LOGIN_RATE_LIMIT_MAX_ATTEMPTS) {
+    entry.blockedUntil = now + LOGIN_RATE_LIMIT_WINDOW_MS;
+  }
+  loginRateLimitStore.set(key, entry);
+  return entry;
+};
+
+const clearLoginRateLimit = (key: string) => {
+  loginRateLimitStore.delete(key);
+};
 const parseCookies = (cookieHeader?: string): Record<string, string> => {
   if (!cookieHeader) return {};
   return cookieHeader.split(';').reduce<Record<string, string>>((acc, part) => {
@@ -2138,6 +2180,17 @@ app.post('/auth/login', async (req, res) => {
     }
 
     const normalizedEmail = normalizeEmail(email);
+    const loginRateLimitKey = getLoginRateLimitKey(req.ip, normalizedEmail);
+    const now = Date.now();
+    const rateLimitEntry = getLoginRateLimit(loginRateLimitKey, now);
+    if (rateLimitEntry.blockedUntil > now) {
+      const retryAfterSeconds = Math.max(1, Math.ceil((rateLimitEntry.blockedUntil - now) / 1000));
+      res.setHeader('Retry-After', String(retryAfterSeconds));
+      console.warn('LOGIN_RATE_LIMIT_BLOCK', { requestId, email: normalizedEmail, ip: req.ip, retryAfterSeconds });
+      res.status(429).json({ code: 'TOO_MANY_ATTEMPTS', message: 'Too many failed login attempts. Please try again later.' });
+      return;
+    }
+
     console.log('LOGIN_ATTEMPT', { requestId, email: normalizedEmail, ip: req.ip });
 
     const user = await prisma.user.findUnique({
@@ -2146,6 +2199,7 @@ app.post('/auth/login', async (req, res) => {
     });
 
     if (!user || !user.isActive) {
+      registerLoginFailure(loginRateLimitKey, now);
       console.warn('LOGIN_FAIL_USER_NOT_FOUND', { requestId, email: normalizedEmail });
       res.status(401).json({ code: 'USER_NOT_FOUND', message: 'Invalid credentials' });
       return;
@@ -2153,10 +2207,13 @@ app.post('/auth/login', async (req, res) => {
 
     const passwordMatches = await bcrypt.compare(password, user.passwordHash);
     if (!passwordMatches) {
+      registerLoginFailure(loginRateLimitKey, now);
       console.warn('LOGIN_FAIL_PASSWORD_MISMATCH', { requestId, userId: user.id });
       res.status(401).json({ code: 'PASSWORD_MISMATCH', message: 'Invalid credentials' });
       return;
     }
+
+    clearLoginRateLimit(loginRateLimitKey);
 
     const session = await createSession({ userId: user.id });
     applySessionCookies(res, session);
