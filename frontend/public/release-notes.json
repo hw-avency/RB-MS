@@ -1,5 +1,16 @@
 [
   {
+    "version": "1.6.5",
+    "date": "2026-02-26",
+    "type": "bugfix",
+    "title": "Anwesenheitsliste zeigt jetzt die Tages-Gesamtzahl",
+    "summary": "Oben in der Anwesenheitsansicht wird nun direkt angezeigt, wie viele Personen am ausgewählten Tag auf dem Floor sind.",
+    "items": [
+      "Über der Anwesenheitsliste steht jetzt eine klare Gesamtzahl der anwesenden Personen für den ausgewählten Tag.",
+      "Die Anzeige passt sich automatisch an und verwendet bei genau einer Person die Einzahl."
+    ]
+  },
+  {
     "version": "1.6.4",
     "date": "2026-02-26",
     "type": "bugfix",

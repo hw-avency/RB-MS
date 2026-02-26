@@ -3051,43 +3051,46 @@ export function BookingApp({ onOpenAdmin, canOpenAdmin, currentUserEmail, onLogo
     }
 
     return (
-      <div className="occupancy-list" role="list" aria-label={title}>
-        {items.map((occupant) => (
-          <div
-            key={`selected-${occupant.userId}-${occupant.deskId}`}
-            ref={(node) => { occupantRowRefs.current[occupant.deskId] = node; }}
-            role="listitem"
-            tabIndex={0}
-            className={`occupant-compact-card ${(hoveredDeskId === occupant.deskId || selectedDeskId === occupant.deskId) ? 'is-active' : ''} ${highlightedDeskId === occupant.deskId ? 'is-highlighted' : ''}`}
-            onClick={(event) => {
-              selectDeskFromCanvas(occupant.deskId, event.currentTarget, { allowUnbookable: true, openProfileOnly: true });
-            }}
-            onKeyDown={(event) => {
-              if (event.key !== 'Enter' && event.key !== ' ') return;
-              event.preventDefault();
-              selectDeskFromCanvas(occupant.deskId, event.currentTarget, { openProfileOnly: true });
-            }}
-            onMouseEnter={() => {
-              setHoveredDeskId(occupant.deskId);
-              setHighlightedDeskId(occupant.deskId);
-            }}
-            onMouseLeave={() => {
-              setHoveredDeskId('');
-              setHighlightedDeskId('');
-            }}
-            aria-label={`Profilkarte für ${occupant.name} öffnen`}
-          >
-            <div className="occupant-card-main">
-              <Avatar displayName={occupant.name} email={occupant.email} photoUrl={occupant.photoUrl} size={26} />
-              <div className="occupant-card-text">
-                <strong>{occupant.name}</strong>
-                <p className="muted">{occupant.email}</p>
+      <>
+        <p className="muted">Insgesamt {items.length} {items.length === 1 ? 'Person' : 'Personen'} auf dem Floor</p>
+        <div className="occupancy-list" role="list" aria-label={title}>
+          {items.map((occupant) => (
+            <div
+              key={`selected-${occupant.userId}-${occupant.deskId}`}
+              ref={(node) => { occupantRowRefs.current[occupant.deskId] = node; }}
+              role="listitem"
+              tabIndex={0}
+              className={`occupant-compact-card ${(hoveredDeskId === occupant.deskId || selectedDeskId === occupant.deskId) ? 'is-active' : ''} ${highlightedDeskId === occupant.deskId ? 'is-highlighted' : ''}`}
+              onClick={(event) => {
+                selectDeskFromCanvas(occupant.deskId, event.currentTarget, { allowUnbookable: true, openProfileOnly: true });
+              }}
+              onKeyDown={(event) => {
+                if (event.key !== 'Enter' && event.key !== ' ') return;
+                event.preventDefault();
+                selectDeskFromCanvas(occupant.deskId, event.currentTarget, { openProfileOnly: true });
+              }}
+              onMouseEnter={() => {
+                setHoveredDeskId(occupant.deskId);
+                setHighlightedDeskId(occupant.deskId);
+              }}
+              onMouseLeave={() => {
+                setHoveredDeskId('');
+                setHighlightedDeskId('');
+              }}
+              aria-label={`Profilkarte für ${occupant.name} öffnen`}
+            >
+              <div className="occupant-card-main">
+                <Avatar displayName={occupant.name} email={occupant.email} photoUrl={occupant.photoUrl} size={26} />
+                <div className="occupant-card-text">
+                  <strong>{occupant.name}</strong>
+                  <p className="muted">{occupant.email}</p>
+                </div>
               </div>
+              {occupant.deskLabel && <span className="occupant-desk-label" title={`${occupant.deskKindLabel}: ${occupant.deskLabel}`}>{occupant.deskKindLabel}: {occupant.deskLabel}</span>}
             </div>
-            {occupant.deskLabel && <span className="occupant-desk-label" title={`${occupant.deskKindLabel}: ${occupant.deskLabel}`}>{occupant.deskKindLabel}: {occupant.deskLabel}</span>}
-          </div>
-        ))}
-      </div>
+          ))}
+        </div>
+      </>
     );
   };
 
