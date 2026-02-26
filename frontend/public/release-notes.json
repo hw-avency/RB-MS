@@ -1,5 +1,16 @@
 [
   {
+    "version": "1.6.4",
+    "date": "2026-02-26",
+    "type": "bugfix",
+    "title": "Mitarbeiterdaten jetzt nur noch nach Anmeldung abrufbar",
+    "summary": "Die Endpunkte für Mitarbeiterliste und Mitarbeiterfotos sind jetzt gegen unautorisierte Zugriffe geschützt.",
+    "items": [
+      "Die API liefert Mitarbeiterliste und Profilfotos nur noch mit gültiger Anmeldung.",
+      "Ohne aktive Sitzung werden diese Daten jetzt mit ‚Authentication required‘ abgewiesen."
+    ]
+  },
+  {
     "version": "1.6.3",
     "date": "2026-02-20",
     "type": "bugfix",

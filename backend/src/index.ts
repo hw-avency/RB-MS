@@ -2617,7 +2617,7 @@ app.post('/admin/employees/:id/refresh-profile', requireAdmin, async (req, res) 
   });
 });
 
-app.get('/employees', async (_req, res) => {
+app.get('/employees', requireAuthenticated, async (_req, res) => {
   const employees = await prisma.employee.findMany({
     where: { isActive: true },
     select: {
@@ -2635,7 +2635,7 @@ app.get('/employees', async (_req, res) => {
 });
 
 
-app.get('/employees/:id/photo', async (req, res) => {
+app.get('/employees/:id/photo', requireAuthenticated, async (req, res) => {
   const id = getRouteId(req.params.id);
   if (!id) {
     res.status(400).json({ error: 'validation', message: 'id is required' });
